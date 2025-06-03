@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>MemeTrader Pro V3 - Trading Agressif</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: #0f172a;
+      color: #e2e8f0;
+    }
+    .gradient-bg {
+      background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+    }
+    .card {
+      background-color: #1e293b;
+      border-radius: 1rem;
+      box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -2px rgba(0,0,0,0.05);
+      padding: 1.5rem;
+    }
+    .coin-card {
+      transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+    .coin-card:hover {
+      transform: translateY(-5px);
+      box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04);
+    }
+    .chart-container {
+      height: 120px;
+      position: relative;
+      overflow: hidden;
+      margin-bottom: 1rem;
+    }
+    .chart {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+    }
+    .demo-label {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      background-color: rgba(239,68,68,0.9);
+      color: white;
+      padding: 5px 10px;
+      border-radius: 5px;
+      font-weight: bold;
+      z-index: 100;
+    }
+    .pulse {
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(59,130,246,0.7); }
+      70% { box-shadow: 0 0 0 10px rgba(59,130,246,0); }
+      100% { box-shadow: 0 0 0 0 rgba(59,130,246,0); }
+    }
+    .progress-bar {
+      height: 6px;
+      background-color: #3b82f6;
+      border-radius: 3px;
+      transition: width 0.5s ease;
+    }
+    .blink {
+      animation: blink 1s infinite;
+    }
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .flash {
+      animation: flash 1s;
+    }
+    @keyframes flash {
+      0%, 100% { background-color: transparent; }
+      50% { background-color: rgba(59,130,246,0.3); }
+    }
+    .profit-flash {
+      animation: profit-flash 1s;
+    }
+    @keyframes profit-flash {
+      0%, 100% { background-color: transparent; }
+      50% { background-color: rgba(16,185,129,0.3); }
+    }
+    .loss-flash {
+      animation: loss-flash 1s;
+    }
+    @keyframes loss-flash {
+      0%, 100% { background-color: transparent; }
+      50% { background-color: rgba(239,68,68,0.3); }
+    }
+    .mini-chart {
+      height: 30px;
+      width: 60px;
+      display: inline-block;
+      vertical-align: middle;
+    }
+    .tooltip {
+      position: relative;
+      display: inline-block;
+    }
+    .tooltip .tooltiptext {
+      visibility: hidden;
+      width: 200px;
+      background-color: #374151;
+      color: #fff;
+      text-align: center;
+      border-radius: 6px;
+      padding: 8px;
+      position: absolute;
+      z-index: 1;
+      bottom: 125%;
+      left: 50%;
+      margin-left: -100px;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    .tooltip:hover .tooltiptext {
+      visibility: visible;
+      opacity: 1;
+    }
+    .profit-counter {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      background-color: rgba(16,185,129,0.9);
+      color: white;
+      padding: 15px 20px;
+      border-radius: 10px;
+      font-weight: bold;
+      font-size: 1.5rem;
+      z-index: 100;
+      box-shadow: 0 10px 15px -3px rgba(0,0,0,0.2);
+      transition: transform 0.3s ease;
+    }
+    .profit-counter.pulse-profit {
+      animation: pulse-profit 0.5s;
+    }
+    @keyframes pulse-profit {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.1); }
+      100% { transform: scale(1); }
+    }
+    .trade-counter {
+      position: fixed;
+      bottom: 20px;
+      left: 20px;
+      background-color: rgba(59,130,246,0.9);
+      color: white;
+      padding: 15px 20px;
+      border-radius: 10px;
+      font-weight: bold;
+      font-size: 1.2rem;
+      z-index: 100;
+      box-shadow: 0 10px 15px -3px rgba(0,0,0,0.2);
+    }
+    .highlight-row {
+      animation: highlight 2s;
+    }
+    @keyframes highlight {
+      0% { background-color: rgba(16,185,129,0.3); }
+      100% { background-color: transparent; }
+    }
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background-color: rgba(0,0,0,0.5);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 50;
+    }
+    .modal {
+      background-color: #1f2937;
+      border-radius: 1rem;
+      padding: 1.5rem;
+      max-width: 24rem;
+      width: 100%;
+    }
+    button:disabled {
+      background-color: #374151;
+      cursor: not-allowed;
+    }
+  </style>
+</head>
+<body>
+  <div class="demo-label">DÉMO</div>
+  <div class="profit-counter">
+    Profit : <span id="floating-profit">0.00</span> €
+  </div>
+  <div class="trade-counter">
+    Trades : <span id="trade-count">0</span> | Prochain : <span id="next-trade-countdown">30s</span>
+  </div>
+
+  <div class="container mx-auto px-4 py-8">
+    <header class="text-center mb-10">
+      <h1 class="text-4xl font-bold mb-2">MemeTrader Pro V3</h1>
+      <p class="text-gray-400">Bot de trading ultra-agressif - 1 trade toutes les 30 secondes</p>
+    </header>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+      <div class="card">
+        <h2 class="text-xl font-semibold mb-4">Portefeuilles</h2>
+        <div class="flex justify-between items-center mb-4"><span>Solde principal (80%) :</span> <span id="main-balance" class="text-2xl font-bold text-green-400">0.00 €</span></div>
+        <div class="flex justify-between items-center mb-4"><span>Portefeuille de rachat (20%) :</span> <span id="buyback-balance" class="text-xl font-bold text-blue-400">0.00 €</span></div>
+        <div class="flex justify-between items-center mb-4"><span>Profit total :</span> <span id="total-profit" class="text...
