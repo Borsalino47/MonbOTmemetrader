@@ -18,11 +18,15 @@ from cryptopulse.core.types import Timeframe
 class ProviderSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="CP_PROVIDER_", env_file=".env", extra="ignore")
 
-    market_data: Literal["binance", "fixture"] = "binance"
+    market_data: Literal["binance", "kraken", "fixture"] = "binance"
     binance_base_url: str = "https://api.binance.com"
     # Binance publishes a market-data-only mirror that carries the same public
     # endpoints; useful when the main host is geo-restricted.
     binance_fallback_base_url: str = "https://data-api.binance.vision"
+    # Kraken: reachable in jurisdictions where Binance returns 451, and an
+    # independent quote source rather than a mirror.
+    kraken_base_url: str = "https://api.kraken.com"
+
     binance_api_key: str | None = None
     binance_api_secret: str | None = None
 

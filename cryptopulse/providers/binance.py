@@ -93,6 +93,7 @@ KLINE_FIELDS = (
 
 class BinanceSpotProvider(MarketDataProvider, OrderBookProvider):
     name = "binance-spot"
+    reference_symbol = "BTCUSDT"
 
     def __init__(self, cfg: ProviderSettings, clock: Clock = SYSTEM_CLOCK) -> None:
         self.cfg = cfg

@@ -58,6 +58,10 @@ class MarketDataProvider(ABC):
     """OHLCV, tickers and the tradable universe."""
 
     name: str
+    # A symbol that is certain to exist on this venue, used by `doctor` for its
+    # round-trip. Venues disagree on naming (BTCUSDT vs XBTUSDT), so each
+    # provider names its own rather than the caller guessing.
+    reference_symbol: str = "BTCUSDT"
 
     @abstractmethod
     async def health(self) -> ProviderHealth: ...

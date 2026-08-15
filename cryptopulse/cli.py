@@ -19,6 +19,28 @@ from cryptopulse.core.logging import configure_logging, get_logger
 
 log = get_logger("cli")
 
+PROVIDERS = ("binance", "kraken", "fixture")
+
+
+def _settings_with_provider(args):
+    """Settings with `--provider` applied, so switching venue is one word.
+
+    The flag overrides CP_PROVIDER_MARKET_DATA for this invocation only; nothing
+    is written to disk.
+    """
+    settings = get_settings()
+    choice = getattr(args, "provider", None)
+    if choice:
+        settings.providers.market_data = choice
+    return settings
+
+
+def _add_provider_flag(parser) -> None:
+    parser.add_argument(
+        "--provider", choices=PROVIDERS, default=None,
+        help="market data source for this run (default: CP_PROVIDER_MARKET_DATA)",
+    )
+
 
 # --------------------------------------------------------------------------- #
 # doctor — the command that turns IMPLEMENTED into LIVE VERIFIED
@@ -32,13 +54,16 @@ async def cmd_doctor(args) -> int:
     than asserting it works, this command proves or disproves it against the real
     API and prints which.
     """
-    settings = get_settings()
+    settings = _settings_with_provider(args)
     from cryptopulse.core.types import Timeframe
     from cryptopulse.providers.registry import build_market_provider
 
     provider = build_market_provider(settings, SYSTEM_CLOCK)
+    # Venues disagree on naming — BTCUSDT on Binance, XBTUSDT on Kraken — so the
+    # provider names the symbol it is certain to have rather than the CLI guessing.
+    ref = provider.reference_symbol
     checks: list[tuple[str, bool, str]] = []
-    print(f"\nCRYPTO PULSE AI — provider doctor\nprovider: {provider.name}\n" + "-" * 68)
+    print(f"\nCRYPTO PULSE AI — provider doctor\nprovider: {provider.name}  reference: {ref}\n" + "-" * 68)
 
     def record(name: str, ok: bool, detail: str = "") -> None:
         checks.append((name, ok, detail))
@@ -58,7 +83,12 @@ async def cmd_doctor(args) -> int:
         # A bare "403 Forbidden" tells the user nothing actionable, and the
         # difference between "your sandbox blocks this host", "your region is
         # geo-blocked" and "your DNS is broken" changes what they must do next.
-        host = settings.providers.binance_base_url.split("://", 1)[-1].split("/")[0]
+        base = (
+            settings.providers.kraken_base_url
+            if settings.providers.market_data == "kraken"
+            else settings.providers.binance_base_url
+        )
+        host = base.split("://", 1)[-1].split("/")[0]
         for line in await _diagnose_egress(host):
             print(line)
         await provider.close()
@@ -76,13 +106,13 @@ async def cmd_doctor(args) -> int:
     # 3. tickers
     tickers = {}
     try:
-        tickers = await provider.get_tickers_24h(["BTCUSDT", "ETHUSDT"])
-        t = tickers.get("BTCUSDT")
+        tickers = await provider.get_tickers_24h([ref])
+        t = tickers.get(ref)
         ok = t is not None and t.last_price > 0 and t.quote_volume_24h > 0 and t.low_24h <= t.last_price <= t.high_24h
         detail = (
             f"BTC {t.last_price:,.2f}, 24h range {t.low_24h:,.2f}-{t.high_24h:,.2f}, vol {t.quote_volume_24h:,.0f}"
             if t
-            else "no BTCUSDT row"
+            else f"no {ref} row"
         )
         record("ticker/24hr consistency (low <= last <= high)", ok, detail)
     except Exception as exc:
@@ -90,7 +120,7 @@ async def cmd_doctor(args) -> int:
 
     # 4. klines — the field-order check that matters most
     try:
-        series = await provider.get_ohlcv("BTCUSDT", Timeframe.M5, 120)
+        series = await provider.get_ohlcv(ref, Timeframe.M5, 120)
         n = len(series)
         checks_ok = True
         details = []
@@ -128,8 +158,8 @@ async def cmd_doctor(args) -> int:
         )
 
         # 6. cross-check klines against the ticker
-        if tickers.get("BTCUSDT"):
-            last = tickers["BTCUSDT"].last_price
+        if tickers.get(ref):
+            last = tickers[ref].last_price
             kline_close = closed.last_close
             drift = abs(kline_close - last) / last * 100
             ok = drift < 2.0
@@ -139,7 +169,7 @@ async def cmd_doctor(args) -> int:
 
     # 7. order book
     try:
-        book = await provider.get_order_book("BTCUSDT", 50)
+        book = await provider.get_order_book(ref, 50)
         ok = (
             book.best_bid is not None
             and book.best_ask is not None
@@ -153,6 +183,17 @@ async def cmd_doctor(args) -> int:
 
     await provider.close()
     return _summarise(checks)
+
+
+def _hosts_to_allow(host: str) -> list[str]:
+    """Every host the chosen venue needs, so one trip through the settings is enough.
+
+    Binance has a market-data mirror the connector fails over to automatically;
+    listing only the primary would make the fallback path fail on its own.
+    """
+    if "binance" in host:
+        return ["api.binance.com", "data-api.binance.vision"]
+    return [host]
 
 
 async def _diagnose_egress(host: str) -> list[str]:
@@ -261,8 +302,7 @@ async def _diagnose_egress(host: str) -> list[str]:
             "  Allowed domains (keep 'Also include default list of common package",
             "  managers' checked so pip and npm keep working):",
             "",
-            "      api.binance.com",
-            "      data-api.binance.vision",
+        ] + [f"      {h}" for h in _hosts_to_allow(host)] + [
             "",
             "  Then start a NEW session — a running session keeps the policy it",
             "  started with. Full reference: code.claude.com/docs/en/cloud-environments",
@@ -301,7 +341,7 @@ def _summarise(checks) -> int:
 
 
 async def cmd_scan(args) -> int:
-    settings = get_settings()
+    settings = _settings_with_provider(args)
     from cryptopulse.alerts.engine import AlertEngine
     from cryptopulse.database import repo
     from cryptopulse.database.session import init_engine
@@ -369,7 +409,7 @@ async def cmd_scan(args) -> int:
 
 
 async def cmd_backtest(args) -> int:
-    settings = get_settings()
+    settings = _settings_with_provider(args)
     from cryptopulse.backtest.engine import BacktestConfig, BacktestEngine
     from cryptopulse.backtest.labels import DEFAULT_LABEL_CONFIGS
     from cryptopulse.core.types import Timeframe
@@ -422,7 +462,7 @@ async def cmd_backtest(args) -> int:
 
 
 async def cmd_resolve(args) -> int:
-    settings = get_settings()
+    settings = _settings_with_provider(args)
     from cryptopulse.backtest.labels import DEFAULT_LABEL_CONFIGS
     from cryptopulse.database import repo
     from cryptopulse.database.session import init_engine
@@ -522,21 +562,25 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="cryptopulse", description="CRYPTO PULSE AI")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("doctor", help="verify the configured provider against its live API")
+    p_doc = sub.add_parser("doctor", help="verify the configured provider against its live API")
+    _add_provider_flag(p_doc)
 
     p_scan = sub.add_parser("scan", help="run one scan and print the ranking")
     p_scan.add_argument("--limit", type=int, default=30)
     p_scan.add_argument("--json", action="store_true")
+    _add_provider_flag(p_scan)
 
     p_bt = sub.add_parser("backtest", help="replay the scorer over history")
     p_bt.add_argument("--symbols", type=str, default=None, help="comma-separated, default: config majors")
     p_bt.add_argument("--bars", type=int, default=1000)
     p_bt.add_argument("--min-score", type=float, default=65.0, dest="min_score")
     p_bt.add_argument("--label", type=str, default="standard_2R")
+    _add_provider_flag(p_bt)
 
     p_res = sub.add_parser("resolve", help="grade emitted signals against what actually happened")
     p_res.add_argument("--limit", type=int, default=500)
     p_res.add_argument("--label", type=str, default="standard_2R")
+    _add_provider_flag(p_res)
 
     p_serve = sub.add_parser("serve", help="run the API and dashboard")
     p_serve.add_argument("--host", type=str, default=None)
