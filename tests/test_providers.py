@@ -284,3 +284,75 @@ async def test_fixture_ohlc_invariants_hold():
     assert (s.high >= s.open).all() and (s.high >= s.close).all()
     assert (s.low <= s.open).all() and (s.low <= s.close).all()
     assert (s.volume > 0).all()
+
+
+# --------------------------------------------------------------------------- #
+# Quote volume — the liquidity gate's primary input
+# --------------------------------------------------------------------------- #
+
+
+def _ticker_row(**overrides) -> dict:
+    row = {
+        "symbol": "BTCUSDT", "lastPrice": "60000.0", "priceChangePercent": "1.5",
+        "highPrice": "61000.0", "lowPrice": "59000.0", "count": 1000,
+        "closeTime": FIXED_NOW_MS, "quoteVolume": "1000000.0",
+        "weightedAvgPrice": "60000.0", "volume": "20.0",
+    }
+    row.update(overrides)
+    return row
+
+
+async def test_quote_volume_prefers_the_reported_field():
+    provider = _binance_with(lambda r: httpx.Response(200, json=[_ticker_row()]))
+    t = (await provider.get_tickers_24h(["BTCUSDT"]))["BTCUSDT"]
+    assert t.quote_volume_24h == 1_000_000.0
+    assert t.provenance.note is None, "no substitution happened, so nothing to disclose"
+    await provider.close()
+
+
+async def test_quote_volume_falls_back_to_weighted_price_times_volume():
+    """Losing this field would drop the symbol entirely — and with it the gate
+    that decides whether the asset can be exited at all."""
+    row = _ticker_row()
+    del row["quoteVolume"]
+    provider = _binance_with(lambda r: httpx.Response(200, json=[row]))
+    t = (await provider.get_tickers_24h(["BTCUSDT"]))["BTCUSDT"]
+
+    assert t.quote_volume_24h == pytest.approx(60000.0 * 20.0)
+    assert "derived" in (t.provenance.note or ""), "a substitution must be disclosed, not silent"
+    await provider.close()
+
+
+async def test_ticker_without_any_volume_field_is_skipped_not_guessed():
+    row = _ticker_row()
+    for key in ("quoteVolume", "weightedAvgPrice", "volume"):
+        del row[key]
+    provider = _binance_with(lambda r: httpx.Response(200, json=[row]))
+    with pytest.raises(DataUnavailable):
+        await provider.get_tickers_24h(["BTCUSDT"])
+    await provider.close()
+
+
+async def test_genuinely_zero_volume_is_reported_as_zero():
+    """A dead pair must read as zero volume, not be rescued by the fallback."""
+    row = _ticker_row(quoteVolume="0.0", weightedAvgPrice="0.0", volume="0.0")
+    provider = _binance_with(lambda r: httpx.Response(200, json=[row]))
+    t = (await provider.get_tickers_24h(["BTCUSDT"]))["BTCUSDT"]
+    assert t.quote_volume_24h == 0.0
+    await provider.close()
+
+
+@pytest.mark.parametrize("_", [None])
+async def test_kline_field_layout_matches_the_documented_contract(_):
+    """Cross-checked against the python-binance reference implementation:
+    [open_time, open, high, low, close, volume, close_time, quote_volume,
+     trades, taker_buy_base, taker_buy_quote, ignore]."""
+    from cryptopulse.providers.binance import KLINE_FIELDS
+
+    assert KLINE_FIELDS[0] == "open_time"
+    assert KLINE_FIELDS[1:5] == ("open", "high", "low", "close")
+    assert KLINE_FIELDS[5] == "volume"
+    assert KLINE_FIELDS[6] == "close_time"
+    assert KLINE_FIELDS[7] == "quote_volume"
+    assert KLINE_FIELDS[8] == "trades"
+    assert len(KLINE_FIELDS) == 12
