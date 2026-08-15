@@ -45,16 +45,22 @@ async def cmd_doctor(args) -> int:
         print(f"  [{'PASS' if ok else 'FAIL'}] {name}" + (f" — {detail}" if detail else ""))
 
     # 1. connectivity
+    unreachable = False
     try:
         health = await provider.health()
         record("health/ping", health.available, health.detail or f"{health.latency_ms:.0f} ms")
-        if not health.available:
-            print("\nCannot reach the provider. Everything below is skipped.")
-            await provider.close()
-            _summarise(checks)
-            return 1
+        unreachable = not health.available
     except Exception as exc:
         record("health/ping", False, f"{type(exc).__name__}: {exc}")
+        unreachable = True
+
+    if unreachable:
+        # A bare "403 Forbidden" tells the user nothing actionable, and the
+        # difference between "your sandbox blocks this host", "your region is
+        # geo-blocked" and "your DNS is broken" changes what they must do next.
+        host = settings.providers.binance_base_url.split("://", 1)[-1].split("/")[0]
+        for line in await _diagnose_egress(host):
+            print(line)
         await provider.close()
         _summarise(checks)
         return 1
@@ -147,6 +153,135 @@ async def cmd_doctor(args) -> int:
 
     await provider.close()
     return _summarise(checks)
+
+
+async def _diagnose_egress(host: str) -> list[str]:
+    """Work out *why* the provider is unreachable, and say what to do about it.
+
+    "403 Forbidden" is not an answer a user can act on. Four very different
+    faults produce a failed ping, and each has a different fix:
+
+      * DNS does not resolve            -> resolver / container networking
+      * a sandbox egress allowlist      -> add the host to the environment
+      * the venue geo-blocks the IP     -> different region, or Binance.US
+      * traffic dies with no response   -> firewall or no route
+
+    The distinguishing test is a request that bypasses any local proxy: if the
+    host answers at all, the network works and something is choosing to refuse.
+    Sandbox gateways say so in an `x-deny-reason` header; venues do not.
+    """
+    import os
+    import socket
+
+    import httpx
+
+    out: list[str] = ["", "-" * 68, "NETWORK DIAGNOSIS", "-" * 68]
+
+    # 1. Name resolution.
+    try:
+        await asyncio.to_thread(socket.getaddrinfo, host, 443)
+        out.append(f"  DNS            resolves {host}")
+    except OSError as exc:
+        out += [
+            f"  DNS            FAILS for {host}: {exc}",
+            "",
+            "  The host does not resolve, so nothing else can be diagnosed.",
+            "  Fix the container's resolver before looking at anything else.",
+        ]
+        return out
+
+    # 2. A request that ignores HTTPS_PROXY. `trust_env=False` is the point:
+    #    it separates "the network refuses" from "the local proxy refuses".
+    status: int | None = None
+    deny_reason: str | None = None
+    body = ""
+    transport_error: str | None = None
+
+    # `trust_env=False` drops the proxy vars — which is the point — but it also
+    # drops SSL_CERT_FILE / REQUESTS_CA_BUNDLE, so a TLS-terminating gateway
+    # would fail verification and be misread as "no route". Carry the CA bundle
+    # across explicitly.
+    ca_bundle = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE")
+    verify = ca_bundle if (ca_bundle and os.path.exists(ca_bundle)) else True
+
+    try:
+        async with httpx.AsyncClient(trust_env=False, timeout=12.0, verify=verify) as client:
+            resp = await client.get(f"https://{host}/api/v3/ping")
+        status = resp.status_code
+        deny_reason = resp.headers.get("x-deny-reason")
+        body = resp.text[:200]
+    except Exception as exc:
+        transport_error = f"{type(exc).__name__}: {exc}"
+
+    if transport_error is not None:
+        tls_intercepted = "CERTIFICATE_VERIFY_FAILED" in transport_error or "self-signed" in transport_error
+        out.append(f"  direct request FAILS: {transport_error}")
+        if tls_intercepted:
+            out += [
+                "",
+                "  TLS verification failed against a self-signed chain, which means a",
+                "  proxy is intercepting and re-terminating TLS. So there IS a gateway",
+                "  in front of this host, and the refusal is almost certainly its egress",
+                "  policy rather than a network fault.",
+                "",
+                "  Point the CA bundle at the gateway's certificate and re-run, e.g.",
+                "  SSL_CERT_FILE=/path/to/ca-bundle.crt, then follow whatever host",
+                "  allowlist that gateway enforces.",
+            ]
+        else:
+            out += [
+                "",
+                "  DNS resolves but no response came back at all. That is a firewall",
+                "  or a missing route rather than a policy refusal — a policy would",
+                "  answer with a status code. Check egress firewall rules.",
+            ]
+        return out
+
+    out.append(f"  direct request HTTP {status}" + (f"  x-deny-reason: {deny_reason}" if deny_reason else ""))
+
+    if status == 200:
+        out += [
+            "",
+            "  The host is reachable when the local proxy is bypassed, so the",
+            "  network is fine and the failure is in the proxy configuration.",
+            "  Check HTTPS_PROXY and whether that proxy allows this host.",
+        ]
+        return out
+
+    if deny_reason or "allowlist" in body.lower():
+        out += [
+            "",
+            "  A sandbox egress gateway refused this host — the request never",
+            "  reached the exchange. This is an environment setting, not a fault",
+            "  in the connector and not a problem with Binance.",
+            "",
+            "  If you are on Claude Code on the web: open claude.ai/code, click the",
+            "  cloud icon above the message box, hover your environment and open its",
+            "  settings, set Network access to Custom, and add these to",
+            "  Allowed domains (keep 'Also include default list of common package",
+            "  managers' checked so pip and npm keep working):",
+            "",
+            "      api.binance.com",
+            "      data-api.binance.vision",
+            "",
+            "  Then start a NEW session — a running session keeps the policy it",
+            "  started with. Full reference: code.claude.com/docs/en/cloud-environments",
+        ]
+        return out
+
+    if status in (403, 451):
+        out += [
+            "",
+            f"  The venue itself answered {status} with no sandbox deny header, which",
+            "  usually means the source IP's region is restricted. Run from a",
+            "  permitted region, or point the connector at the venue for your",
+            "  jurisdiction (US users: api.binance.us, a different API contract",
+            "  this connector does not implement).",
+        ]
+        return out
+
+    out += ["", f"  Unexpected status {status}. Body: {body[:120]}"]
+    return out
 
 
 def _summarise(checks) -> int:
