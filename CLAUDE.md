@@ -58,9 +58,20 @@ that justifies it.
 
 **The Binance connector has never talked to Binance.**
 
-This project was built in a sandbox whose egress policy returns HTTP 403 on
-CONNECT for `api.binance.com`, `data-api.binance.vision`, `api.coingecko.com`,
-`api.dexscreener.com` and `developers.binance.com`. So:
+This project was built in a Claude Code cloud environment whose network
+allowlist refuses every exchange host. Confirmed authoritatively: a request that
+bypasses the local proxy gets `HTTP 403` with `x-deny-reason: host_not_allowed`
+and the body `Host not in allowlist: api.binance.com`. DNS resolves and TCP
+leaves the container — the environment is *choosing* to refuse. It is not a
+Binance geo-block, not DNS, and not a bug in the connector.
+
+**The fix is an environment setting, not code.** At claude.ai/code: cloud icon
+above the message box -> hover the environment -> settings -> Network access
+**Custom** -> add `api.binance.com` and `data-api.binance.vision` to
+**Allowed domains**, keeping "Also include default list of common package
+managers" checked. Then start a NEW session; a running one keeps the policy it
+booted with. `cryptopulse doctor` now prints these steps itself when it detects
+this exact failure. So:
 
 * the connector was written from the long-standing public Spot API v3 contract,
   not from the current docs (which were also unreachable);
