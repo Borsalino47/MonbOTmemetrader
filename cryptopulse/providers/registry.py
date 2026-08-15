@@ -21,6 +21,10 @@ def build_market_provider(
         from cryptopulse.providers.binance import BinanceSpotProvider
 
         return BinanceSpotProvider(settings.providers, clock=clock)
+    if choice == "kraken":
+        from cryptopulse.providers.kraken import KrakenProvider
+
+        return KrakenProvider(settings.providers, clock=clock)
     if choice == "fixture":
         from cryptopulse.providers.fixture import FixtureProvider
 

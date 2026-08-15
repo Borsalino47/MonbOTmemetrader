@@ -41,6 +41,7 @@ that justifies it.
 | React dashboard | **IMPLEMENTED** | Builds clean, renders, screenshotted against fixture data |
 | **Binance connector** | **IMPLEMENTED — NOT LIVE VERIFIED** | Contract cross-checked vs python-binance 1.0.37; still no live round-trip. See §3 |
 | Fixture (synthetic) provider | **TESTED / MOCKED** | Time-anchored, Brownian. Generates data, never market data |
+| **Kraken connector** | **IMPLEMENTED — NOT LIVE VERIFIED** | 23 tests incl. 2 full-pipeline. Contract cross-checked vs ccxt 4.5.73 |
 | Order book / order flow | **IMPLEMENTED — NOT LIVE VERIFIED** | Parsing tested against mocks |
 | DEX scanner | **NOT IMPLEMENTED** | Interface declared in `providers/base.py` |
 | DEX safety scoring | **NOT IMPLEMENTED** | `risk/safety.py:dex_safety` raises deliberately |
@@ -50,7 +51,7 @@ that justifies it.
 | Performance analytics (`outcomes/stats.py`) | **TESTED** | Buckets + component edge, `n` on every rate |
 | Schema migration (`database/migrate.py`) | **TESTED** | Additive columns only; refuses destructive changes |
 
-**Test suite: 222 tests, all passing.** Run `pytest -q`.
+**Test suite: 245 tests, all passing.** Run `pytest -q`.
 
 ---
 
@@ -124,6 +125,7 @@ cryptopulse/
     base.py              MarketDataProvider / OrderBookProvider / DEXProvider ABCs
     http.py              Weighted rate limiter, retry+jitter, circuit breaker
     binance.py           Binance Spot public REST      <- NOT LIVE VERIFIED
+    kraken.py            Kraken public REST, 2nd venue <- NOT LIVE VERIFIED
     fixture.py           SYNTHETIC generator for offline dev/tests
     registry.py          One switch: CP_PROVIDER_MARKET_DATA
   features/
@@ -165,13 +167,15 @@ cryptopulse/
   api/
     service.py           Owns the scanner, the loop and shared state
     app.py               FastAPI routes, serves the built dashboard
-  cli.py                 doctor / scan / resolve / serve / backtest
+  cli.py                 doctor / scan / resolve / serve / backtest (--provider)
+
+start.sh                 One-command launcher: install, verify feed, scan
 
 scripts/
   simulate_journal.py    Scan across simulated time, grade, compare to baseline
 
 frontend/                Vite + React 18 + TypeScript (strict)
-tests/                   222 tests
+tests/                   245 tests
 pine/                    TradingView companion scripts
 ```
 
@@ -317,8 +321,15 @@ pytest tests/test_no_lookahead.py -v    # the ones that matter most
   second path that builds features from a raw series.
 * `scoring/engine.py:_validate_weights` — weights must sum to 100. The engine
   refuses to construct otherwise, on purpose.
-* `providers/binance.py` — the only module that knows an exchange's payload
-  shape. Keep it that way.
+* `providers/binance.py` and `providers/kraken.py` — the only modules that know
+  an exchange's payload shape. Keep it that way.
+* `providers/kraken.py:_get` — Kraken reports failures with **HTTP 200** and a
+  populated `error` array. Checking the status code alone reads a hard failure as
+  success. Never bypass this unwrapping.
+* `providers/kraken.py:_ensure_pairs` — every Kraken response is keyed by the
+  legacy pair id (`XXBTZUSD`), not the tradable name (`XBTUSD`). The scanner
+  reaches `get_tickers_24h` without calling `list_symbols`, so the map must build
+  itself on first use. An integration test caught this exact bug.
 * `database/repo.py` — signals are immutable historical facts. Duplicate
   `(symbol, timestamp, engine_version)` rows are skipped, never updated.
 * `risk/safety.py:dex_safety` — raises `NotImplementedError` deliberately. Do

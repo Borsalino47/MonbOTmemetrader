@@ -177,6 +177,21 @@ No API key is required. The scanner reads only public market-data endpoints.
 
 ## Running
 
+The fastest path — installs what is missing, verifies the feed, then scans:
+
+```bash
+./start.sh            # your configured provider
+./start.sh kraken     # via Kraken
+./start.sh binance    # via Binance
+./start.sh demo       # offline, SYNTHETIC data, clearly labelled
+./start.sh serve      # API + dashboard on :8000
+```
+
+It refuses to scan on an unverified feed and tells you why, rather than printing
+a table built on a silent source.
+
+Or drive the CLI directly:
+
 ```bash
 # 1. Verify the data feed FIRST
 python -m cryptopulse.cli doctor
@@ -189,6 +204,10 @@ python -m cryptopulse.cli serve
 
 # 4. Grade signals whose horizon has elapsed
 python -m cryptopulse.cli resolve
+
+# Switch venue for one run, no config change
+python -m cryptopulse.cli scan --provider kraken
+python -m cryptopulse.cli doctor --provider kraken
 
 # Offline development (SYNTHETIC data, clearly labelled everywhere)
 CP_PROVIDER_MARKET_DATA=fixture python -m cryptopulse.cli serve
@@ -233,6 +252,7 @@ feed or a synthetic source raises a permanent banner.
 | Provider | Type | Status |
 |---|---|---|
 | Binance Spot public REST | Market data + order book | IMPLEMENTED, **not live verified** |
+| Kraken public REST | Market data + order book | IMPLEMENTED, **not live verified** |
 | Fixture generator | Synthetic candles | For tests and offline dev only |
 | CoinGecko / DexScreener / Birdeye | — | NOT IMPLEMENTED |
 
@@ -255,7 +275,7 @@ retried — it is our bug, not a transient failure.
 ## Testing
 
 ```bash
-pytest -q                            # 217 tests
+pytest -q                            # 245 tests
 pytest tests/test_no_lookahead.py -v # the ones that matter most
 ```
 
@@ -272,6 +292,7 @@ pytest tests/test_no_lookahead.py -v # the ones that matter most
 | `test_backtest.py` | 22 | Labels, metrics, splits, costs, replay isolation |
 | `test_api.py` | 21 | Endpoint contracts, filters, freshness, no-probability rule |
 | `test_outcomes.py` | 23 | Fixture stability, resolution correctness, honest non-answers, analytics |
+| `test_kraken.py` | 23 | Error envelope, field mapping, pair rename, 2 full-pipeline runs |
 
 ---
 
@@ -390,7 +411,9 @@ otherwise leak the test window into training.
   timestamp, so fetch time is recorded as the observation time and labelled as such.
 * **Postgres is untested.** SQLite is verified; the Postgres path is configuration
   only.
-* **Single-venue.** Cross-provider validation is Phase 2.
+* **Two venues, no cross-validation yet.** Binance and Kraken are both
+  implemented and switchable with `--provider`, but nothing yet compares their
+  quotes against each other to catch a bad feed. That is Phase 2.
 
 ---
 
