@@ -50,7 +50,7 @@ that justifies it.
 | Performance analytics (`outcomes/stats.py`) | **TESTED** | Buckets + component edge, `n` on every rate |
 | Schema migration (`database/migrate.py`) | **TESTED** | Additive columns only; refuses destructive changes |
 
-**Test suite: 217 tests, all passing.** Run `pytest -q`.
+**Test suite: 222 tests, all passing.** Run `pytest -q`.
 
 ---
 
@@ -171,7 +171,7 @@ scripts/
   simulate_journal.py    Scan across simulated time, grade, compare to baseline
 
 frontend/                Vite + React 18 + TypeScript (strict)
-tests/                   217 tests
+tests/                   222 tests
 pine/                    TradingView companion scripts
 ```
 
