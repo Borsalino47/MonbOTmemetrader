@@ -10,9 +10,22 @@ packet with Binance, and the official documentation could not be re-read to
 confirm the current field order of the kline payload or the current request
 weights.
 
-The endpoint shapes below are the long-standing public Spot API v3 contract.
-They are the *hypothesis*, not a verified fact. Before trusting this in
-production run:
+The endpoint shapes below have been **cross-checked against the python-binance
+reference implementation** (v1.0.37, read offline from PyPI, which this sandbox
+can reach even though Binance itself is blocked). That check confirmed:
+
+  * the 12-column kline layout encoded in KLINE_FIELDS, index for index;
+  * the klines limit of 1000 and the depth default of 100;
+  * base URL https://api.binance.com/api + public API version v3;
+  * the paths ping / exchangeInfo / ticker/24hr / klines / depth;
+  * the ticker field names lastPrice, priceChangePercent, highPrice, lowPrice,
+    closeTime, count, volume, weightedAvgPrice, quoteVolume;
+  * the exchangeInfo symbol fields and the PRICE_FILTER / LOT_SIZE /
+    MIN_NOTIONAL filter names.
+
+That raises confidence but is still **not** verification: an independent library
+agreeing with me proves we share the same understanding, not that the live API
+matches it today. Before trusting this in production run:
 
     python -m cryptopulse.cli doctor
 
@@ -181,15 +194,18 @@ class BinanceSpotProvider(MarketDataProvider, OrderBookProvider):
         for row in rows:
             try:
                 as_of = int(row.get("closeTime", fetched))
+                quote_volume, qv_note = _quote_volume_from(row)
                 out[row["symbol"]] = Ticker24h(
                     symbol=row["symbol"],
                     last_price=float(row["lastPrice"]),
-                    quote_volume_24h=float(row["quoteVolume"]),
+                    quote_volume_24h=quote_volume,
                     price_change_pct_24h=float(row["priceChangePercent"]),
                     high_24h=float(row["highPrice"]),
                     low_24h=float(row["lowPrice"]),
                     trades_24h=int(row.get("count", 0)),
-                    provenance=Provenance(source=self.name, as_of_ms=as_of, fetched_at_ms=fetched),
+                    provenance=Provenance(
+                        source=self.name, as_of_ms=as_of, fetched_at_ms=fetched, note=qv_note
+                    ),
                 )
             except (KeyError, TypeError, ValueError) as exc:
                 log.warning("ticker_parse_failed", row=str(row)[:120], error=str(exc))
@@ -292,3 +308,37 @@ class BinanceSpotProvider(MarketDataProvider, OrderBookProvider):
                 source=self.name, as_of_ms=fetched, fetched_at_ms=fetched, note="REST snapshot, no venue timestamp"
             ),
         )
+
+
+def _quote_volume_from(row: dict) -> tuple[float, str | None]:
+    """24h volume in the quote asset, with a disclosed fallback.
+
+    `quoteVolume` is the field the liquidity gate runs on, and the gate is the
+    thing standing between the user and an asset they cannot exit. A missing key
+    would drop the whole symbol from the universe via the parse-error path, which
+    is a silent, hard-to-notice failure for the most important input in the system.
+
+    `weightedAvgPrice * volume` is not an estimate — it is the definition of quote
+    volume, and Binance documents `weightedAvgPrice` as `quoteVolume / volume`.
+    Using it is an identity, not a guess. It is still tagged in the provenance so
+    the substitution is visible rather than assumed.
+
+    If neither is available the caller gets a KeyError and the row is skipped:
+    better a missing asset than a liquidity verdict built on nothing.
+    """
+    raw = row.get("quoteVolume")
+    if raw is not None:
+        value = float(raw)
+        if value > 0:
+            return value, None
+
+    weighted = row.get("weightedAvgPrice")
+    volume = row.get("volume")
+    if weighted is not None and volume is not None:
+        derived = float(weighted) * float(volume)
+        if derived > 0:
+            return derived, "quote volume derived from weightedAvgPrice * volume"
+
+    if raw is not None:
+        return float(raw), None  # genuinely zero volume; report it as such
+    raise KeyError("quoteVolume")

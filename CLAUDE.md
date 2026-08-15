@@ -39,7 +39,7 @@ that justifies it.
 | Backtest engine + labels + walk-forward | **TESTED** | Never run on real market data |
 | FastAPI API | **TESTED** | 16 endpoint tests |
 | React dashboard | **IMPLEMENTED** | Builds clean, renders, screenshotted against fixture data |
-| **Binance connector** | **IMPLEMENTED — NOT LIVE VERIFIED** | See §3. This is the big one |
+| **Binance connector** | **IMPLEMENTED — NOT LIVE VERIFIED** | Contract cross-checked vs python-binance 1.0.37; still no live round-trip. See §3 |
 | Fixture (synthetic) provider | **TESTED / MOCKED** | Time-anchored, Brownian. Generates data, never market data |
 | Order book / order flow | **IMPLEMENTED — NOT LIVE VERIFIED** | Parsing tested against mocks |
 | DEX scanner | **NOT IMPLEMENTED** | Interface declared in `providers/base.py` |
@@ -64,9 +64,23 @@ CONNECT for `api.binance.com`, `data-api.binance.vision`, `api.coingecko.com`,
 
 * the connector was written from the long-standing public Spot API v3 contract,
   not from the current docs (which were also unreachable);
-* the kline column order, the request weights and the ticker field names are a
-  **hypothesis** encoded in `providers/binance.py:KLINE_FIELDS`;
 * no number the scanner has ever produced came from a real exchange.
+
+**What has since been cross-checked.** PyPI *is* reachable from this sandbox, so
+`python-binance` 1.0.37 was downloaded and read as an independent reference. It
+confirms, index for index, the 12-column kline layout in `KLINE_FIELDS`; the
+1000-row klines cap; the base URL and `v3`; the five endpoint paths; the
+ticker/24hr field names; and the exchangeInfo filter names. That is a second
+opinion, not a verification — it proves the reference library and this connector
+share an understanding, not that the live API matches it today.
+
+**One fragility it exposed and fixed.** `quoteVolume` is the liquidity gate's
+primary input, and a `KeyError` on it would have dropped the whole symbol through
+the parse-error path — a silent failure in the most important input in the
+system. The connector now falls back to `weightedAvgPrice * volume` (an identity,
+since Binance defines `weightedAvgPrice` as `quoteVolume / volume`) and tags the
+provenance so the substitution is visible. With neither field the row is skipped
+rather than guessed.
 
 **Before trusting this in production, run:**
 
