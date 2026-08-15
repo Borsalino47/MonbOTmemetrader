@@ -1,0 +1,35 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      CP_ENVIRONMENT: prod
+      CP_LOG_JSON: "true"
+      CP_PAPER_MODE: "true"
+      CP_DB_URL: postgresql+psycopg://cryptopulse:cryptopulse@db:5432/cryptopulse
+    env_file:
+      - path: .env
+        required: false
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: cryptopulse
+      POSTGRES_PASSWORD: cryptopulse
+      POSTGRES_DB: cryptopulse
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cryptopulse"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  pgdata:
