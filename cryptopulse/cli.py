@@ -282,6 +282,86 @@ async def cmd_backtest(args) -> int:
 
 
 # --------------------------------------------------------------------------- #
+# resolve — grade emitted signals against what actually happened
+# --------------------------------------------------------------------------- #
+
+
+async def cmd_resolve(args) -> int:
+    settings = get_settings()
+    from cryptopulse.backtest.labels import DEFAULT_LABEL_CONFIGS
+    from cryptopulse.database import repo
+    from cryptopulse.database.session import init_engine
+    from cryptopulse.outcomes.stats import build_performance
+    from cryptopulse.outcomes.tracker import OutcomeTracker
+    from cryptopulse.providers.registry import build_market_provider
+
+    init_engine(settings.database)
+    provider = build_market_provider(settings, SYSTEM_CLOCK)
+    label = next((c for c in DEFAULT_LABEL_CONFIGS if c.name == args.label), DEFAULT_LABEL_CONFIGS[1])
+    tracker = OutcomeTracker(settings, provider, label_config=label, clock=SYSTEM_CLOCK)
+
+    print(f"\n{'=' * 76}\nOUTCOME TRACKER — {label.name}\n{'=' * 76}")
+    print(f"Definition: {label.describe()}\n")
+
+    pending = repo.pending_signals(tracker.ready_before_ms(), args.limit)
+    print(f"{len(pending)} signal(s) old enough to grade.")
+    if not pending:
+        counts = repo.outcome_counts()
+        print(f"Journal: {counts['total_signals']} signals, {counts['pending_evaluation']} awaiting their horizon.")
+        await provider.close()
+        return 0
+
+    report = await tracker.resolve(pending)
+    written = repo.save_resolutions(report.resolutions)
+    await provider.close()
+
+    print(f"\nresolved={report.resolved}  still_pending={report.still_pending}  "
+          f"unresolvable={report.unresolvable}  written={written}  ({report.duration_ms}ms)")
+    if report.by_label:
+        print("by label: " + ", ".join(f"{k}={v}" for k, v in sorted(report.by_label.items())))
+    if report.errors:
+        print(f"\n{len(report.errors)} symbol(s) failed:")
+        for sym, err in list(report.errors.items())[:8]:
+            print(f"  {sym}: {err}")
+
+    counts = repo.outcome_counts()
+    print(f"\nJournal: {counts['total_signals']} signals · {counts['settled']} settled · "
+          f"{counts['pending_evaluation']} pending · {counts['unresolvable']} unresolvable")
+
+    rows = repo.resolved_signals()
+    if rows:
+        perf = build_performance(rows).to_dict()
+        o = perf["overall"]
+        print(f"\n{'-' * 76}\nREALISED PERFORMANCE (net of costs)\n{'-' * 76}")
+        print(f"  n={o['n']}  wins={o['wins']}  losses={o['losses']}  timeouts={o['timeouts']}")
+        print(f"  win rate      {_fmt_pct(o['win_rate'])}")
+        print(f"  expectancy    {_fmt(o['expectancy_pct'])}% per signal")
+        print(f"  profit factor {_fmt(o['profit_factor'])}")
+        print(f"  avg MFE/MAE   {_fmt(o['avg_mfe_atr'])} / {_fmt(o['avg_mae_atr'])} ATR")
+        if o["insufficient_sample"]:
+            print(f"\n  ** Only {o['n']} settled signals (minimum {perf['min_sample']}). "
+                  "Not a finding — a smoke test. **")
+        for note in perf["notes"]:
+            print(f"  ** {note}")
+
+        if perf["component_edge"]:
+            print(f"\n{'-' * 76}\nCOMPONENT EDGE — avg points, winners vs losers\n{'-' * 76}")
+            for c in perf["component_edge"]:
+                flag = "  (sample too small)" if c["insufficient_sample"] else ""
+                print(f"  {c['component']:<12} winners {c['avg_points_winners']:>6.2f}   "
+                      f"losers {c['avg_points_losers']:>6.2f}   edge {c['edge']:>+6.2f}{flag}")
+    return 0
+
+
+def _fmt(x, nd: int = 2) -> str:
+    return "n/a" if x is None else f"{x:.{nd}f}"
+
+
+def _fmt_pct(x) -> str:
+    return "n/a" if x is None else f"{x * 100:.1f}%"
+
+
+# --------------------------------------------------------------------------- #
 # serve
 # --------------------------------------------------------------------------- #
 
@@ -319,6 +399,10 @@ def main(argv: list[str] | None = None) -> int:
     p_bt.add_argument("--min-score", type=float, default=65.0, dest="min_score")
     p_bt.add_argument("--label", type=str, default="standard_2R")
 
+    p_res = sub.add_parser("resolve", help="grade emitted signals against what actually happened")
+    p_res.add_argument("--limit", type=int, default=500)
+    p_res.add_argument("--label", type=str, default="standard_2R")
+
     p_serve = sub.add_parser("serve", help="run the API and dashboard")
     p_serve.add_argument("--host", type=str, default=None)
     p_serve.add_argument("--port", type=int, default=None)
@@ -330,7 +414,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "serve":
         return cmd_serve(args)
-    handler = {"doctor": cmd_doctor, "scan": cmd_scan, "backtest": cmd_backtest}[args.command]
+    handler = {"doctor": cmd_doctor, "scan": cmd_scan, "backtest": cmd_backtest, "resolve": cmd_resolve}[args.command]
     return asyncio.run(handler(args))
 
 

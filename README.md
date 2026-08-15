@@ -40,11 +40,18 @@ mismatch.
 engine is tested and works; it has only ever been fed synthetic candles. There
 are no performance claims here because there is no evidence for any.
 
-**3. The score is not a probability.** `84/100` means this setup ranks above one
+**3. On synthetic data, the scanner currently selects *worse than random.***
+`scripts/simulate_journal.py` compares the scanner's win rate against entries
+taken every fifth bar with no scoring at all. On the synthetic feed the scanner
+lands roughly 7 points below that baseline. This says nothing about real markets
+— it is generated data — but it is reported rather than hidden, and it is exactly
+the comparison you must run on real history before trusting the weights.
+
+**4. The score is not a probability.** `84/100` means this setup ranks above one
 scoring `60` under the current fixed weights. It does not mean 84% of anything.
 The weighting is a starting hypothesis that has not been statistically fitted.
 
-**4. This is not financial advice and places no orders.** `PAPER_MODE` is on by
+**5. This is not financial advice and places no orders.** `PAPER_MODE` is on by
 default and there is no order-placing code in the repository.
 
 ---
@@ -72,6 +79,14 @@ and why, split into reasons (arguments for) and caveats (arguments against).
 
 **Remembers.** Score history per symbol means a coin going `50 → 80` in twenty
 minutes ranks above one that has sat at `80` for three hours.
+
+**Grades itself.** Every emitted signal is written to a journal with NULL outcome
+columns. Once its horizon elapses, the outcome tracker fetches the bars that
+actually followed and records WIN / LOSS / TIMEOUT with the realised return, MFE
+and MAE. The dashboard then reports win rate, expectancy and profit factor by
+score band, setup state, pump maturity, regime and liquidity — plus which scoring
+components separated winners from losers. Until a signal has a verdict, the win
+rate is `null`, not zero.
 
 ---
 
@@ -172,6 +187,9 @@ python -m cryptopulse.cli scan --limit 30
 # 3. API + dashboard at http://localhost:8000
 python -m cryptopulse.cli serve
 
+# 4. Grade signals whose horizon has elapsed
+python -m cryptopulse.cli resolve
+
 # Offline development (SYNTHETIC data, clearly labelled everywhere)
 CP_PROVIDER_MARKET_DATA=fixture python -m cryptopulse.cli serve
 ```
@@ -237,7 +255,7 @@ retried — it is our bug, not a transient failure.
 ## Testing
 
 ```bash
-pytest -q                            # 189 tests
+pytest -q                            # 217 tests
 pytest tests/test_no_lookahead.py -v # the ones that matter most
 ```
 
@@ -252,7 +270,71 @@ pytest tests/test_no_lookahead.py -v # the ones that matter most
 | `test_stale_data.py` | 12 | Provenance age, confidence decay, staleness cap |
 | `test_scanner_alerts.py` | 23 | Pipeline resilience, score memory, alert dedup and cooldown |
 | `test_backtest.py` | 22 | Labels, metrics, splits, costs, replay isolation |
-| `test_api.py` | 16 | Endpoint contracts, filters, freshness, no-probability rule |
+| `test_api.py` | 21 | Endpoint contracts, filters, freshness, no-probability rule |
+| `test_outcomes.py` | 23 | Fixture stability, resolution correctness, honest non-answers, analytics |
+
+---
+
+## Outcome tracking — does the scanner actually work?
+
+A scanner that cannot be graded is an opinion generator. Every signal above
+`OBSERVE` is journalled with its full score breakdown and NULL outcome columns.
+
+```bash
+# grade every signal whose horizon has elapsed, then print realised performance
+python -m cryptopulse.cli resolve
+
+# or over HTTP
+curl -X POST localhost:8000/api/outcomes/resolve
+curl localhost:8000/api/performance
+```
+
+Resolution also runs automatically after every scan.
+
+**Why this is not look-ahead.** Look-ahead is using future data to *make* a
+decision. This uses future data to *grade* a decision already written to disk
+with its timestamp. The score came from bars closed at or before the signal's
+timestamp; resolution reads only bars strictly after it.
+
+Rules the tracker holds to:
+
+| Situation | Behaviour |
+|---|---|
+| Horizon has not elapsed and no barrier touched | stays **pending** — not settled at the current price |
+| A barrier is touched early | settled immediately; the trade is over |
+| Signal bar missing from the feed | **UNRESOLVABLE** with a reason — never grafted onto a neighbouring bar |
+| Bars needed have fallen out of reach | **UNRESOLVABLE**, excluded from every rate, never counted as a loss |
+| Signal has no recorded ATR | **UNRESOLVABLE** — ATR-scaled barriers cannot be placed |
+| Already graded | never re-graded; a verdict is written once |
+
+The ATR used is the one recorded *at signal time*, never recomputed from data the
+signal did not have. Entry is the next bar's open.
+
+**Performance view** breaks results down by opportunity score band, setup state,
+pump maturity band, market regime and liquidity — with `n` beside every rate and
+buckets under 20 samples flagged `insufficient_sample`. **Component edge**
+compares the average points each component awarded to eventual winners versus
+losers: a component that scores both the same is contributing noise to the final
+score, however sensible it looked when it was written.
+
+### Verifying the whole loop offline
+
+```bash
+python scripts/simulate_journal.py --scans 70 --step-bars 3
+```
+
+Runs real scans across simulated time, grades the resulting journal, and compares
+the scanner against a random-entry baseline on the same bars. This works offline
+only because the fixture provider is **time-anchored**: the candle at a given
+timestamp is identical whenever you ask for it, so a signal recorded at T can
+genuinely be graded against T+1, T+2, …
+
+The synthetic feed is also generated with Brownian scaling (Hurst 0.5) so its
+increments behave like a market. That detail matters more than it sounds: an
+earlier version produced white noise around a trend, which mean-reverts so hard
+that random entries won only ~10% on a 2:1 barrier instead of the ~33% a
+martingale implies — making every synthetic result look catastrophic for reasons
+that had nothing to do with the strategy. A regression test guards it.
 
 ---
 
@@ -296,8 +378,12 @@ otherwise leak the test window into training.
   to outcomes. They will almost certainly change once real data arrives.
 * **No probability calibration.** Scores are ranks. There is no evidence base to
   convert them into likelihoods yet.
-* **No outcome tracker.** The `signals` table has outcome columns and they stay
-  NULL. `/api/signals` correctly reports `win_rate: null` rather than inventing one.
+* **No real outcomes yet.** The outcome tracker works and has been run end to end
+  on 310 signals — but all of them came from the synthetic feed. No signal has
+  ever been graded against a real market.
+* **Signals older than 1000 primary-timeframe bars become UNRESOLVABLE**, because
+  that is the deepest a single klines request reaches. At the 5m default that is
+  roughly 3.5 days: run resolution at least that often or verdicts are lost.
 * **DEX scanning is not implemented.** The interface is declared;
   `risk/safety.py:dex_safety` raises rather than returning a plausible default.
 * **Order flow is REST snapshots**, not a streamed book. Depth carries no venue

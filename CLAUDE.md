@@ -40,15 +40,17 @@ that justifies it.
 | FastAPI API | **TESTED** | 16 endpoint tests |
 | React dashboard | **IMPLEMENTED** | Builds clean, renders, screenshotted against fixture data |
 | **Binance connector** | **IMPLEMENTED — NOT LIVE VERIFIED** | See §3. This is the big one |
-| Fixture (synthetic) provider | **TESTED / MOCKED** | Generates data. Never market data |
+| Fixture (synthetic) provider | **TESTED / MOCKED** | Time-anchored, Brownian. Generates data, never market data |
 | Order book / order flow | **IMPLEMENTED — NOT LIVE VERIFIED** | Parsing tested against mocks |
 | DEX scanner | **NOT IMPLEMENTED** | Interface declared in `providers/base.py` |
 | DEX safety scoring | **NOT IMPLEMENTED** | `risk/safety.py:dex_safety` raises deliberately |
 | Score calibration / probabilities | **NOT IMPLEMENTED** | Needs a real signal history first |
 | Machine learning | **NOT IMPLEMENTED** | Deliberately deferred, see §9 |
-| Outcome tracker (resolves signal outcomes) | **NOT IMPLEMENTED** | Columns exist and stay NULL |
+| Outcome tracker | **TESTED** | 23 tests; run end to end on 310 signals |
+| Performance analytics (`outcomes/stats.py`) | **TESTED** | Buckets + component edge, `n` on every rate |
+| Schema migration (`database/migrate.py`) | **TESTED** | Additive columns only; refuses destructive changes |
 
-**Test suite: 189 tests, all passing.** Run `pytest -q`.
+**Test suite: 217 tests, all passing.** Run `pytest -q`.
 
 ---
 
@@ -122,6 +124,9 @@ cryptopulse/
     cex.py               Two-pass pipeline (cheap filter, then order books)
     memory.py            Score history ring buffer, score acceleration
   alerts/engine.py       Levels, gates, dedup, cooldown
+  outcomes/
+    tracker.py           Grades emitted signals against the bars that followed
+    stats.py             Win rate / expectancy by bucket + per-component edge
   backtest/
     labels.py            Triple-barrier, ATR-scaled, pessimistic on ambiguity
     metrics.py           Expectancy, PF, DD, Sharpe/Sortino (>=20 trades only)
@@ -129,15 +134,19 @@ cryptopulse/
     engine.py            Replays the live scorer over history via series.upto()
   database/
     models.py            signals / score_points / alerts / scan_runs
+    migrate.py           Additive ALTER TABLE for columns create_all cannot add
     session.py           SQLAlchemy engine
     repo.py              The only module that writes
   api/
     service.py           Owns the scanner, the loop and shared state
     app.py               FastAPI routes, serves the built dashboard
-  cli.py                 doctor / scan / serve / backtest
+  cli.py                 doctor / scan / resolve / serve / backtest
+
+scripts/
+  simulate_journal.py    Scan across simulated time, grade, compare to baseline
 
 frontend/                Vite + React 18 + TypeScript (strict)
-tests/                   189 tests
+tests/                   217 tests
 pine/                    TradingView companion scripts
 ```
 
@@ -183,7 +192,18 @@ Break these and the product is lying to its user.
 9. **Paper mode.** `CP_PAPER_MODE=true` by default. No order-placing code exists
    anywhere in this repository.
 
-10. **Scoring is versioned.** `engine_version` + a `weights_fingerprint` hash go
+10. **An outcome is graded once, never re-graded.** `save_resolutions` skips a
+    row that already has a verdict. Re-grading under a different label config
+    would silently rewrite history.
+
+11. **A verdict that cannot be known is not invented.** Too early stays pending;
+    unreachable bars become `UNRESOLVABLE` with a reason and are excluded from
+    every rate rather than counted as losses.
+
+12. **Every rate carries its `n`.** Buckets below `MIN_SAMPLE` (20) are flagged
+    `insufficient_sample`. A 100% win rate over three signals is not a finding.
+
+13. **Scoring is versioned.** `engine_version` + a `weights_fingerprint` hash go
     into every signal row. Change a weight and the fingerprint changes, so old
     signals are never reinterpreted under new rules.
 
@@ -240,6 +260,12 @@ python -m cryptopulse.cli doctor
 
 # one scan, printed as a table
 python -m cryptopulse.cli scan --limit 30
+
+# grade signals whose horizon has elapsed, then print realised performance
+python -m cryptopulse.cli resolve
+
+# full loop offline: scan across simulated time, grade, compare to random entry
+python scripts/simulate_journal.py --scans 70 --step-bars 3
 CP_PROVIDER_MARKET_DATA=fixture python -m cryptopulse.cli scan   # offline
 
 # API + dashboard on http://localhost:8000
@@ -272,6 +298,12 @@ pytest tests/test_no_lookahead.py -v    # the ones that matter most
   `(symbol, timestamp, engine_version)` rows are skipped, never updated.
 * `risk/safety.py:dex_safety` — raises `NotImplementedError` deliberately. Do
   not make it return a default to silence the error.
+* `providers/fixture.py:_fbm` — the `hurst=0.5` default is load-bearing. At
+  H = 1 the synthetic series mean-reverts hard and random entries win ~10% on a
+  2:1 barrier instead of ~33%, making every synthetic outcome look catastrophic
+  for reasons unrelated to the strategy. A regression test guards it.
+* `outcomes/tracker.py:_resolve_one` — requires an *exact* close-time match.
+  Resolving against the nearest bar would shift every barrier by a bar.
 
 ---
 
@@ -281,18 +313,24 @@ pytest tests/test_no_lookahead.py -v    # the ones that matter most
    mismatch it reports. Only then is anything else worth doing.
 2. **Let it run and accumulate signals.** The journal is the point; nothing can
    be validated without a few thousand real rows.
-3. **Build the outcome tracker.** A job that revisits signals older than the
-   label horizon, fetches what actually happened, and fills
-   `outcome_label / outcome_return_pct / outcome_mfe_atr / outcome_mae_atr`.
-   Until this exists, `signal_stats()` correctly reports `win_rate: null`.
-4. **Backtest on real history**, walk-forward, with the embargo set to at least
+3. ~~Build the outcome tracker.~~ **Done.** `outcomes/tracker.py` grades signals
+   once their horizon elapses; `outcomes/stats.py` aggregates. Runs automatically
+   after every scan, or on demand via `cryptopulse resolve` /
+   `POST /api/outcomes/resolve`.
+4. **Watch the baseline comparison.** `scripts/simulate_journal.py` prints the
+   scanner's win rate against random entries on the same bars. On synthetic data
+   the scanner currently lands ~7 points *below* random. That number says nothing
+   about markets, but the same comparison on real history is the first thing that
+   would reveal the V1 weights are actively harmful rather than merely
+   unvalidated. Do not skip it.
+5. **Backtest on real history**, walk-forward, with the embargo set to at least
    the label horizon.
-5. **Then, and only then, revisit the weights.** Feature importance against real
+6. **Then, and only then, revisit the weights.** Feature importance against real
    outcomes. Any change bumps the engine version.
-6. **Calibration** — map score bands to observed frequencies. Only after this
+7. **Calibration** — map score bands to observed frequencies. Only after this
    may the UI display anything resembling a probability.
-7. Phase 2: DEX scanner, on-chain safety, multi-provider cross-validation.
-8. Phase 3: ML, compared against the deterministic baseline. Not before.
+8. Phase 2: DEX scanner, on-chain safety, multi-provider cross-validation.
+9. Phase 3: ML, compared against the deterministic baseline. Not before.
 
 ---
 

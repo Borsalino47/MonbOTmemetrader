@@ -1,4 +1,4 @@
-import type { AlertItem, AssetDetail, Health, ScanResponse } from './types';
+import type { AlertItem, AssetDetail, Health, PerformanceResponse, ScanResponse } from './types';
 
 const BASE = '/api';
 
@@ -31,6 +31,12 @@ export const api = {
   alerts: (limit = 50) => get<{ alerts: AlertItem[] }>('/alerts', { limit }),
   signals: (limit = 100) =>
     get<{ stats: Record<string, unknown>; signals: Record<string, unknown>[] }>('/signals', { limit }),
+  performance: () => get<PerformanceResponse>('/performance'),
+  resolveOutcomes: async () => {
+    const resp = await fetch(`${BASE}/outcomes/resolve`, { method: 'POST' });
+    if (!resp.ok) throw new Error(`resolve failed: ${resp.status}`);
+    return resp.json();
+  },
   runScan: async () => {
     const resp = await fetch(`${BASE}/scan/run`, { method: 'POST' });
     if (!resp.ok) throw new Error(`scan failed: ${resp.status}`);

@@ -179,3 +179,61 @@ export interface AlertItem {
   trigger: string | null;
   invalidation: string | null;
 }
+
+// --------------------------------------------------------------- outcomes --
+
+export interface Bucket {
+  key: string;
+  n: number;
+  wins: number;
+  losses: number;
+  timeouts: number;
+  win_rate: number | null;
+  expectancy_pct: number | null;
+  avg_win_pct: number | null;
+  avg_loss_pct: number | null;
+  profit_factor: number | null;
+  avg_mfe_atr: number | null;
+  avg_mae_atr: number | null;
+  insufficient_sample: boolean;
+}
+
+export interface ComponentEdge {
+  component: string;
+  avg_points_winners: number;
+  avg_points_losers: number;
+  edge: number;
+  n_winners: number;
+  n_losers: number;
+  insufficient_sample: boolean;
+}
+
+export interface PerformanceResponse {
+  counts: {
+    total_signals: number;
+    pending_evaluation: number;
+    unresolvable: number;
+    settled: number;
+    wins: number;
+    losses: number;
+    timeouts: number;
+    synthetic_signals: number;
+  };
+  label: { config: string; definition: string };
+  costs: Record<string, number | string>;
+  performance: {
+    overall: Bucket;
+    by_score_band: Bucket[];
+    by_state: Bucket[];
+    by_maturity_band: Bucket[];
+    by_liquidity: Bucket[];
+    by_regime: Bucket[];
+    by_symbol: Bucket[];
+    component_edge: ComponentEdge[];
+    return_basis: string;
+    min_sample: number;
+    synthetic_included: boolean;
+    synthetic_count: number;
+    notes: string[];
+  };
+}
