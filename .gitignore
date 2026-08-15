@@ -1,2 +1,31 @@
-node_modules/
+# Secrets — never commit
 .env
+.env.local
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+frontend/dist/
+
+# Data / runtime
+data/*.db
+data/*.sqlite
+data/fixtures/
+*.log
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
