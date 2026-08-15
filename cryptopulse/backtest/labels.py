@@ -36,7 +36,17 @@ class Outcome(str, Enum):
     WIN = "WIN"
     LOSS = "LOSS"
     TIMEOUT = "TIMEOUT"
-    UNRESOLVED = "UNRESOLVED"  # not enough future bars exist yet
+    # Not enough future bars exist *yet*. A transient state: ask again later.
+    UNRESOLVED = "UNRESOLVED"
+    # Can never be resolved — the bars needed have fallen out of reach, or the
+    # signal lacks the ATR its barriers depend on. Terminal, and excluded from
+    # every rate rather than counted as a loss.
+    UNRESOLVABLE = "UNRESOLVABLE"
+
+    @property
+    def is_settled(self) -> bool:
+        """True when this outcome represents a real verdict on the trade."""
+        return self in (Outcome.WIN, Outcome.LOSS, Outcome.TIMEOUT)
 
 
 @dataclass(frozen=True, slots=True)

@@ -80,12 +80,23 @@ class SignalRecord(Base):
     risks: Mapped[list] = mapped_column(JSON, default=list)
 
     # --- filled in later by the outcome tracker; NULL at insert time --------- #
+    # These are never written at insert time. Doing so would be look-ahead bias
+    # committed straight to disk: the outcome of a signal is not knowable at the
+    # moment the signal fires.
     outcome_evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     outcome_horizon_bars: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    outcome_label: Mapped[str | None] = mapped_column(String(16), nullable=True)  # WIN / LOSS / TIMEOUT
+    # WIN / LOSS / TIMEOUT / UNRESOLVABLE. UNRESOLVABLE means the bars needed to
+    # judge it are no longer fetchable — it is excluded from every rate.
+    outcome_label: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    outcome_label_config: Mapped[str | None] = mapped_column(String(32), nullable=True)
     outcome_return_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    outcome_net_return_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
     outcome_mfe_atr: Mapped[float | None] = mapped_column(Float, nullable=True)
     outcome_mae_atr: Mapped[float | None] = mapped_column(Float, nullable=True)
+    outcome_bars_held: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    outcome_entry_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    outcome_exit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    outcome_note: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
     __table_args__ = (
         UniqueConstraint("symbol", "timestamp_ms", "engine_version", name="uq_signal_symbol_ts_engine"),

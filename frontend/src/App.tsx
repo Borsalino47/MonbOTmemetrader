@@ -2,12 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api';
 import { AlertsView } from './components/AlertsView';
 import { AssetDrawer } from './components/AssetDrawer';
+import { PerformanceView } from './components/PerformanceView';
 import { ScannerTable } from './components/ScannerTable';
 import { TopOpportunities } from './components/TopOpportunities';
 import { age, clock } from './format';
 import type { AlertItem, Health, ScoreRow } from './types';
 
-type Tab = 'scanner' | 'alerts';
+type Tab = 'scanner' | 'alerts' | 'performance';
 
 const REFRESH_MS = 15_000;
 
@@ -121,6 +122,9 @@ export default function App() {
           <button className={tab === 'alerts' ? 'active' : ''} onClick={() => setTab('alerts')}>
             Alerts{alerts.length > 0 ? ` (${alerts.length})` : ''}
           </button>
+          <button className={tab === 'performance' ? 'active' : ''} onClick={() => setTab('performance')}>
+            Performance
+          </button>
         </nav>
 
         <div className="status-strip">
@@ -186,7 +190,7 @@ export default function App() {
       <main className="main">
         {error && <div className="error-box">Error: {error}</div>}
 
-        {noScanYet && (
+        {noScanYet && tab === 'scanner' && (
           <div className="table-wrap">
             <div className="empty">
               No scan has completed yet. Press <strong>Scan now</strong>, or wait for the background loop
@@ -260,6 +264,8 @@ export default function App() {
         )}
 
         {tab === 'alerts' && <AlertsView alerts={alerts} onSelect={setSelected} />}
+
+        {tab === 'performance' && <PerformanceView />}
 
         <div className="disclaimer">
           <strong>Opportunity Score is a 0–100 ranking, not a probability.</strong>{' '}

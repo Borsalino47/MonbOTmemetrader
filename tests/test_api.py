@@ -165,3 +165,50 @@ def test_scan_persists_to_the_database(client):
         assert row["engine_version"] == "SCORE_ENGINE_V1"
         assert row["synthetic"] is True
         assert row["outcome"]["evaluated"] is False
+
+
+# --------------------------------------------------------------------------- #
+# Outcome tracking endpoints
+# --------------------------------------------------------------------------- #
+
+
+def test_performance_endpoint_before_anything_is_resolved(client):
+    client.post("/api/scan/run")
+    body = client.get("/api/performance").json()
+
+    assert body["counts"]["settled"] == 0
+    assert body["performance"]["overall"]["n"] == 0
+    assert body["performance"]["overall"]["win_rate"] is None, "no verdicts must not read as a 0% win rate"
+    assert "config" in body["label"] and "definition" in body["label"]
+    assert "round_trip_cost_pct" in body["costs"]
+
+
+def test_resolve_endpoint_is_a_noop_when_nothing_is_ready(client):
+    client.post("/api/scan/run")
+    body = client.post("/api/outcomes/resolve").json()
+    # Signals were just created, so none can have a verdict yet.
+    assert body["resolution"]["resolved"] == 0
+    assert body["counts"]["settled"] == 0
+
+
+def test_pending_endpoint_reports_the_readiness_cutoff(client):
+    client.post("/api/scan/run")
+    body = client.get("/api/outcomes/pending").json()
+    assert "ready_before_ms" in body and body["horizon_bars"] > 0
+    assert isinstance(body["signals"], list)
+
+
+def test_health_exposes_the_outcome_tracker_configuration(client):
+    tracker = client.get("/api/health").json()["outcome_tracker"]
+    assert tracker["label_config"]
+    assert "next bar's open" in tracker["definition"]
+    assert tracker["horizon_bars"] > 0
+
+
+def test_signal_stats_never_invents_a_win_rate(client):
+    client.post("/api/scan/run")
+    stats = client.get("/api/signals").json()["stats"]
+    assert stats["win_rate"] is None
+    assert stats["settled"] == 0
+    assert "null until" in stats["win_rate_note"] or "No outcome" in stats["win_rate_note"]
+    assert stats["sufficient_sample"] is False

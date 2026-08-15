@@ -9,20 +9,27 @@ actually carried predictive value — rather than assuming the V1 weights were r
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, desc, select
 from sqlalchemy.exc import IntegrityError
 
 from cryptopulse.alerts.engine import Alert
 from cryptopulse.core.logging import get_logger
-from cryptopulse.database.models import AlertRecord, ScanRunRecord, ScorePointRecord, SignalRecord
+from cryptopulse.database.models import AlertRecord, ScanRunRecord, ScorePointRecord, SignalRecord, _utcnow
 from cryptopulse.database.session import get_session
 from cryptopulse.scanner.base import ScanReport
 from cryptopulse.scoring.states import SetupState
 
+if TYPE_CHECKING:  # avoids a circular import at runtime: outcomes -> backtest -> ...
+    from cryptopulse.outcomes.tracker import PendingSignal, Resolution
+
 log = get_logger("database.repo")
 
-__all__ = ["persist_scan", "persist_alerts", "recent_signals", "score_history", "recent_alerts", "signal_stats"]
+__all__ = [
+    "persist_scan", "persist_alerts", "recent_signals", "score_history", "recent_alerts", "signal_stats",
+    "pending_signals", "save_resolutions", "resolved_signals", "outcome_counts",
+]
 
 _PERSIST_STATES = {
     SetupState.OBSERVE,
@@ -245,26 +252,41 @@ def recent_alerts(limit: int = 50) -> list[dict]:
 def signal_stats() -> dict:
     """Headline counts for the signals view.
 
-    Deliberately does not report a win rate: no signal has an outcome yet, and
-    computing a rate over NULL outcomes would produce a confident-looking number
-    with nothing behind it.
+    The win rate stays `None` until enough signals carry a settled verdict.
+    UNRESOLVABLE rows never enter the denominator — they have no verdict, so
+    counting them either invents a loss or dilutes the rate.
     """
-    with get_session() as session:
-        total = session.query(SignalRecord).count()
-        evaluated = session.query(SignalRecord).filter(SignalRecord.outcome_label.isnot(None)).count()
-        wins = session.query(SignalRecord).filter(SignalRecord.outcome_label == "WIN").count()
+    from cryptopulse.outcomes.stats import MIN_SAMPLE
+
+    counts = outcome_counts()
+    settled = counts["settled"]
+    wins = counts["wins"]
+
+    if settled == 0:
+        note = (
+            "No outcome has been resolved yet. Win rate is null until the outcome tracker "
+            "has graded signals against the bars that followed them."
+        )
+    elif settled < MIN_SAMPLE:
+        note = (
+            f"Based on only {settled} settled signals — below the {MIN_SAMPLE} minimum. "
+            "Treat this as a smoke test of the pipeline, not as evidence about the strategy."
+        )
+    else:
+        note = f"Based on {settled} settled signals (WIN/LOSS/TIMEOUT)."
+
+    if counts["synthetic_signals"]:
+        note += (
+            f" {counts['synthetic_signals']} signal(s) came from the SYNTHETIC provider "
+            "and describe generated data, not a market."
+        )
+
     return {
-        "total_signals": total,
-        "evaluated": evaluated,
-        "pending_evaluation": total - evaluated,
-        "wins": wins,
-        "win_rate": round(wins / evaluated, 4) if evaluated else None,
-        "win_rate_note": (
-            "No outcomes have been evaluated yet. Win rate is null until the outcome "
-            "tracker has resolved signals against future price."
-            if not evaluated
-            else f"Based on {evaluated} resolved signals."
-        ),
+        **counts,
+        "win_rate": round(wins / settled, 4) if settled else None,
+        "win_rate_note": note,
+        "min_sample": MIN_SAMPLE,
+        "sufficient_sample": settled >= MIN_SAMPLE,
     }
 
 
@@ -307,4 +329,148 @@ def _signal_to_dict(r: SignalRecord) -> dict:
             "mae_atr": r.outcome_mae_atr,
             "evaluated": r.outcome_label is not None,
         },
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Outcome tracking
+# --------------------------------------------------------------------------- #
+
+
+def pending_signals(ready_before_ms: int, limit: int = 300) -> list[PendingSignal]:
+    """Signals with no outcome yet whose horizon has had time to elapse.
+
+    Oldest first: the ones closest to falling out of the provider's reachable
+    history are the ones most at risk of becoming permanently unresolvable.
+    """
+    from cryptopulse.config.settings import get_settings
+    from cryptopulse.core.types import Timeframe
+    from cryptopulse.outcomes.tracker import PendingSignal
+
+    tf = get_settings().scanner.primary_timeframe
+    with get_session() as session:
+        rows = (
+            session.execute(
+                select(SignalRecord)
+                .where(SignalRecord.outcome_label.is_(None))
+                .where(SignalRecord.timestamp_ms <= ready_before_ms)
+                .order_by(SignalRecord.timestamp_ms.asc())
+                .limit(limit)
+            )
+            .scalars()
+            .all()
+        )
+    return [
+        PendingSignal(
+            id=r.id,
+            symbol=r.symbol,
+            timestamp_ms=r.timestamp_ms,
+            price=r.price,
+            atr=r.atr,
+            timeframe=Timeframe(tf) if not isinstance(tf, Timeframe) else tf,
+        )
+        for r in rows
+    ]
+
+
+def save_resolutions(resolutions: list[Resolution]) -> int:
+    """Write graded outcomes back onto their signal rows."""
+    if not resolutions:
+        return 0
+    written = 0
+    with get_session() as session:
+        for res in resolutions:
+            row = session.get(SignalRecord, res.signal_id)
+            if row is None:
+                continue
+            # Never overwrite a verdict. A signal is graded once; re-grading it
+            # under a different label config would silently rewrite history.
+            if row.outcome_label is not None:
+                continue
+            row.outcome_label = res.label
+            row.outcome_label_config = res.label_config
+            row.outcome_horizon_bars = res.horizon_bars
+            row.outcome_return_pct = res.return_pct
+            row.outcome_net_return_pct = res.net_return_pct
+            row.outcome_mfe_atr = res.mfe_atr
+            row.outcome_mae_atr = res.mae_atr
+            row.outcome_bars_held = res.bars_held
+            row.outcome_entry_price = res.entry_price
+            row.outcome_exit_price = res.exit_price
+            row.outcome_note = res.note
+            row.outcome_evaluated_at = _utcnow()
+            written += 1
+        session.commit()
+    return written
+
+
+def resolved_signals(limit: int | None = None, include_synthetic: bool = True) -> list[dict]:
+    """Every signal carrying a settled verdict (WIN / LOSS / TIMEOUT).
+
+    UNRESOLVABLE rows are excluded on purpose: they have no verdict, and folding
+    them into a rate would either invent a loss or dilute the denominator.
+    """
+    with get_session() as session:
+        stmt = (
+            select(SignalRecord)
+            .where(SignalRecord.outcome_label.in_(["WIN", "LOSS", "TIMEOUT"]))
+            .order_by(desc(SignalRecord.timestamp_ms))
+        )
+        if not include_synthetic:
+            stmt = stmt.where(SignalRecord.synthetic.is_(False))
+        if limit:
+            stmt = stmt.limit(limit)
+        rows = session.execute(stmt).scalars().all()
+    return [_outcome_row(r) for r in rows]
+
+
+def _outcome_row(r: SignalRecord) -> dict:
+    return {
+        "id": r.id,
+        "symbol": r.symbol,
+        "timestamp_ms": r.timestamp_ms,
+        "price": r.price,
+        "final_score": r.final_score,
+        "raw_score": r.raw_score,
+        "risk_penalty": r.risk_penalty,
+        "pump_maturity": r.pump_maturity,
+        "data_confidence": r.data_confidence,
+        "safety": r.safety_score,
+        "liquidity": r.liquidity_status,
+        "state": r.setup_state,
+        "is_premium": r.is_premium,
+        "regime": r.market_regime,
+        "engine_version": r.engine_version,
+        "synthetic": r.synthetic,
+        "components": r.components or {},
+        "outcome": r.outcome_label,
+        "label_config": r.outcome_label_config,
+        "return_pct": r.outcome_return_pct,
+        "net_return_pct": r.outcome_net_return_pct,
+        "mfe_atr": r.outcome_mfe_atr,
+        "mae_atr": r.outcome_mae_atr,
+        "bars_held": r.outcome_bars_held,
+    }
+
+
+def outcome_counts() -> dict:
+    """Journal state: how many signals exist, and how many have a verdict."""
+    with get_session() as session:
+        total = session.query(SignalRecord).count()
+        pending = session.query(SignalRecord).filter(SignalRecord.outcome_label.is_(None)).count()
+        unresolvable = session.query(SignalRecord).filter(SignalRecord.outcome_label == "UNRESOLVABLE").count()
+        wins = session.query(SignalRecord).filter(SignalRecord.outcome_label == "WIN").count()
+        losses = session.query(SignalRecord).filter(SignalRecord.outcome_label == "LOSS").count()
+        timeouts = session.query(SignalRecord).filter(SignalRecord.outcome_label == "TIMEOUT").count()
+        synthetic = session.query(SignalRecord).filter(SignalRecord.synthetic.is_(True)).count()
+    settled = wins + losses + timeouts
+    return {
+        "total_signals": total,
+        "pending_evaluation": pending,
+        "unresolvable": unresolvable,
+        "settled": settled,
+        "wins": wins,
+        "losses": losses,
+        "timeouts": timeouts,
+        "synthetic_signals": synthetic,
     }

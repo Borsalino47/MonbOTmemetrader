@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from cryptopulse.config.settings import DatabaseSettings
 from cryptopulse.core.logging import get_logger
+from cryptopulse.database.migrate import ensure_schema
 from cryptopulse.database.models import Base
 
 log = get_logger("database")
@@ -37,8 +38,11 @@ def init_engine(cfg: DatabaseSettings) -> Engine:
     connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
     _engine = create_engine(url, echo=cfg.echo, future=True, connect_args=connect_args)
     Base.metadata.create_all(_engine)
+    # create_all never alters an existing table, so a database predating a new
+    # column would keep working right up until the first query touched it.
+    added = ensure_schema(_engine)
     _SessionFactory = sessionmaker(bind=_engine, expire_on_commit=False, future=True)
-    log.info("database_ready", url=_redact(url))
+    log.info("database_ready", url=_redact(url), columns_added=len(added))
     return _engine
 
 

@@ -217,6 +217,54 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
     ):
         return {"stats": repo.signal_stats(), "signals": repo.recent_signals(limit, symbol, min_score)}
 
+    # -------------------------------------------------------------- outcomes #
+
+    @app.get("/api/performance", tags=["outcomes"])
+    async def performance(
+        include_synthetic: bool = True,
+        use_net: bool = True,
+        limit: int = Query(5000, ge=1, le=50000),
+    ):
+        """Realised performance over signals that carry a settled verdict.
+
+        Reports `n` beside every rate and flags buckets below the minimum sample.
+        With no settled signals the report is empty rather than zero-filled.
+        """
+        from cryptopulse.outcomes.stats import build_performance
+
+        rows = repo.resolved_signals(limit=limit, include_synthetic=include_synthetic)
+        report = build_performance(rows, use_net=use_net, synthetic_included=include_synthetic)
+        return {
+            "counts": repo.outcome_counts(),
+            "label": {
+                "config": get_service().tracker.label.name,
+                "definition": get_service().tracker.label.describe(),
+            },
+            "costs": get_service().tracker.costs.describe(),
+            "performance": report.to_dict(),
+        }
+
+    @app.post("/api/outcomes/resolve", tags=["outcomes"])
+    async def resolve_outcomes(limit: int = Query(300, ge=1, le=2000)):
+        """Grade every pending signal whose horizon has elapsed."""
+        report = await get_service().resolve_outcomes(limit=limit)
+        return {"resolution": report.to_dict(), "counts": repo.outcome_counts()}
+
+    @app.get("/api/outcomes/pending", tags=["outcomes"])
+    async def pending_outcomes(limit: int = Query(100, ge=1, le=1000)):
+        service = get_service()
+        ready = service.tracker.ready_before_ms()
+        pending = repo.pending_signals(ready, limit)
+        return {
+            "ready_before_ms": ready,
+            "horizon_bars": service.tracker.label.horizon_bars,
+            "count": len(pending),
+            "signals": [
+                {"id": p.id, "symbol": p.symbol, "timestamp_ms": p.timestamp_ms, "price": p.price, "atr": p.atr}
+                for p in pending
+            ],
+        }
+
     # ------------------------------------------------------------- frontend #
 
     if FRONTEND_DIST.is_dir():

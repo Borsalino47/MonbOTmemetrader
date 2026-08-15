@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from datetime import UTC
 
 from cryptopulse.alerts.engine import Alert, AlertEngine
 from cryptopulse.config.settings import CryptoPulseSettings, get_settings
@@ -16,6 +17,7 @@ from cryptopulse.core.clock import SYSTEM_CLOCK
 from cryptopulse.core.logging import get_logger
 from cryptopulse.database import repo
 from cryptopulse.database.session import init_engine
+from cryptopulse.outcomes.tracker import OutcomeTracker, ResolutionReport
 from cryptopulse.providers.registry import is_synthetic
 from cryptopulse.scanner.base import ScanReport
 from cryptopulse.scanner.cex import CexScanner
@@ -40,6 +42,12 @@ class ScannerService:
         self._task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
         self._db_ready = False
+
+        # The outcome tracker shares the scanner's provider: same feed, same
+        # rate-limit budget, same circuit breaker.
+        self.tracker = OutcomeTracker(self.settings, self.scanner.provider, clock=SYSTEM_CLOCK)
+        self.last_resolution: ResolutionReport | None = None
+        self._resolve_lock = asyncio.Lock()
 
     # -- lifecycle ----------------------------------------------------------- #
 
@@ -105,6 +113,30 @@ class ScannerService:
             except Exception as exc:
                 log.error("persist_failed", error=str(exc)[:300])
 
+        # Outside the scan lock: resolution is independent of scanning and must
+        # not delay the next pass if the provider is slow.
+        try:
+            await self.resolve_outcomes()
+        except Exception as exc:
+            log.error("resolution_failed", error=str(exc)[:300])
+
+        return report
+
+    async def resolve_outcomes(self, limit: int = 300) -> ResolutionReport:
+        """Grade signals whose horizon has elapsed. Safe to call concurrently."""
+        async with self._resolve_lock:
+            self.ensure_db()
+            pending = await asyncio.to_thread(repo.pending_signals, self.tracker.ready_before_ms(), limit)
+            if not pending:
+                report = ResolutionReport(label_config=self.tracker.label.name)
+                self.last_resolution = report
+                return report
+
+            report = await self.tracker.resolve(pending)
+            if report.resolutions:
+                written = await asyncio.to_thread(repo.save_resolutions, report.resolutions)
+                log.info("outcomes_persisted", written=written)
+            self.last_resolution = report
             return report
 
     # -- reads --------------------------------------------------------------- #
@@ -169,6 +201,13 @@ class ScannerService:
                 else None
             ),
             "provider_health": [h.to_dict() for h in (report.provider_health if report else [])],
+            "outcome_tracker": {
+                "label_config": self.tracker.label.name,
+                "definition": self.tracker.label.describe(),
+                "horizon_bars": self.tracker.label.horizon_bars,
+                "resolves_signals_older_than": _iso_or_none(self.tracker.ready_before_ms()),
+                "last_run": self.last_resolution.to_dict() if self.last_resolution else None,
+            },
             "server_time_ms": now_ms,
         }
 
@@ -187,3 +226,11 @@ def set_service(service: ScannerService | None) -> None:
     """Test hook: inject a service built on a fixture provider."""
     global _service
     _service = service
+
+
+def _iso_or_none(ms: int | None) -> str | None:
+    if ms is None:
+        return None
+    from datetime import datetime
+
+    return datetime.fromtimestamp(ms / 1000, tz=UTC).isoformat()
