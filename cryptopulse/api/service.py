@@ -13,6 +13,13 @@ from datetime import UTC
 
 from cryptopulse.alerts.delivery import AlertDelivery, send_alerts
 from cryptopulse.alerts.engine import Alert, AlertEngine
+from cryptopulse.alerts.notify import (
+    LEVEL_ORDER,
+    NotificationGate,
+    NotificationReport,
+    build_notifier,
+    notify_alerts,
+)
 from cryptopulse.config.settings import CryptoPulseSettings, get_settings
 from cryptopulse.core.clock import SYSTEM_CLOCK
 from cryptopulse.core.logging import get_logger
@@ -51,6 +58,17 @@ class ScannerService:
             timeout=self.settings.providers.request_timeout_seconds,
             synthetic=is_synthetic(self.scanner.provider),
         )
+        # A second, independent alert channel. Unlike the webhook it needs no
+        # account and routes nothing through a third party — but it only exists
+        # on a phone running Termux, so the builder returns a channel that
+        # states why it is unavailable rather than one that fails silently.
+        self.notifier = build_notifier(
+            enabled=self.settings.alerts.android_notifications,
+            binary=self.settings.alerts.android_notification_binary,
+        )
+        self.notification_gate = NotificationGate()
+        self.last_notification: NotificationReport | None = None
+
         self.last_report: ScanReport | None = None
         self.last_alerts: list[Alert] = []
         self.scan_count = 0
@@ -157,6 +175,16 @@ class ScannerService:
             # unreachable webhook must not cost a scan.
             if alerts and self.delivery.configured:
                 await send_alerts(self.delivery, alerts)
+
+            # Independently of the webhook: either channel may be off, and
+            # neither may break the other or the scan.
+            if alerts:
+                loud = [a for a in alerts if self._loud_enough(a)]
+                if loud:
+                    self.last_notification = await notify_alerts(
+                        self.notifier, self.notification_gate, loud,
+                        synthetic=is_synthetic(self.scanner.provider),
+                    )
 
         # Outside the scan lock: resolution is independent of scanning and must
         # not delay the next pass if the provider is slow. Each follow-up job is
@@ -312,6 +340,23 @@ class ScannerService:
         self.last_prune = {**removed, "at_ms": now_ms}
         return self.last_prune
 
+    def _loud_enough(self, alert) -> bool:
+        """Is this worth interrupting someone holding a phone?
+
+        The webhook gets everything the alert engine emitted; a notification is
+        a physical interruption and gets a higher bar. Defaults to HIGH, which
+        means a WATCH never buzzes — that is what keeps the CRITICAL one from
+        being muted along with everything else.
+        """
+        floor = self.settings.alerts.android_min_level
+        level = getattr(alert.level, "value", alert.level)
+        try:
+            return LEVEL_ORDER.index(level) >= LEVEL_ORDER.index(floor)
+        except ValueError:
+            # An unrecognised floor must not silently mute everything.
+            log.warning("unknown_android_min_level", configured=floor)
+            return True
+
     # -- reads --------------------------------------------------------------- #
 
     def results(self) -> list[ScoreResult]:
@@ -426,6 +471,15 @@ class ScannerService:
                     else "No webhook configured. Alerts appear in the dashboard only. "
                          "Set CP_ALERT_WEBHOOK_URL to receive them on your phone."
                 ),
+            },
+            "android_notifications": {
+                **self.notifier.availability().to_dict(),
+                "channel": self.notifier.name,
+                "min_level": self.settings.alerts.android_min_level,
+                # A channel that stopped working must never look like a quiet
+                # market, so the last outcome is reported the same way the
+                # webhook's is.
+                "last": self.last_notification.to_dict() if self.last_notification else None,
             },
             "outcome_tracker": {
                 "label_config": self.tracker.label.name,

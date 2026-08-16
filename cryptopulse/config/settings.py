@@ -157,6 +157,14 @@ class AlertSettings(BaseSettings):
     max_alerts_per_scan: int = 12
     webhook_url: str | None = None
 
+    # Android notifications via Termux:API. On by default because it costs
+    # nothing where it is unavailable — `build_notifier` returns a channel that
+    # states why rather than one that fails at send time.
+    android_notifications: bool = True
+    android_notification_binary: str = "termux-notification"
+    # Levels quiet enough that a phone should not be interrupted for them.
+    android_min_level: str = "HIGH"
+
 
 class DatabaseSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="CP_DB_", env_file=".env", extra="ignore")

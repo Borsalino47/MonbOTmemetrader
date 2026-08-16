@@ -70,6 +70,16 @@ if [ "$NEEDS_BUILD" = "1" ]; then
   fi
 fi
 
+# ---------------------------------------------------------- notifications ---
+# Purement informatif : l'absence de Termux:API n'empêche rien de fonctionner,
+# elle prive seulement des notifications. Le dire ici évite de le découvrir en
+# ne recevant jamais rien.
+if ! command -v termux-notification >/dev/null 2>&1; then
+  warn "Notifications Android indisponibles (paquet termux-api absent)."
+  warn "Pour les activer : pkg install termux-api  + l'application Termux:API."
+  warn "Puis vérifiez avec : ./.venv/bin/python -m cryptopulse.cli notify"
+fi
+
 # ------------------------------------------------------------ vérifications --
 if [ "$MODE" = "demo" ]; then
   export CP_PROVIDER_MARKET_DATA=fixture

@@ -608,6 +608,64 @@ def _fmt_pct(x) -> str:
 # --------------------------------------------------------------------------- #
 
 
+async def cmd_notify(args) -> int:
+    """Send a real notification, so the round trip can be confirmed on the phone.
+
+    Everything about this channel is testable from a laptop except the one thing
+    that matters — that Android actually shows the notification. This command is
+    that check, and it deliberately reports the availability diagnosis first so a
+    failure names which of the two Termux:API installs is missing.
+    """
+    from cryptopulse.alerts.engine import Alert, AlertLevel
+    from cryptopulse.alerts.notify import build_notifier
+
+    settings = get_settings()
+    notifier = build_notifier(
+        enabled=settings.alerts.android_notifications,
+        binary=settings.alerts.android_notification_binary,
+    )
+    availability = notifier.availability()
+
+    print(f"\nChannel   : {notifier.name}")
+    print(f"Available : {'yes' if availability.available else 'NO'}")
+    print(f"Reason    : {availability.reason}")
+    if availability.fix:
+        print(f"Fix       : {availability.fix}")
+
+    if not availability.available:
+        print("\nNothing sent. Fix the above and run this again.")
+        return 1
+
+    probe = Alert(
+        symbol="TESTUSDT",
+        level=AlertLevel.HIGH,
+        headline="test notification from CRYPTO PULSE AI",
+        timestamp_ms=SYSTEM_CLOCK.now_ms(),
+        final_score=77.0,
+        pump_maturity=0.0,
+        data_confidence=0.0,
+        safety=0.0,
+        liquidity="UNKNOWN",
+        state="IGNORE",
+        price=0.0,
+        score_acceleration=None,
+        why=["this is a test, not a signal"],
+    )
+    # `synthetic=True` on purpose: this alert is invented, and the one rule that
+    # must never bend is that an invented number is labelled as one.
+    report = await notifier.send([probe], synthetic=True)
+
+    print()
+    if report.ok and report.sent:
+        print("Sent. Look at your phone — a notification titled 'DÉMO … TESTUSDT'")
+        print("should be on screen. If nothing appeared, the Termux:API *app* is")
+        print("missing even though the termux-api package is installed.")
+        return 0
+
+    print(f"Failed: {report.error}")
+    return 1
+
+
 def cmd_serve(args) -> int:
     import uvicorn
 
@@ -653,6 +711,9 @@ def main(argv: list[str] | None = None) -> int:
     p_ver.add_argument("--limit", type=int, default=500)
     _add_provider_flag(p_ver)
 
+    p_not = sub.add_parser("notify", help="send a test Android notification (Termux)")
+    p_not.add_argument("--test", action="store_true", help="kept for readability; this command always tests")
+
     p_serve = sub.add_parser("serve", help="run the API and dashboard")
     p_serve.add_argument("--host", type=str, default=None)
     p_serve.add_argument("--port", type=int, default=None)
@@ -670,6 +731,7 @@ def main(argv: list[str] | None = None) -> int:
         "backtest": cmd_backtest,
         "resolve": cmd_resolve,
         "verify": cmd_verify,
+        "notify": cmd_notify,
     }[args.command]
     return asyncio.run(handler(args))
 

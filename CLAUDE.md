@@ -51,6 +51,7 @@ that justifies it.
 | Multi-horizon verification (`outcomes/horizons.py`) | **TESTED** | 25 tests; run end to end on 1240 windows |
 | Performance analytics (`outcomes/stats.py`) | **TESTED** | Buckets + component edge + horizon buckets, `n` on every rate |
 | Verdict (`scoring/verdict.py`) | **TESTED** | 15 tests. Compression of existing gates; introduces no new opinion |
+| Android notifications (`alerts/notify.py`) | **IMPLEMENTED — NOT DEVICE VERIFIED** | 22 tests against a stand-in binary. Never run on Android; `cryptopulse notify` is the check |
 | Alert delivery (`alerts/delivery.py`) | **TESTED** | 14 tests + one real-socket round trip. Discord / Slack / generic JSON |
 | Retention (`repo.prune`) | **TESTED** | 12 tests. Never prunes a signal that still owes an answer |
 | Warm start (`repo.last_scan_snapshot`) | **TESTED** | 11 tests. Restored rows keep their age and their provenance |
@@ -66,7 +67,7 @@ that justifies it.
 | PWA (manifest + service worker) | **TESTED** | 11 tests. Verified installable in a real browser on 127.0.0.1 |
 | Schema migration (`database/migrate.py`) | **TESTED** | Additive columns only; refuses destructive changes |
 
-**Test suite: 464 tests, all passing.** Run `pytest -q`.
+**Test suite: 486 tests, all passing.** Run `pytest -q`.
 
 ---
 
@@ -172,6 +173,7 @@ cryptopulse/
   alerts/
     engine.py            Levels, gates, dedup, cooldown
     delivery.py          Webhook delivery. The URL is a credential and is never logged
+    notify.py            Android notifications via Termux:API. Escalation-only anti-spam
   hunter/
     discovery.py         Wide pre-scan. Reads the scan's own ticker call, costs nothing
     deep.py              The expensive look, only on selected candidates
@@ -196,7 +198,7 @@ cryptopulse/
   api/
     service.py           Owns the scanner, the loop and shared state
     app.py               FastAPI routes, serves the built dashboard
-  cli.py                 doctor / scan / resolve / verify / serve / backtest (--provider)
+  cli.py                 doctor / scan / resolve / verify / notify / serve / backtest
 
 start.sh                 One-command launcher: install, verify feed, scan
 android-start.sh         Android/Termux: install, build, serve on 127.0.0.1:8000
@@ -213,7 +215,7 @@ frontend/                Vite + React 18 + TypeScript (strict), mobile-first
   HomeView               The five-second view: can I trust it, and what moved
   AssetCards             The scanner as cards; the table is wide-screen only
   bottom-nav             Thumb-reachable navigation, phones only
-tests/                   464 tests
+tests/                   486 tests
 pine/                    TradingView companion scripts
 ```
 
@@ -455,6 +457,27 @@ Break these and the product is lying to its user.
     could display. The Verification tab says what the price did; the Decisions
     tab says only what was decided, and when.
 
+44. **Notifications escalate or stay silent.** The alert engine deduplicates
+    and applies a cooldown; the gate in `alerts/notify.py` adds the rule that a
+    symbol buzzes again only when its level *rises*. A phone that vibrates for
+    the same thing every cycle gets its notifications switched off, and then the
+    CRITICAL one is missed too — the anti-spam rule exists to protect the loud
+    alert, not to be polite. A drop lowers the bar to the new level rather than
+    resetting it, so a symbol oscillating around a threshold is not silenced.
+
+45. **An unavailable notification channel says which half is missing.** Termux:API
+    needs both the *app* and the `termux-api` *package*, and people routinely
+    install one. Without the package the command does not exist; without the app
+    it exists and hangs. `availability()` names the case, and the hang is turned
+    into a reported failure by an 8-second timeout rather than a stalled scan.
+
+46. **A hung notification is killed by process group, not by pid.** Found by
+    running the timeout test: signalling only the direct child left its
+    grandchild holding the stderr pipe, and `wait()` then blocked for the full
+    30-second sleep — turning a 0.4 second timeout into a 30 second stall inside
+    the scan cycle. `start_new_session=True` plus `killpg` is what makes the
+    timeout mean what it says.
+
 ---
 
 ## 6. Design decisions and why
@@ -511,6 +534,9 @@ python -m cryptopulse.cli scan --limit 30
 
 # grade signals whose horizon has elapsed, then print realised performance
 python -m cryptopulse.cli resolve
+
+# send a real Android notification, to confirm the round trip on the phone
+python -m cryptopulse.cli notify
 
 # what the price actually did 15m / 1h / 4h / 24h after each signal
 python -m cryptopulse.cli verify

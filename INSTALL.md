@@ -253,6 +253,37 @@ l'interface.
 
 ## Recevoir les alertes sur votre téléphone
 
+### Option 1 — Notifications Android (recommandé sur téléphone)
+
+Si vous faites tourner l'application dans Termux sur votre téléphone, elle peut
+vous notifier **directement**, sans compte, sans mot de passe et sans passer par
+un service tiers. Il faut deux installations, et beaucoup de gens n'en font
+qu'une :
+
+1. l'**application Termux:API**, depuis F-Droid, comme Termux lui-même ;
+2. le **paquet** : `pkg install termux-api`
+
+Puis vérifiez que ça marche vraiment :
+
+```bash
+python -m cryptopulse.cli notify
+```
+
+Cette commande envoie une vraie notification. Si rien n'apparaît sur l'écran,
+elle vous dit **laquelle des deux installations manque** — c'est la panne la
+plus fréquente, et « les notifications ne marchent pas » sans plus de détail
+n'aide personne.
+
+> Seules les alertes **HIGH** et **CRITICAL** font sonner le téléphone. Une
+> alerte WATCH qui vibre à 3h du matin, c'est ainsi qu'on finit par couper les
+> notifications — et par rater la seule qui comptait. Un même token ne re-sonne
+> que si son niveau **monte**.
+>
+> Pour tout recevoir, y compris les alertes calmes :
+> `CP_ALERT_ANDROID_MIN_LEVEL=WATCH` dans le fichier `.env`.
+
+### Option 2 — Webhook Discord ou Slack
+
 Par défaut, les alertes n'existent que dans le tableau de bord — vous ne les
 voyez donc que si vous le regardez. Pour les recevoir sur votre téléphone,
 créez un webhook Discord ou Slack (dans Discord : *Paramètres du salon →
