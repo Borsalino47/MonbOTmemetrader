@@ -133,6 +133,13 @@ class ScoreResult:
             "support": st.nearest_support.price if (st and st.nearest_support) else None,
         }
 
+    def verdict(self) -> dict:
+        """Four-level plain-language summary. Imported lazily: `scoring/verdict.py`
+        reads a `ScoreResult`, so importing it at module scope would be circular."""
+        from cryptopulse.scoring.verdict import build_verdict
+
+        return build_verdict(self).to_dict()
+
     def to_dict(self, include_features: bool = False) -> dict:
         d = {
             "symbol": self.symbol,
@@ -155,6 +162,7 @@ class ScoreResult:
             "safety": self.safety.to_dict(),
             "setup": self.state.to_dict(),
             "is_premium": self.is_premium,
+            "verdict": self.verdict(),
             "metrics": self.table_metrics(),
             "why": self.why(),
             "risks": self.risks(),

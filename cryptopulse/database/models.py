@@ -118,6 +118,40 @@ class ScorePointRecord(Base):
     __table_args__ = (UniqueConstraint("symbol", "timestamp_ms", name="uq_scorepoint_symbol_ts"),)
 
 
+class SignalHorizonRecord(Base):
+    """What the price did 15m / 1h / 4h / 24h after a signal.
+
+    One row per (signal, horizon). Separate from the barrier verdict on
+    `signals` because they answer different questions: the barrier says what you
+    would have traded, this says what the market actually did. A row exists only
+    once its window has fully elapsed — a pending horizon is absent, never stored
+    as a zero.
+    """
+
+    __tablename__ = "signal_horizons"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    signal_id: Mapped[int] = mapped_column(Integer, index=True)
+    symbol: Mapped[str] = mapped_column(String(40), index=True)
+    horizon: Mapped[str] = mapped_column(String(8), index=True)  # 15m / 1h / 4h / 24h
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    status: Mapped[str] = mapped_column(String(16))  # RESOLVED / UNRESOLVABLE
+    entry_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    price_at_horizon: Mapped[float | None] = mapped_column(Float, nullable=True)
+    change_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    net_change_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_gain_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_drawdown_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bars_seen: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    success: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    note: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("signal_id", "horizon", name="uq_horizon_signal_window"),
+    )
+
+
 class AlertRecord(Base):
     __tablename__ = "alerts"
 

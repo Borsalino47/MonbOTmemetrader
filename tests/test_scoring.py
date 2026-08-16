@@ -116,7 +116,37 @@ def test_score_is_never_presented_as_a_probability():
     engine = ScoreEngine(CryptoPulseSettings())
     payload = engine.score(_asset(_rising()), FIXED_NOW_MS).to_dict()
     assert payload["opportunity_label"].endswith("/100")
-    assert "probability" not in str(payload).lower()
+
+    # No percent-suffixed score anywhere, and no field that claims to be one.
+    # The word "probability" is allowed only where the payload *denies* being
+    # one — the verdict's caveat says so deliberately, and stripping that
+    # sentence out would remove the very disclaimer this test exists to protect.
+    blob = str(payload).lower()
+    for phrase in ("probability of", "chance of", "% probability", "win probability"):
+        assert phrase not in blob, f"payload implies a probability via {phrase!r}"
+    for mention in ("probability", "probabilité"):
+        for occurrence in _contexts(blob, mention):
+            assert "not a probability" in occurrence or "ni un conseil ni une probabilité" in occurrence, (
+                f"the word {mention!r} appears outside a disclaimer: {occurrence!r}"
+            )
+
+
+def _contexts(blob: str, word: str, width: int = 60) -> list[str]:
+    """Every occurrence of `word` with the text around it, for inspection."""
+    out, start = [], 0
+    while (i := blob.find(word, start)) != -1:
+        out.append(blob[max(0, i - width) : i + len(word) + width])
+        start = i + len(word)
+    return out
+
+
+def test_every_row_carries_a_four_level_verdict():
+    engine = ScoreEngine(CryptoPulseSettings())
+    verdict = engine.score(_asset(_rising()), FIXED_NOW_MS).to_dict()["verdict"]
+    assert verdict["level"] in {"STRONG", "WATCH", "RISKY", "AVOID"}
+    assert verdict["emoji"] and verdict["label"] and verdict["label_fr"]
+    # A badge with no caveat is how a ranking gets read as a prediction.
+    assert "not a probability" in verdict["caveat"]
 
 
 # --------------------------------------------------------------------------- #

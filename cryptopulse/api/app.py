@@ -250,6 +250,50 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
         report = await get_service().resolve_outcomes(limit=limit)
         return {"resolution": report.to_dict(), "counts": repo.outcome_counts()}
 
+    # -------------------------------------------------------------- horizons #
+
+    @app.get("/api/horizons", tags=["horizons"])
+    async def horizons(
+        include_synthetic: bool = True,
+        use_net: bool = True,
+        limit: int = Query(20000, ge=1, le=200000),
+    ):
+        """What the price actually did 15m / 1h / 4h / 24h after each signal.
+
+        Complements `/api/performance`: the barrier verdict says what you would
+        have traded, this says what the market did. Pending windows are absent,
+        never reported as a zero.
+        """
+        from cryptopulse.outcomes.stats import build_horizon_performance
+
+        rows = repo.horizon_rows(limit=limit, include_synthetic=include_synthetic)
+        return {
+            "tracker": get_service().status()["horizon_tracker"],
+            "costs": get_service().horizons.costs.describe(),
+            "synthetic_included": include_synthetic,
+            "performance": build_horizon_performance(rows, use_net=use_net),
+        }
+
+    @app.post("/api/horizons/track", tags=["horizons"])
+    async def track_horizons(limit: int = Query(300, ge=1, le=2000)):
+        """Fill in every horizon window that has fully elapsed."""
+        report = await get_service().track_horizons(limit=limit)
+        return {"run": report.to_dict()}
+
+    @app.get("/api/signals/{signal_id}/horizons", tags=["horizons"])
+    async def signal_horizons(signal_id: int):
+        rows = repo.horizons_for_signal(signal_id)
+        if not rows:
+            return {
+                "signal_id": signal_id,
+                "horizons": [],
+                "message": (
+                    "No horizon window has closed for this signal yet. A pending window is "
+                    "reported as absent rather than settled at the current price."
+                ),
+            }
+        return {"signal_id": signal_id, "horizons": rows}
+
     @app.get("/api/outcomes/pending", tags=["outcomes"])
     async def pending_outcomes(limit: int = Query(100, ge=1, le=1000)):
         service = get_service()

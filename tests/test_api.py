@@ -212,3 +212,62 @@ def test_signal_stats_never_invents_a_win_rate(client):
     assert stats["settled"] == 0
     assert "null until" in stats["win_rate_note"] or "No outcome" in stats["win_rate_note"]
     assert stats["sufficient_sample"] is False
+
+
+# --------------------------------------------------------------------------- #
+# Multi-horizon verification
+# --------------------------------------------------------------------------- #
+
+
+def test_health_exposes_the_horizon_tracker_configuration(client):
+    h = client.get("/api/health").json()["horizon_tracker"]
+    assert h["horizons"] == ["15m", "1h", "4h", "24h"]
+    assert "after the modelled round-trip cost" in h["success_criterion"]
+    assert "never the signal's own close" in h["entry_rule"]
+
+
+def test_health_states_live_or_demo_without_the_client_guessing(client):
+    body = client.get("/api/health").json()
+    assert body["data_mode"] == "DEMO"
+    assert "No number here comes from a market" in body["data_mode_detail"]
+
+
+def test_horizons_endpoint_reports_every_window_before_any_has_closed(client):
+    client.post("/api/scan/run")
+    perf = client.get("/api/horizons").json()["performance"]
+    assert perf["horizons"] == ["15m", "1h", "4h", "24h"]
+    assert all(b["n"] == 0 for b in perf["overall"])
+    assert all(b["success_rate"] is None for b in perf["overall"]), (
+        "an unmeasured window must not read as a 0% success rate"
+    )
+
+
+def test_horizon_tracking_endpoint_runs_and_reports_its_windows(client):
+    client.post("/api/scan/run")
+    run = client.post("/api/horizons/track").json()["run"]
+    assert run["horizons"] == ["15m", "1h", "4h", "24h"]
+    # Signals were created moments ago, so no window can have closed.
+    assert run["resolved_horizons"] == 0
+
+
+def test_per_signal_horizons_say_pending_rather_than_returning_zeros(client):
+    client.post("/api/scan/run")
+    body = client.get("/api/signals/1/horizons").json()
+    assert body["horizons"] == []
+    assert "rather than settled at the current price" in body["message"]
+
+
+# --------------------------------------------------------------------------- #
+# Verdict
+# --------------------------------------------------------------------------- #
+
+
+def test_every_scanned_row_carries_a_verdict_with_a_caveat(client):
+    client.post("/api/scan/run")
+    rows = client.get("/api/scan").json()["results"]
+    assert rows
+    for r in rows:
+        v = r["verdict"]
+        assert v["level"] in {"STRONG", "WATCH", "RISKY", "AVOID"}
+        assert v["emoji"] and v["headline"] and v["headline_fr"]
+        assert "not a probability" in v["caveat"], "a badge without its caveat reads as a prediction"

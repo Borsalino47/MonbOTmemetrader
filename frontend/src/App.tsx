@@ -2,13 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api';
 import { AlertsView } from './components/AlertsView';
 import { AssetDrawer } from './components/AssetDrawer';
+import { HorizonsView } from './components/HorizonsView';
 import { PerformanceView } from './components/PerformanceView';
 import { ScannerTable } from './components/ScannerTable';
 import { TopOpportunities } from './components/TopOpportunities';
 import { age, clock } from './format';
 import type { AlertItem, Health, ScoreRow } from './types';
 
-type Tab = 'scanner' | 'alerts' | 'performance';
+type Tab = 'scanner' | 'alerts' | 'verification' | 'performance';
 
 const REFRESH_MS = 15_000;
 
@@ -108,6 +109,9 @@ export default function App() {
   // Staleness is decided server-side, where the timeframe length is known.
   const isStale = last?.data_stale ?? false;
   const providerDown = health?.provider_health?.some((p) => !p.available) ?? false;
+  // The server decides LIVE vs DEMO. The dashboard must never infer it from a
+  // provider name it happens to recognise — a new synthetic source would slip past.
+  const isDemo = health ? health.data_mode === 'DEMO' : false;
 
   return (
     <div className="app">
@@ -121,6 +125,9 @@ export default function App() {
           <button className={tab === 'scanner' ? 'active' : ''} onClick={() => setTab('scanner')}>Scanner</button>
           <button className={tab === 'alerts' ? 'active' : ''} onClick={() => setTab('alerts')}>
             Alerts{alerts.length > 0 ? ` (${alerts.length})` : ''}
+          </button>
+          <button className={tab === 'verification' ? 'active' : ''} onClick={() => setTab('verification')}>
+            Verification
           </button>
           <button className={tab === 'performance' ? 'active' : ''} onClick={() => setTab('performance')}>
             Performance
@@ -136,8 +143,15 @@ export default function App() {
             </span>
           </div>
           <div className="stat">
+            <span className="k">Data</span>
+            <span className={`v ${isDemo ? 'bad' : 'ok'}`} title={health?.data_mode_detail ?? ''}>
+              <span className={`dot ${isDemo ? 'bad' : 'ok'}`} />
+              {health?.data_mode ?? '—'}
+            </span>
+          </div>
+          <div className="stat">
             <span className="k">Source</span>
-            <span className={`v ${health?.synthetic_data ? 'warn' : 'ok'}`}>{health?.provider ?? '—'}</span>
+            <span className={`v ${isDemo ? 'warn' : 'ok'}`}>{health?.provider ?? '—'}</span>
           </div>
           <div className="stat">
             <span className="k">Last update</span>
@@ -173,10 +187,14 @@ export default function App() {
         </div>
       </header>
 
-      {health?.synthetic_data && (
+      {isDemo && (
         <div className="banner synthetic">
-          <strong>SYNTHETIC DATA</strong>
-          <span>{health.synthetic_warning} Every price, volume and score below is generated, not observed.</span>
+          <strong>DEMO — NOT REAL MARKET DATA</strong>
+          <span>
+            {health?.data_mode_detail} Every price, volume, score and verdict below is generated.
+            Run <code>python -m cryptopulse.cli doctor</code> to check whether a real exchange feed
+            is reachable, then set <code>CP_PROVIDER_MARKET_DATA=binance</code> (or <code>kraken</code>).
+          </span>
         </div>
       )}
 
@@ -264,6 +282,8 @@ export default function App() {
         )}
 
         {tab === 'alerts' && <AlertsView alerts={alerts} onSelect={setSelected} />}
+
+        {tab === 'verification' && <HorizonsView />}
 
         {tab === 'performance' && <PerformanceView />}
 

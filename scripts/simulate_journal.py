@@ -154,6 +154,8 @@ async def main(argv=None) -> int:
 
     print("\n  (* = sample below the minimum; not a finding)")
 
+    await _horizon_section(settings, provider, clock, tf_ms)
+
     baseline = await _random_baseline(provider, settings, label, clock)
     if baseline:
         print(f"\n{'-' * 78}\nBASELINE — same bars, entries every 5th bar, no scoring at all\n{'-' * 78}")
@@ -176,6 +178,109 @@ async def main(argv=None) -> int:
 
     await scanner.close()
     return 0
+
+
+async def _horizon_section(settings, provider, clock, tf_ms) -> None:
+    """Advance past the longest window, then report what the price actually did.
+
+    Kept separate from the barrier section on purpose: a signal can be a barrier
+    LOSS and still have been up 2% an hour in. That is information about timing,
+    and a win rate cannot express it.
+    """
+    from cryptopulse.outcomes.horizons import HORIZONS, HorizonTracker
+    from cryptopulse.outcomes.stats import build_horizon_performance
+
+    longest = max(h.bars(settings.scanner.primary_timeframe) for h in HORIZONS)
+    clock.advance((longest + 5) * tf_ms / 1000)
+    tracker = HorizonTracker(settings, provider, clock=clock)
+
+    print(f"\n{'-' * 78}\nWHAT ACTUALLY HAPPENED AFTER EACH SIGNAL\n{'-' * 78}")
+    print(f"  Advanced {longest + 5} more bars so every window ({', '.join(h.name for h in HORIZONS)}) has closed.")
+    print("  Entry: the open of the bar after the signal. Success: net change > 0 after costs.")
+
+    pending = repo.signals_needing_horizons(tracker.ready_before_ms(), limit=5000)
+    report = await tracker.track(pending)
+    saved = repo.save_horizons(report.results)
+    print(f"  checked={report.checked}  resolved={report.resolved}  pending={report.pending}  "
+          f"unresolvable={report.unresolvable}  saved={saved}")
+    if report.errors:
+        print(f"  {len(report.errors)} symbol(s) failed: {list(report.errors)[:5]}")
+
+    rows = repo.horizon_rows()
+    if not rows:
+        print("  No window closed. Nothing to report — that is not a zero.")
+        return
+
+    perf = build_horizon_performance(rows)
+    print(f"\n  {'window':<8} {'n':>5} {'success':>9} {'median':>9} {'average':>9} "
+          f"{'best':>9} {'worst':>9} {'max DD':>9}")
+    for b in perf["overall"]:
+        flag = " *" if b["insufficient_sample"] else ""
+        print(f"  {b['horizon']:<8} {b['n']:>5} {_pct(b['success_rate']):>9} "
+              f"{_num(b['median_change_pct']):>8}% {_num(b['avg_change_pct']):>8}% "
+              f"{_num(b['best_change_pct']):>8}% {_num(b['worst_change_pct']):>8}% "
+              f"{_num(b['avg_max_drawdown_pct']):>8}%{flag}")
+
+    bands = [b for b in perf["by_score_band"] if b["n"] > 0]
+    if bands:
+        print("\n  Does a higher score actually do better?\n")
+        print(f"  {'band':<10} {'window':<8} {'n':>5} {'success':>9} {'median':>9}")
+        for b in bands:
+            flag = " *" if b["insufficient_sample"] else ""
+            print(f"  {b['key']:<10} {b['horizon']:<8} {b['n']:>5} "
+                  f"{_pct(b['success_rate']):>9} {_num(b['median_change_pct']):>8}%{flag}")
+
+    # The same comparison the barrier section makes: without it, a 48% success
+    # rate at 1h reads as skill when it may just be what any entry would give.
+    base = await _horizon_baseline(provider, settings)
+    if base:
+        print("\n  Baseline — same bars, entries every 5th bar, no scoring at all:")
+        for h in HORIZONS:
+            b = next((x for x in perf["overall"] if x["horizon"] == h.name), None)
+            ref = base.get(h.name)
+            if not b or b["n"] == 0 or not ref:
+                continue
+            delta = (b["success_rate"] or 0.0) - ref["success_rate"]
+            print(f"  {h.name:<8} scanner {_pct(b['success_rate']):>7} (n={b['n']})  vs  "
+                  f"baseline {_pct(ref['success_rate']):>7} (n={ref['n']})   {delta * 100:+.1f} pts")
+
+    for note in perf["notes"]:
+        print(f"\n  ** {note}")
+
+
+async def _horizon_baseline(provider, settings) -> dict | None:
+    """Success rate at each window for entries chosen with no scoring at all."""
+    import numpy as np
+
+    from cryptopulse.backtest.engine import CostModel
+    from cryptopulse.outcomes.horizons import HORIZONS
+
+    costs = CostModel()
+    tf = settings.scanner.primary_timeframe
+    spans = {h.name: h.bars(tf) for h in HORIZONS}
+    tally: dict[str, list[int]] = {h.name: [0, 0] for h in HORIZONS}  # [successes, n]
+
+    symbols = [s for s, *_ in __import__("cryptopulse.providers.fixture", fromlist=["_UNIVERSE"])._UNIVERSE][:10]
+    for symbol in symbols:
+        try:
+            series = (await provider.get_ohlcv(symbol, tf, 900)).closed()
+        except Exception:
+            continue
+        longest = max(spans.values())
+        for i in range(200, len(series) - longest - 2, 5):
+            entry = float(series.open[i + 1])
+            if entry <= 0 or not np.isfinite(entry):
+                continue
+            for name, span in spans.items():
+                close = float(series.close[i + span])
+                net = costs.apply((close - entry) / entry * 100.0)
+                tally[name][1] += 1
+                if net > 0:
+                    tally[name][0] += 1
+
+    if not any(n for _, n in tally.values()):
+        return None
+    return {name: {"n": n, "success_rate": s / n} for name, (s, n) in tally.items() if n}
 
 
 async def _random_baseline(provider, settings, label, clock) -> dict | None:

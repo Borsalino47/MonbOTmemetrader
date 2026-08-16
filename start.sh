@@ -6,6 +6,7 @@
 #   ./start.sh binance      scan via Binance
 #   ./start.sh demo         scan hors-ligne (données SYNTHÉTIQUES)
 #   ./start.sh serve        API + dashboard sur http://localhost:8000
+#   ./start.sh verify       que s'est-il passé 15min / 1h / 4h / 24h après chaque signal ?
 #
 # Installe ce qu'il manque, vérifie le feed, puis lance. Rien d'autre à faire.
 
@@ -34,7 +35,9 @@ case "$MODE" in
   binance)  PROVIDER=binance ;;
   serve)    PROVIDER="" ;;
   scan)     PROVIDER="" ;;
-  *)        echo "Mode inconnu: $MODE"; echo "Utilisation: ./start.sh [scan|kraken|binance|demo|serve]"; exit 2 ;;
+  verify)   PROVIDER="" ;;
+  *)        echo "Mode inconnu: $MODE"
+            echo "Utilisation: ./start.sh [scan|kraken|binance|demo|serve|verify]"; exit 2 ;;
 esac
 
 FLAG=()
@@ -50,6 +53,13 @@ if [ "$MODE" = "serve" ]; then
   fi
   echo "==> http://localhost:8000"
   exec "$PY" -m cryptopulse.cli serve
+fi
+
+# ------------------------------------------------------- vérification ------
+# Ne scanne pas : relit le journal et dit ce que le prix a réellement fait
+# après chaque signal déjà émis.
+if [ "$MODE" = "verify" ]; then
+  exec "$PY" -m cryptopulse.cli verify
 fi
 
 # ------------------------------------------------------------------ vérif ---

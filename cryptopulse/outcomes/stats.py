@@ -27,7 +27,14 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-__all__ = ["MIN_SAMPLE", "Bucket", "PerformanceReport", "build_performance"]
+__all__ = [
+    "MIN_SAMPLE",
+    "Bucket",
+    "PerformanceReport",
+    "build_performance",
+    "HorizonBucket",
+    "build_horizon_performance",
+]
 
 # Below this many settled signals a bucket's rate is not worth reading.
 MIN_SAMPLE = 20
@@ -251,3 +258,147 @@ def build_performance(
         synthetic_count=synthetic_count,
         notes=notes,
     )
+
+
+# --------------------------------------------------------------------------- #
+# Multi-horizon follow-up statistics
+#
+# A different question from the barrier report above. The barrier asks "would
+# this trade have won?"; this asks "what did the price actually do 15 minutes,
+# an hour, four hours and a day later?". Both are kept because a signal can be
+# a barrier LOSS and still have been up 2% an hour in — that is information
+# about *timing*, and it is invisible in a win rate.
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(slots=True)
+class HorizonBucket:
+    """One horizon (or one slice of one), aggregated.
+
+    `success_rate` uses exactly the criterion in `HorizonResult.is_success`:
+    net change above zero. The rate is computed over rows that carry a verdict,
+    never over rows that are pending or unresolvable.
+    """
+
+    key: str
+    horizon: str
+    n: int
+    successes: int
+    success_rate: float | None
+    avg_change_pct: float | None
+    median_change_pct: float | None
+    best_change_pct: float | None
+    worst_change_pct: float | None
+    avg_max_gain_pct: float | None
+    avg_max_drawdown_pct: float | None
+
+    @property
+    def insufficient_sample(self) -> bool:
+        return self.n < MIN_SAMPLE
+
+    def to_dict(self) -> dict:
+        return {
+            "key": self.key,
+            "horizon": self.horizon,
+            "n": self.n,
+            "successes": self.successes,
+            "success_rate": _r(self.success_rate),
+            "avg_change_pct": _r(self.avg_change_pct),
+            "median_change_pct": _r(self.median_change_pct),
+            "best_change_pct": _r(self.best_change_pct),
+            "worst_change_pct": _r(self.worst_change_pct),
+            "avg_max_gain_pct": _r(self.avg_max_gain_pct),
+            "avg_max_drawdown_pct": _r(self.avg_max_drawdown_pct),
+            "insufficient_sample": self.insufficient_sample,
+        }
+
+
+def _horizon_bucket(key: str, horizon: str, rows: list[dict], use_net: bool) -> HorizonBucket:
+    field_name = "net_change_pct" if use_net else "change_pct"
+    graded = [r for r in rows if r.get("success") is not None and r.get(field_name) is not None]
+    n = len(graded)
+    if n == 0:
+        return HorizonBucket(key, horizon, 0, 0, None, None, None, None, None, None, None)
+
+    changes = np.array([float(r[field_name]) for r in graded], dtype=np.float64)
+    gains = [float(r["max_gain_pct"]) for r in graded if r.get("max_gain_pct") is not None]
+    dds = [float(r["max_drawdown_pct"]) for r in graded if r.get("max_drawdown_pct") is not None]
+    successes = sum(1 for r in graded if r["success"])
+
+    return HorizonBucket(
+        key=key,
+        horizon=horizon,
+        n=n,
+        successes=successes,
+        success_rate=successes / n,
+        avg_change_pct=float(changes.mean()),
+        median_change_pct=float(np.median(changes)),
+        best_change_pct=float(changes.max()),
+        worst_change_pct=float(changes.min()),
+        avg_max_gain_pct=float(np.mean(gains)) if gains else None,
+        avg_max_drawdown_pct=float(np.mean(dds)) if dds else None,
+    )
+
+
+def build_horizon_performance(
+    rows: list[dict], *, use_net: bool = True, horizons: tuple[str, ...] | None = None
+) -> dict:
+    """Aggregate settled horizon windows overall and by score band / provider.
+
+    `rows` are the dicts returned by `repo.horizon_rows()`. Rows without a
+    verdict are dropped by `_horizon_bucket` rather than counted as failures.
+    """
+    if horizons is None:
+        from cryptopulse.outcomes.horizons import HORIZONS
+
+        horizons = tuple(h.name for h in HORIZONS)
+
+    by_horizon: dict[str, list[dict]] = {h: [] for h in horizons}
+    for r in rows:
+        by_horizon.setdefault(r["horizon"], []).append(r)
+
+    def slice_by(field_name: str, keyfn=None) -> list[dict]:
+        out: list[dict] = []
+        for h in horizons:
+            groups: dict[str, list[dict]] = {}
+            for r in by_horizon.get(h, []):
+                raw = r.get(field_name)
+                if raw is None:
+                    continue
+                groups.setdefault(keyfn(raw) if keyfn else str(raw), []).append(r)
+            out.extend(_horizon_bucket(k, h, v, use_net).to_dict() for k, v in sorted(groups.items()))
+        return out
+
+    synthetic_count = sum(1 for r in rows if r.get("synthetic"))
+    notes: list[str] = []
+    if synthetic_count:
+        notes.append(
+            f"{synthetic_count} of {len(rows)} horizon windows came from the SYNTHETIC provider. "
+            "Those measure the pipeline, not the market."
+        )
+    notes.append(
+        "A horizon counts as a success when the change from entry, after the modelled "
+        "round-trip cost, is above zero. Flat is not a win."
+        if use_net
+        else "Changes are gross: no fee, spread or slippage is deducted."
+    )
+
+    overall = [_horizon_bucket("overall", h, by_horizon.get(h, []), use_net).to_dict() for h in horizons]
+    total_graded = sum(b["n"] for b in overall)
+    if total_graded < MIN_SAMPLE:
+        notes.append(
+            f"Only {total_graded} graded horizon windows in total. Below {MIN_SAMPLE} "
+            "nothing here should be read as a finding."
+        )
+
+    return {
+        "horizons": list(horizons),
+        "overall": overall,
+        "by_score_band": slice_by("final_score", _score_band),
+        "by_state": slice_by("state"),
+        "by_provider": slice_by("provider"),
+        "return_basis": "net_change_pct" if use_net else "change_pct",
+        "min_sample": MIN_SAMPLE,
+        "synthetic_count": synthetic_count,
+        "notes": notes,
+    }

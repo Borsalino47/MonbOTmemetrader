@@ -17,6 +17,22 @@ export interface Component {
 
 export interface PenaltyItem { name: string; points: number; reason: string }
 
+export type VerdictLevel = 'STRONG' | 'WATCH' | 'RISKY' | 'AVOID';
+
+/** The four-level plain-language summary. Always carries its caveat. */
+export interface Verdict {
+  level: VerdictLevel;
+  emoji: string;
+  label: string;
+  label_fr: string;
+  headline: string;
+  headline_fr: string;
+  reasons: string[];
+  reasons_fr: string[];
+  caveat: string;
+  caveat_fr: string;
+}
+
 export interface ScoreRow {
   symbol: string;
   price: number;
@@ -37,6 +53,7 @@ export interface ScoreRow {
   safety: { score: number; hard_veto: boolean; reasons: string[] };
   setup: { state: SetupState; rationale: string; trigger: string | null; invalidation: string | null };
   is_premium: boolean;
+  verdict: Verdict;
   metrics: TableMetrics;
   why: string[];
   risks: string[];
@@ -126,6 +143,9 @@ export interface Health {
   engine_version: string;
   provider: string;
   synthetic_data: boolean;
+  /** Server-decided. The dashboard must never infer LIVE vs DEMO from a provider name. */
+  data_mode: 'LIVE' | 'DEMO';
+  data_mode_detail: string;
   synthetic_warning: string | null;
   scan_count: number;
   consecutive_failures: number;
@@ -148,6 +168,18 @@ export interface Health {
     latency_ms: number | null; detail: string | null;
     rate_limit_remaining_pct: number | null;
   }[];
+  horizon_tracker: {
+    horizons: string[];
+    success_criterion: string;
+    entry_rule: string;
+    checks_signals_older_than: string | null;
+    last_run: {
+      checked_signals: number;
+      resolved_horizons: number;
+      pending_horizons: number;
+      unresolvable_horizons: number;
+    } | null;
+  };
   server_time_ms: number;
 }
 
@@ -233,6 +265,40 @@ export interface PerformanceResponse {
     return_basis: string;
     min_sample: number;
     synthetic_included: boolean;
+    synthetic_count: number;
+    notes: string[];
+  };
+}
+
+// --------------------------------------------------------------- horizons --
+
+export interface HorizonBucket {
+  key: string;
+  horizon: string;
+  n: number;
+  successes: number;
+  success_rate: number | null;
+  avg_change_pct: number | null;
+  median_change_pct: number | null;
+  best_change_pct: number | null;
+  worst_change_pct: number | null;
+  avg_max_gain_pct: number | null;
+  avg_max_drawdown_pct: number | null;
+  insufficient_sample: boolean;
+}
+
+export interface HorizonResponse {
+  tracker: Health['horizon_tracker'];
+  costs: Record<string, number | string>;
+  synthetic_included: boolean;
+  performance: {
+    horizons: string[];
+    overall: HorizonBucket[];
+    by_score_band: HorizonBucket[];
+    by_state: HorizonBucket[];
+    by_provider: HorizonBucket[];
+    return_basis: string;
+    min_sample: number;
     synthetic_count: number;
     notes: string[];
   };

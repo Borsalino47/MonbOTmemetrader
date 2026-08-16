@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
 import type { ScoreRow } from '../types';
 import { DASH, num, pct, price, scoreColor, maturityColor, signClass } from '../format';
+import { VerdictBadge } from './VerdictBadge';
 
 type SortKey =
   | 'rank' | 'symbol' | 'price' | 'change5m' | 'change1h' | 'rvol'
-  | 'final_score' | 'acceleration' | 'pump_maturity' | 'safety' | 'confidence' | 'state';
+  | 'final_score' | 'acceleration' | 'pump_maturity' | 'safety' | 'confidence' | 'state' | 'verdict';
 
 interface Props {
   rows: ScoreRow[];
@@ -24,7 +25,11 @@ const COLUMNS: { key: SortKey; label: string; left?: boolean; title?: string }[]
   { key: 'safety', label: 'Safety' },
   { key: 'confidence', label: 'Conf', title: 'Data confidence 0-100' },
   { key: 'state', label: 'Status', left: true },
+  { key: 'verdict', label: 'Verdict', left: true, title: 'Plain-language summary of the same filters — not advice' },
 ];
+
+// Worst first when sorting descending, so the rows worth a look surface together.
+const VERDICT_RANK: Record<string, number> = { AVOID: 0, RISKY: 1, WATCH: 2, STRONG: 3 };
 
 function value(row: ScoreRow, key: SortKey, index: number): number | string {
   const m = row.metrics ?? {};
@@ -41,6 +46,7 @@ function value(row: ScoreRow, key: SortKey, index: number): number | string {
     case 'safety': return row.safety.score;
     case 'confidence': return row.data_confidence.score;
     case 'state': return row.setup.state;
+    case 'verdict': return VERDICT_RANK[row.verdict?.level] ?? -1;
   }
 }
 
@@ -127,6 +133,9 @@ export function ScannerTable({ rows, onSelect }: Props) {
                 <td className={r.data_confidence.score < 60 ? 'neg' : ''}>{num(r.data_confidence.score, 0)}</td>
                 <td className="left">
                   <span className={`pill ${r.setup.state}`}>{r.setup.state}</span>
+                </td>
+                <td className="left">
+                  {r.verdict && <VerdictBadge verdict={r.verdict} size="sm" />}
                 </td>
               </tr>
             );

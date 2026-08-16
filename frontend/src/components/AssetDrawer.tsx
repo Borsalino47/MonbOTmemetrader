@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api';
 import type { AssetDetail } from '../types';
 import { DASH, age, compact, maturityColor, num, pct, price, scoreColor } from '../format';
+import { VerdictPanel } from './VerdictBadge';
 
 interface Props {
   symbol: string;
@@ -45,6 +46,8 @@ export function AssetDrawer({ symbol, onClose }: Props) {
 
         {data && (
           <>
+            {data.verdict && <VerdictPanel verdict={data.verdict} />}
+
             <div className="score-grid">
               <Box k="Opportunity" v={num(data.final_score, 1)} color={scoreColor(data.final_score)} />
               <Box k="Acceleration" v={num(data.acceleration.momentum_acceleration, 0)} />

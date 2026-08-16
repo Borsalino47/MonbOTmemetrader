@@ -528,6 +528,71 @@ async def cmd_resolve(args) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------- #
+# verify — did the predictions hold up 15m / 1h / 4h / 24h later?
+# --------------------------------------------------------------------------- #
+
+
+async def cmd_verify(args) -> int:
+    settings = _settings_with_provider(args)
+    from cryptopulse.database import repo
+    from cryptopulse.database.session import init_engine
+    from cryptopulse.outcomes.horizons import HORIZONS, HorizonTracker
+    from cryptopulse.outcomes.stats import build_horizon_performance
+    from cryptopulse.providers.registry import build_market_provider, is_synthetic
+
+    init_engine(settings.database)
+    provider = build_market_provider(settings, SYSTEM_CLOCK)
+    tracker = HorizonTracker(settings, provider, clock=SYSTEM_CLOCK)
+
+    print(f"\n{'=' * 76}\nSIGNAL VERIFICATION — {', '.join(h.name for h in HORIZONS)} after each signal\n{'=' * 76}")
+    print(f"Provider: {provider.name}" + ("   ** SYNTHETIC — not market data **" if is_synthetic(provider) else ""))
+    print("Entry:    the open of the bar after the signal.")
+    print(f"Success:  net change above zero after costs ({tracker.costs.describe()}).\n")
+
+    pending = repo.signals_needing_horizons(tracker.ready_before_ms(), args.limit)
+    print(f"{len(pending)} signal(s) with at least one window that may have closed.")
+    if pending:
+        report = await tracker.track(pending)
+        written = repo.save_horizons(report.results)
+        print(f"resolved={report.resolved}  pending={report.pending}  "
+              f"unresolvable={report.unresolvable}  written={written}  ({report.duration_ms}ms)")
+        if report.errors:
+            print(f"\n{len(report.errors)} symbol(s) failed:")
+            for sym, err in list(report.errors.items())[:8]:
+                print(f"  {sym}: {err}")
+    await provider.close()
+
+    rows = repo.horizon_rows()
+    if not rows:
+        print("\nNo horizon window has closed yet. Nothing to report — that is not a zero.")
+        return 0
+
+    perf = build_horizon_performance(rows)
+    print(f"\n{'-' * 76}\nWHAT ACTUALLY HAPPENED AFTER EACH SIGNAL\n{'-' * 76}")
+    print(f"  {'window':<8} {'n':>5} {'success':>9} {'median':>9} {'average':>9} "
+          f"{'best':>9} {'worst':>9} {'max DD':>9}")
+    for b in perf["overall"]:
+        flag = "  (sample too small)" if b["insufficient_sample"] else ""
+        print(f"  {b['horizon']:<8} {b['n']:>5} {_fmt_pct(b['success_rate']):>9} "
+              f"{_fmt(b['median_change_pct']):>8}% {_fmt(b['avg_change_pct']):>8}% "
+              f"{_fmt(b['best_change_pct']):>8}% {_fmt(b['worst_change_pct']):>8}% "
+              f"{_fmt(b['avg_max_drawdown_pct']):>8}%{flag}")
+
+    bands = [b for b in perf["by_score_band"] if b["n"] > 0]
+    if bands:
+        print(f"\n{'-' * 76}\nBY SCORE BAND — does a higher score actually do better?\n{'-' * 76}")
+        print(f"  {'band':<8} {'window':<8} {'n':>5} {'success':>9} {'median':>9}")
+        for b in bands:
+            flag = "  (sample too small)" if b["insufficient_sample"] else ""
+            print(f"  {b['key']:<8} {b['horizon']:<8} {b['n']:>5} "
+                  f"{_fmt_pct(b['success_rate']):>9} {_fmt(b['median_change_pct']):>8}%{flag}")
+
+    for note in perf["notes"]:
+        print(f"\n  ** {note}")
+    return 0
+
+
 def _fmt(x, nd: int = 2) -> str:
     return "n/a" if x is None else f"{x:.{nd}f}"
 
@@ -582,6 +647,10 @@ def main(argv: list[str] | None = None) -> int:
     p_res.add_argument("--label", type=str, default="standard_2R")
     _add_provider_flag(p_res)
 
+    p_ver = sub.add_parser("verify", help="check what the price did 15m/1h/4h/24h after each signal")
+    p_ver.add_argument("--limit", type=int, default=500)
+    _add_provider_flag(p_ver)
+
     p_serve = sub.add_parser("serve", help="run the API and dashboard")
     p_serve.add_argument("--host", type=str, default=None)
     p_serve.add_argument("--port", type=int, default=None)
@@ -593,7 +662,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "serve":
         return cmd_serve(args)
-    handler = {"doctor": cmd_doctor, "scan": cmd_scan, "backtest": cmd_backtest, "resolve": cmd_resolve}[args.command]
+    handler = {
+        "doctor": cmd_doctor,
+        "scan": cmd_scan,
+        "backtest": cmd_backtest,
+        "resolve": cmd_resolve,
+        "verify": cmd_verify,
+    }[args.command]
     return asyncio.run(handler(args))
 
 

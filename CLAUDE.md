@@ -48,10 +48,12 @@ that justifies it.
 | Score calibration / probabilities | **NOT IMPLEMENTED** | Needs a real signal history first |
 | Machine learning | **NOT IMPLEMENTED** | Deliberately deferred, see §9 |
 | Outcome tracker | **TESTED** | 23 tests; run end to end on 310 signals |
-| Performance analytics (`outcomes/stats.py`) | **TESTED** | Buckets + component edge, `n` on every rate |
+| Multi-horizon verification (`outcomes/horizons.py`) | **TESTED** | 25 tests; run end to end on 1240 windows |
+| Performance analytics (`outcomes/stats.py`) | **TESTED** | Buckets + component edge + horizon buckets, `n` on every rate |
+| Verdict (`scoring/verdict.py`) | **TESTED** | 15 tests. Compression of existing gates; introduces no new opinion |
 | Schema migration (`database/migrate.py`) | **TESTED** | Additive columns only; refuses destructive changes |
 
-**Test suite: 245 tests, all passing.** Run `pytest -q`.
+**Test suite: 292 tests, all passing.** Run `pytest -q`.
 
 ---
 
@@ -141,6 +143,7 @@ cryptopulse/
     acceleration.py      Momentum acceleration + early move
     confidence.py        Data confidence, with a hard staleness cap
     states.py            IGNORE/OBSERVE/WATCH/ARMED/BREAKOUT/RETEST/...
+    verdict.py           🟢/🟡/🟠/🔴 in four words, computed last, caveat attached
     engine.py            SCORE_ENGINE_V1 orchestrator + weights fingerprint
   risk/
     liquidity.py         Liquidity gate, DANGEROUS => veto
@@ -153,7 +156,9 @@ cryptopulse/
   alerts/engine.py       Levels, gates, dedup, cooldown
   outcomes/
     tracker.py           Grades emitted signals against the bars that followed
-    stats.py             Win rate / expectancy by bucket + per-component edge
+    horizons.py          What the price did 15m/1h/4h/24h later — path, not verdict
+    stats.py             Win rate / expectancy by bucket, per-component edge,
+                         and the per-horizon success/median/best/worst tables
   backtest/
     labels.py            Triple-barrier, ATR-scaled, pessimistic on ambiguity
     metrics.py           Expectancy, PF, DD, Sharpe/Sortino (>=20 trades only)
@@ -167,7 +172,7 @@ cryptopulse/
   api/
     service.py           Owns the scanner, the loop and shared state
     app.py               FastAPI routes, serves the built dashboard
-  cli.py                 doctor / scan / resolve / serve / backtest (--provider)
+  cli.py                 doctor / scan / resolve / verify / serve / backtest (--provider)
 
 start.sh                 One-command launcher: install, verify feed, scan
 
@@ -175,7 +180,7 @@ scripts/
   simulate_journal.py    Scan across simulated time, grade, compare to baseline
 
 frontend/                Vite + React 18 + TypeScript (strict)
-tests/                   245 tests
+tests/                   292 tests
 pine/                    TradingView companion scripts
 ```
 
@@ -236,6 +241,24 @@ Break these and the product is lying to its user.
     into every signal row. Change a weight and the fingerprint changes, so old
     signals are never reinterpreted under new rules.
 
+14. **A horizon window that has not fully elapsed is absent, never settled.**
+    `HorizonTracker` returns PENDING and `save_horizons` refuses to write it.
+    Reporting the current price for an unfinished window turns "not yet" into a
+    result.
+
+15. **The horizon success rule lives in exactly one place** —
+    `HorizonResult.is_success`, net change above zero after costs. Storage and
+    statistics both read it, so the criterion cannot drift between them. A
+    window with no verdict returns `None`, never `False`.
+
+16. **Every verdict carries its caveat, including the green one.** A coloured
+    badge with no disclaimer is precisely how a ranking gets read as a
+    prediction. A test asserts the caveat on all four levels.
+
+17. **LIVE vs DEMO is decided server-side.** `status()["data_mode"]` is the
+    single source; the dashboard never infers it from a provider name it happens
+    to recognise, or a new synthetic source would slip past the banner.
+
 ---
 
 ## 6. Design decisions and why
@@ -293,6 +316,9 @@ python -m cryptopulse.cli scan --limit 30
 # grade signals whose horizon has elapsed, then print realised performance
 python -m cryptopulse.cli resolve
 
+# what the price actually did 15m / 1h / 4h / 24h after each signal
+python -m cryptopulse.cli verify
+
 # full loop offline: scan across simulated time, grade, compare to random entry
 python scripts/simulate_journal.py --scans 70 --step-bars 3
 CP_PROVIDER_MARKET_DATA=fixture python -m cryptopulse.cli scan   # offline
@@ -340,6 +366,12 @@ pytest tests/test_no_lookahead.py -v    # the ones that matter most
   for reasons unrelated to the strategy. A regression test guards it.
 * `outcomes/tracker.py:_resolve_one` — requires an *exact* close-time match.
   Resolving against the nearest bar would shift every barrier by a bar.
+* `outcomes/horizons.py:_track_one` — same exact-match rule, and the PENDING
+  branch is load-bearing: it is what stops an unfinished 24h window from being
+  settled at whatever price is current. Do not "fill in" a pending window.
+* `scoring/verdict.py` — reads only what the score already computed. If you find
+  yourself adding a new threshold here, it belongs in a component instead; the
+  verdict is a compression, not a ninth opinion.
 
 ---
 
@@ -353,9 +385,16 @@ pytest tests/test_no_lookahead.py -v    # the ones that matter most
    once their horizon elapses; `outcomes/stats.py` aggregates. Runs automatically
    after every scan, or on demand via `cryptopulse resolve` /
    `POST /api/outcomes/resolve`.
+
+   ~~Multi-horizon verification.~~ **Done.** `outcomes/horizons.py` records what
+   the price actually did 15m / 1h / 4h / 24h after each signal — price, change,
+   max gain, max drawdown, success — as a complement to the barrier verdict.
+   `cryptopulse verify` / `POST /api/horizons/track`, Verification tab in the UI.
 4. **Watch the baseline comparison.** `scripts/simulate_journal.py` prints the
-   scanner's win rate against random entries on the same bars. On synthetic data
-   the scanner currently lands ~7 points *below* random. That number says nothing
+   scanner's win rate against random entries on the same bars, and now does the
+   same at each of the four horizons. On synthetic data the scanner currently
+   lands ~6 points *below* random on the barrier label, and 1.4 to 5.1 points
+   below at every horizon. That number says nothing
    about markets, but the same comparison on real history is the first thing that
    would reveal the V1 weights are actively harmful rather than merely
    unvalidated. Do not skip it.

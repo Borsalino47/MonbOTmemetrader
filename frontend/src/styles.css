@@ -295,3 +295,66 @@ tbody td.sym { font-weight: 600; text-align: left; }
   .status-strip { margin-left: 0; width: 100%; gap: 12px; }
   .drawer { width: 100%; }
 }
+
+/* ----------------------------------------------------------- verdict ---- */
+/* Four levels, four colours, and a caveat that never gets separated from the
+   badge in the expanded form. The badge alone is deliberately small: it is a
+   summary of filters already shown, not a new claim. */
+
+.verdict-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.verdict-badge.sm { font-size: 9.5px; padding: 2px 6px; }
+.verdict-badge .verdict-emoji { font-size: 10px; line-height: 1; }
+
+.verdict-badge.strong { background: rgba(38,217,127,0.14); color: var(--up); border-color: rgba(38,217,127,0.3); }
+.verdict-badge.watch  { background: rgba(255,176,32,0.12); color: var(--warn); border-color: rgba(255,176,32,0.26); }
+.verdict-badge.risky  { background: rgba(255,140,40,0.13); color: #ff8c28; border-color: rgba(255,140,40,0.3); }
+.verdict-badge.avoid  { background: rgba(255,92,92,0.13); color: var(--down); border-color: rgba(255,92,92,0.3); }
+
+.verdict-panel {
+  background: var(--bg-panel-2);
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+}
+.verdict-panel.strong { border-left-color: var(--up); }
+.verdict-panel.watch  { border-left-color: var(--warn); }
+.verdict-panel.risky  { border-left-color: #ff8c28; }
+.verdict-panel.avoid  { border-left-color: var(--down); }
+
+.verdict-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.verdict-headline { font-size: 12.5px; color: var(--text); font-weight: 550; }
+
+.verdict-reasons { margin: 9px 0 0 0; padding-left: 16px; }
+.verdict-reasons li {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  line-height: 1.6;
+  margin-bottom: 3px;
+}
+
+.verdict-caveat {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--border);
+  font-size: 10.5px;
+  color: var(--text-faint);
+  line-height: 1.55;
+}
+
+/* ---------------------------------------------------------- horizons ---- */
+
+.table-scroll { overflow-x: auto; }
+.table-scroll table { min-width: 620px; }

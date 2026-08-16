@@ -157,6 +157,9 @@ than by convention.
 
 ## Installation
 
+**Not a developer?** Read [INSTALL.md](INSTALL.md) instead — same thing in three
+commands, in French, with the Android/Termux path and what to do when it fails.
+
 Requires Python 3.11+ and Node 18+.
 
 ```bash
@@ -231,7 +234,22 @@ docker compose up --build       # API on :8000, Postgres on :5432
 
 **Live market scanner** — every column sortable:
 
-| Rank | Asset | Price | 5m | 1h | RVOL | Opportunity | Accel | Maturity | Safety | Conf | Status |
+| Rank | Asset | Price | 5m | 1h | RVOL | Opportunity | Accel | Maturity | Safety | Conf | Status | Verdict |
+
+**Verdict** — the four-level plain-language summary, for reading the table
+without reading eight components:
+
+| | Meaning |
+|---|---|
+| 🟢 **FORTE OPPORTUNITÉ** | Good score, clean gates, young move, triggered setup. All four, or it is not this level. |
+| 🟡 **À SURVEILLER** | A genuine setup that has not triggered, or one that has but does not clear the bar. The normal state for most rows. |
+| 🟠 **RISQUÉ** | The signal is real, the entry is bad: the move is already mature, or large risk penalties applied. |
+| 🔴 **ÉVITER** | A hard gate rejected it, or the data is not trustworthy enough to judge. |
+
+A verdict compresses filters already computed; it introduces no new opinion and
+sees no data the score did not. **Every verdict carries its caveat, including the
+green one** — a coloured badge with no disclaimer is exactly how a ranking gets
+read as a prediction.
 
 **Top opportunities now** — ranked by setup quality, not by price change. When
 nothing clears the gates it says so, rather than promoting the best of a bad list.
@@ -241,9 +259,20 @@ bars and the `RAW − PENALTY = FINAL` arithmetic, score history sparkline,
 multi-timeframe bias grid, market data, and two explicit sections:
 **Why this asset?** and **What can invalidate it?**
 
-**Freshness bar** — always visible: API status, data source, last update, scan
-age, market data age, scanned/failed counts, market regime, paper mode. A stale
-feed or a synthetic source raises a permanent banner.
+**Verification tab** — what the price did 15m / 1h / 4h / 24h after each signal,
+with success rate, median, average, best, worst and average max drawdown per
+window, and the same broken down by score band. Before any window has closed it
+says so rather than showing zeros.
+
+**LIVE vs DEMO** — decided server-side and exposed as `data_mode` on
+`/api/health`, so the dashboard never infers it from a provider name it happens
+to recognise. `DEMO` turns the header indicator red and raises a permanent banner
+naming the synthetic source and how to switch to a real feed. There is no
+intermediate state and the app never switches between them on its own.
+
+**Freshness bar** — always visible: API status, data mode, source, last update,
+scan age, market data age, scanned/failed counts, market regime, paper mode. A
+stale feed raises its own permanent banner.
 
 ---
 
@@ -275,7 +304,7 @@ retried — it is our bug, not a transient failure.
 ## Testing
 
 ```bash
-pytest -q                            # 245 tests
+pytest -q                            # 292 tests
 pytest tests/test_no_lookahead.py -v # the ones that matter most
 ```
 
@@ -337,6 +366,41 @@ buckets under 20 samples flagged `insufficient_sample`. **Component edge**
 compares the average points each component awarded to eventual winners versus
 losers: a component that scores both the same is contributing noise to the final
 score, however sensible it looked when it was written.
+
+### Multi-horizon verification — what the price actually did
+
+The barrier label answers *would this trade have won?* It collapses a whole price
+path into one word, and it cannot tell you a signal was up 3% after an hour and
+gave it all back by morning. So a second, complementary record is kept: for every
+signal, what the price did **15 minutes, 1 hour, 4 hours and 24 hours** later.
+
+```bash
+python -m cryptopulse.cli verify        # or ./start.sh verify
+
+curl -X POST localhost:8000/api/horizons/track
+curl localhost:8000/api/horizons
+curl localhost:8000/api/signals/42/horizons
+```
+
+Per window it records the price reached, the change from entry, the **maximum
+gain**, the **maximum drawdown**, and whether it succeeded. Tracking runs
+automatically after every scan; the **Verification** tab in the dashboard shows
+the table, sliced by score band, setup state and data source.
+
+**Success criterion, stated once and applied everywhere:** a horizon succeeds
+when the change from entry, *after the modelled round-trip cost*, is above zero.
+Flat is not a win — paying the spread means flat is a small loss. The rule lives
+in `HorizonResult.is_success` and nowhere else, so storage and statistics cannot
+drift apart.
+
+Every rule from the barrier tracker applies here too — entry at the next bar's
+open, exact close-time match, UNRESOLVABLE with a reason rather than a guess —
+plus one of its own:
+
+| Situation | Behaviour |
+|---|---|
+| Window has not fully elapsed | **PENDING**, absent from the table and never written to the database. Reporting the current price would turn "not yet" into a result. |
+| Window has no verdict | `success` is `null`, never `false`. An unfinished window is not a failure. |
 
 ### Verifying the whole loop offline
 
