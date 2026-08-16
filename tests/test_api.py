@@ -409,3 +409,21 @@ def test_deep_scan_reports_what_it_cost_and_which_engine_scored(client):
     first = d["results"][0]
     assert first["discovery"]["discovery_label"].endswith("/100")
     assert "%" not in first["discovery"]["discovery_label"]
+
+
+def test_pump_history_reports_its_resolution_and_never_fakes_a_rate(client):
+    body = client.get("/api/pumps/BTCUSDT").json()
+    h, sim = body["history"], body["similarity"]
+
+    assert h["timeframe"] == "1h"
+    assert h["days_covered"] > 1.0
+    assert "definition" in h, "what counts as a pump must be stated"
+    if h["episodes"]:
+        assert h["resolution_minutes"] == 60
+        assert any("resolution" in n for n in h["notes"])
+
+    # Below the sample floor no rate is shown at all, not a greyed-out one.
+    if sim["insufficient_sample"]:
+        assert sim["reached"] == {}
+        assert sim["median_gain_pct"] is None
+    assert sim["min_sample"] == 20

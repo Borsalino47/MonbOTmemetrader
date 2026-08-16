@@ -16,6 +16,7 @@ from cryptopulse.alerts.engine import Alert, AlertEngine
 from cryptopulse.config.settings import CryptoPulseSettings, get_settings
 from cryptopulse.core.clock import SYSTEM_CLOCK
 from cryptopulse.core.logging import get_logger
+from cryptopulse.core.types import Timeframe
 from cryptopulse.database import repo
 from cryptopulse.database.session import init_engine
 from cryptopulse.hunter.deep import DeepScanner, DeepScanReport
@@ -262,6 +263,44 @@ class ScannerService:
             self.last_deep_scan = result
             return result
 
+    async def pump_history(
+        self, symbol: str, *, timeframe: Timeframe | None = None, bars: int = 1000
+    ) -> dict:
+        """Past accelerations for one symbol, plus how the present compares.
+
+        1h by default: it is the shortest timeframe whose 1000-bar window (41
+        days) yields a sample large enough to report a rate at all, and 300 of
+        those bars are already in the candle cache for any scanned symbol.
+        """
+        from cryptopulse.pumps import (
+            build_history,
+            compare_to_past,
+            summarise,
+        )
+
+        tf = timeframe or Timeframe.H1
+        series = await self.scanner.provider.get_ohlcv(symbol.upper(), tf, bars)
+        history = build_history(series)
+        stats = summarise(history.episodes)
+
+        # The present setup, described exactly as past ones were: from bars at
+        # or before now. `find_pumps` computes the same fields the same way.
+        current = _current_fingerprint(series)
+        similarity = compare_to_past(current, history.episodes)
+
+        return {
+            "history": history.to_dict(),
+            "stats": stats.to_dict(),
+            "similarity": similarity.to_dict(),
+            "current_setup": {
+                "rvol": current.rvol,
+                "volume_change_pct": current.volume_change_pct,
+                "range_position": current.range_position,
+                "atr_pct": current.atr_pct,
+            },
+            "data_mode": "DEMO" if is_synthetic(self.scanner.provider) else "LIVE",
+        }
+
     async def maybe_prune(self, *, force: bool = False) -> dict | None:
         """Apply the retention window, at most once every six hours."""
         now_ms = SYSTEM_CLOCK.now_ms()
@@ -422,6 +461,29 @@ def set_service(service: ScannerService | None) -> None:
     """Test hook: inject a service built on a fixture provider."""
     global _service
     _service = service
+
+
+def _current_fingerprint(series):
+    """Describe the present setup with the same measures, computed the same way.
+
+    Reuses the episode builder rather than duplicating the arithmetic, so the
+    current fingerprint and the historical ones can never drift apart — a
+    comparison between two differently-computed descriptions would be worthless.
+    """
+    from cryptopulse.pumps.detect import PumpEpisode, _attach_start_context
+    from cryptopulse.pumps.stats import SetupFingerprint
+
+    closed = series.closed()
+    if len(closed) < 51:
+        return SetupFingerprint()
+
+    probe = PumpEpisode(
+        symbol=closed.symbol, timeframe=str(closed.timeframe), resolution_minutes=0,
+        start_ms=0, start_price=float(closed.close[-1]), peak_ms=0,
+        peak_price=float(closed.close[-1]), gain_pct=0.0, bars_to_peak=0, minutes_to_peak=0,
+    )
+    _attach_start_context(probe, closed, len(closed) - 1, 50)
+    return SetupFingerprint.from_episode(probe)
 
 
 def _cache_stats(provider) -> dict:

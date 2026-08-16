@@ -479,6 +479,29 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
             ),
         }
 
+    # ------------------------------------------------------------- pumps #
+
+    @app.get("/api/pumps/{symbol}", tags=["pumps"])
+    async def pump_history(symbol: str, bars: int = Query(1000, ge=100, le=1000)):
+        """This token's past accelerations, and whether the present resembles them.
+
+        Detected on 1h candles: the shortest timeframe whose 1000-bar window
+        (41 days) produces a sample large enough to report a rate at all. The
+        cost is timing resolution — "time to peak" is known to the hour, and
+        every episode carries `resolution_minutes` so nothing renders precision
+        it does not have.
+
+        Below the sample floor the similarity block returns no rates at all
+        rather than percentages over a handful of observations. On a few weeks
+        of history that is the normal outcome, not an error.
+        """
+        try:
+            return await get_service().pump_history(symbol, bars=bars)
+        except Exception as exc:
+            raise HTTPException(
+                502, f"could not read history for {symbol.upper()}: {type(exc).__name__}"
+            ) from exc
+
     # ---------------------------------------------------------- maintenance #
 
     @app.post("/api/maintenance/prune", tags=["maintenance"])

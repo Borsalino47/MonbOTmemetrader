@@ -59,9 +59,11 @@ that justifies it.
 | `TokenDiscoveryProvider` | **IMPLEMENTED** | Binance / Kraken / fixture. The seat Robinhood Chain plugs into |
 | Deep scan (`hunter/deep.py`) | **TESTED** | Reuses the scan's own results; states its request cost |
 | `TOKEN_DISCOVERY_SCORE` (`scoring/discovery.py`) | **TESTED** | 18 tests. DISCOVERY_ENGINE_V1, weights are a hypothesis |
+| Pump history (`pumps/detect.py`) | **TESTED** | 18 tests. Threshold-free episodes on 1h; 23-38 found per token |
+| Pump similarity (`pumps/stats.py`) | **TESTED** | Refuses any rate below n=20, which is the common case |
 | Schema migration (`database/migrate.py`) | **TESTED** | Additive columns only; refuses destructive changes |
 
-**Test suite: 399 tests, all passing.** Run `pytest -q`.
+**Test suite: 418 tests, all passing.** Run `pytest -q`.
 
 ---
 
@@ -169,6 +171,9 @@ cryptopulse/
   hunter/
     discovery.py         Wide pre-scan. Reads the scan's own ticker call, costs nothing
     deep.py              The expensive look, only on selected candidates
+  pumps/
+    detect.py            Episodes, not thresholds. 1h = the shortest usable sample
+    stats.py             Descriptive stats + similarity, both carrying their n
   outcomes/
     tracker.py           Grades emitted signals against the bars that followed
     horizons.py          What the price did 15m/1h/4h/24h later — path, not verdict
@@ -198,7 +203,7 @@ frontend/                Vite + React 18 + TypeScript (strict), mobile-first
   HomeView               The five-second view: can I trust it, and what moved
   AssetCards             The scanner as cards; the table is wide-screen only
   bottom-nav             Thumb-reachable navigation, phones only
-tests/                   399 tests
+tests/                   418 tests
 pine/                    TradingView companion scripts
 ```
 
@@ -348,7 +353,29 @@ Break these and the product is lying to its user.
     exactly. A search that quietly spent hundreds of requests would be
     discovered as a rate-limit ban rather than as a number.
 
-29. **LIVE vs DEMO is decided server-side.** `status()["data_mode"]` is the
+29. **Pump detection records size instead of testing a threshold.** One pass
+    over the candles answers "+3%?" and "+20%?" alike, so the threshold never has
+    to be chosen before anything is known.
+
+30. **1h is the pump timeframe because it is the shortest that yields a sample.**
+    Binance caps a request at 1000 bars, so the timeframe *is* the depth: 5m
+    gives 3.5 days, 15m gives 10.4, 1h gives 41.7. Below 1h the statistics would
+    read "insufficient sample" forever. The cost is timing resolution, so every
+    episode carries `resolution_minutes` and nothing renders minute precision it
+    does not have.
+
+31. **A past setup is described only by what was knowable then.** The context on
+    a `PumpEpisode` — RVOL, volume change, range position, ATR — is computed
+    strictly from bars at or before the trough. Using anything from during the
+    run would make similarity circular: it would discover that pumps are
+    preceded by pumps, and it would look convincing. A test changes only the
+    future and asserts the recorded context does not move.
+
+32. **Below `MIN_SAMPLE` the similarity block returns no rate at all** — not a
+    greyed-out one. A number on screen gets read however it is styled, and on a
+    few weeks of history an insufficient sample is the ordinary outcome.
+
+33. **LIVE vs DEMO is decided server-side.** `status()["data_mode"]` is the
     single source; the dashboard never infers it from a provider name it happens
     to recognise, or a new synthetic source would slip past the banner.
 
@@ -479,6 +506,12 @@ pytest tests/test_no_lookahead.py -v    # the ones that matter most
 * `database/repo.py:prune` — the only destructive operation in the system. The
   `outcome_label IS NOT NULL AND all horizons recorded` filter is what makes it
   safe; loosening it silently deletes the evidence the journal exists to collect.
+* `pumps/detect.py:find_pumps` — two passes on purpose. A greedy chronological
+  walk lets a small early wiggle block the large run right behind it; candidates
+  are collected, sorted by size, and accepted only when they do not overlap. An
+  exact-local-minimum trough rule was also tried and was far too brittle — it
+  accepted 29 bars in 400 of ordinary noise and missed real runs whose low was a
+  bar early. Hence `trough_tolerance_pct`.
 * `scoring/verdict.py` — reads only what the score already computed. If you find
   yourself adding a new threshold here, it belongs in a component instead; the
   verdict is a compression, not a ninth opinion.
