@@ -763,3 +763,132 @@ tbody td.sym { font-weight: 600; text-align: left; }
   .pump-row { grid-template-columns: 78px 56px 48px 50px; }
   .pump-px { display: none; }
 }
+
+/* ── Explosion 15m ───────────────────────────────────────────────────────
+   The only score with a deadline, so the window is part of the badge and never
+   drops out of it: "72/100" alone would be a score about nothing. */
+
+.exp-badge {
+  display: inline-flex; align-items: baseline; gap: 7px;
+  padding: 4px 9px; border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  font-family: var(--mono);
+}
+.exp-badge.sm { padding: 2px 7px; gap: 5px; }
+.exp-label { font-size: 10px; letter-spacing: .05em; font-weight: 650; }
+.exp-badge.sm .exp-label { font-size: 9px; }
+.exp-score { font-size: 14px; font-weight: 650; }
+.exp-badge.sm .exp-score { font-size: 11px; }
+.exp-score small { font-size: 9px; color: var(--text-faint); }
+.exp-window { font-size: 9.5px; color: var(--text-faint); }
+
+.exp-badge.hot { border-color: var(--up); background: rgba(0, 200, 120, 0.10); }
+.exp-badge.hot .exp-label, .exp-badge.hot .exp-score { color: var(--up); }
+.exp-badge.warm { border-color: var(--warn); background: rgba(255, 170, 40, 0.10); }
+.exp-badge.warm .exp-label, .exp-badge.warm .exp-score { color: var(--warn); }
+.exp-badge.cold .exp-label, .exp-badge.cold .exp-score { color: var(--text-dim); }
+.exp-badge.blocked { border-color: var(--down); background: rgba(255, 70, 90, 0.10); }
+.exp-badge.blocked .exp-label, .exp-badge.blocked .exp-score { color: var(--down); }
+
+.exp-question { font-size: 11px; color: var(--text-dim); line-height: 1.45; margin: 0 0 10px; }
+.exp-head { margin-bottom: 10px; }
+.exp-breakdown { margin-bottom: 4px; }
+.exp-veto {
+  font-size: 11.5px; color: var(--down); line-height: 1.5;
+  padding: 9px 10px; border-radius: 6px; background: rgba(255, 70, 90, 0.08);
+}
+.exp-list { margin: 8px 0 0; padding-left: 16px; font-size: 11.5px; line-height: 1.5; }
+.exp-list li { color: var(--text-dim); margin-bottom: 3px; }
+.exp-list li.risk { color: var(--warn); }
+.exp-caveat {
+  font-size: 10.5px; color: var(--text-faint); line-height: 1.5;
+  margin: 10px 0 0; padding-top: 8px; border-top: 1px solid var(--border);
+}
+.card-exp { margin: 6px 0 2px; }
+
+/* ── Decisions ───────────────────────────────────────────────────────────
+   The one place the user writes rather than reads. Append-only: there is no
+   undo, because the sequence of decisions is the part worth keeping. */
+
+.decision-panel { border-color: var(--accent); }
+.decision-current {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  margin-bottom: 9px; font-size: 12px;
+}
+.decision-current-label { font-weight: 650; }
+.decision-current.VALIDATED .decision-current-label { color: var(--up); }
+.decision-current.REJECTED .decision-current-label { color: var(--down); }
+.decision-current.WATCHLIST .decision-current-label { color: var(--warn); }
+.decision-current.ANALYSE .decision-current-label { color: var(--accent); }
+.decision-current-when { font-size: 10px; color: var(--text-faint); font-family: var(--mono); }
+
+.decision-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.decision-btn {
+  padding: 11px 8px; border-radius: 8px; cursor: pointer;
+  background: var(--bg); border: 1px solid var(--border-strong);
+  color: var(--text); font-size: 13px; font-weight: 600;
+  /* 44px is the smallest reliable touch target on a phone. */
+  min-height: 44px;
+}
+.decision-btn:disabled { opacity: .55; cursor: default; }
+.decision-btn.VALIDATED.active { border-color: var(--up); color: var(--up); }
+.decision-btn.REJECTED.active { border-color: var(--down); color: var(--down); }
+.decision-btn.WATCHLIST.active { border-color: var(--warn); color: var(--warn); }
+.decision-btn.ANALYSE.active { border-color: var(--accent); color: var(--accent); }
+
+.decision-note {
+  width: 100%; margin-top: 8px; padding: 9px 10px; border-radius: 7px;
+  background: var(--bg); border: 1px solid var(--border);
+  color: var(--text); font-size: 12px; font-family: inherit;
+}
+.decision-help { font-size: 10.5px; color: var(--text-faint); line-height: 1.5; margin: 9px 0 0; }
+.decision-history { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
+.decision-hist-row { display: flex; align-items: center; gap: 7px; padding: 3px 0; font-size: 11px; }
+.decision-hist-label { color: var(--text-dim); }
+.decision-hist-meta { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--text-faint); }
+.decision-dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
+.decision-dot.VALIDATED, .val-dot.VALIDATED { background: var(--up); }
+.decision-dot.REJECTED, .val-dot.REJECTED { background: var(--down); }
+.decision-dot.WATCHLIST, .val-dot.WATCHLIST { background: var(--warn); }
+.decision-dot.ANALYSE, .val-dot.ANALYSE { background: var(--accent); }
+
+/* ── Decisions tab ────────────────────────────────────────────────────── */
+
+.val-counts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; margin-bottom: 12px; }
+.val-count {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 10px 4px; border-radius: 8px; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--border);
+  color: var(--text);
+}
+.val-count.active { border-color: var(--accent); }
+.val-count-n { font-family: var(--mono); font-size: 19px; font-weight: 650; }
+.val-count-l { font-size: 9.5px; color: var(--text-faint); text-align: center; line-height: 1.25; }
+
+.val-warn {
+  font-size: 11px; color: var(--warn); line-height: 1.5; margin: 0 0 12px;
+  padding: 9px 11px; border-radius: 7px; background: rgba(255, 170, 40, 0.08);
+}
+.val-list { display: flex; flex-direction: column; gap: 7px; }
+.val-row {
+  display: flex; align-items: flex-start; gap: 9px; width: 100%;
+  padding: 11px 12px; border-radius: 9px; cursor: pointer; text-align: left;
+  background: var(--surface); border: 1px solid var(--border); color: var(--text);
+}
+.val-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; flex: 0 0 auto; }
+.val-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.val-top { display: flex; align-items: baseline; gap: 8px; }
+.val-sym { font-weight: 650; font-size: 13px; }
+.val-when { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--text-faint); }
+.val-metrics {
+  display: flex; gap: 10px; flex-wrap: wrap;
+  font-family: var(--mono); font-size: 10.5px; color: var(--text-dim);
+}
+.val-demo { color: var(--warn); font-weight: 650; }
+.val-usernote { font-size: 11.5px; color: var(--text); font-style: italic; }
+.val-why { font-size: 11px; color: var(--text-faint); line-height: 1.4; }
+.val-note { font-size: 10.5px; color: var(--text-faint); line-height: 1.55; margin-top: 14px; }
+
+/* French component labels are longer than the English ones and already cased.
+   The shared 82px column wrapped them onto two lines. */
+.exp-breakdown .breakdown-row .name { width: 108px; text-transform: none; }

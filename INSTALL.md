@@ -162,10 +162,53 @@ volontaire.
 
 ### Les onglets
 
+* **Accueil** — les trois meilleurs setups et l'état du flux, en cinq secondes.
 * **Scanner** — le classement en direct.
-* **Alerts** — ce qui a franchi un seuil.
-* **Verification** — ce que le prix a fait après. **L'onglet qui compte.**
+* **Recherche** — tout le venue classé par changement de comportement.
+* **Choix** — vos propres décisions : ce que vous avez validé, surveillé, rejeté.
+* **Alertes** — ce qui a franchi un seuil.
+* **Vérification** — ce que le prix a fait après. **L'onglet qui compte.**
 * **Performance** — les statistiques de réussite des signaux déjà tranchés.
+
+### Les trois scores
+
+Trois questions différentes, jamais mélangées en un seul chiffre :
+
+| Score | La question | L'horizon |
+|---|---|---|
+| **Opportunité** | Est-ce un bon setup ? | heures à jours |
+| **Recherche** | Le comportement de ce token vient-il de changer ? | heures |
+| **Explosion 15 min** | Ça va bouger dans le quart d'heure ? | 15 minutes |
+
+Ils sont souvent en désaccord, et c'est voulu. Un beau retest sur le graphique
+journalier a un bon score d'opportunité et un score d'explosion proche de zéro :
+il va se résoudre en plusieurs jours. Faire la moyenne des deux donnerait un
+chiffre qui ne décrit ni l'un ni l'autre.
+
+**Le score d'explosion est le seul dont la promesse est déjà mesurée.** Il dit
+« dans 15 minutes », et l'onglet Vérification enregistre depuis toujours ce que
+le prix a réellement fait 15 minutes après chaque signal. C'est donc le premier
+chiffre de cette application qui pourra être prouvé faux — et c'est une qualité,
+pas un défaut.
+
+### Vos décisions
+
+Sur la fiche de chaque token, quatre boutons : **✅ Valider**, **⭐ Surveiller**,
+**🔬 Analyser**, **❌ Rejeter**.
+
+Chaque décision est enregistrée avec ce qui était affiché à ce moment-là : le
+prix, les trois scores, le verdict, les raisons et l'invalidation. Pas un lien
+vers le scan — une photographie de l'écran. Un mois plus tard, vous pourrez
+relire la décision dans les mots qui l'ont produite, même si les pondérations
+ont changé entre-temps.
+
+Changer d'avis **ajoute** une décision au lieu d'effacer la précédente. C'est la
+suite des décisions qui est intéressante, pas la dernière.
+
+L'onglet **Choix** ne montre aucun taux de réussite, et n'en montrera pas avant
+longtemps. Un pourcentage sur quelques décisions se lirait comme un jugement sur
+votre propre flair, et ce serait le chiffre le plus trompeur que ce logiciel
+puisse afficher.
 
 ---
 

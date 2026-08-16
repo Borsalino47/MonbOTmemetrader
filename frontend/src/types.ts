@@ -54,6 +54,10 @@ export interface ScoreRow {
   setup: { state: SetupState; rationale: string; trigger: string | null; invalidation: string | null };
   is_premium: boolean;
   verdict: Verdict;
+  /** The explosion engine's separate answer, never folded into final_score.
+   *  Null means the engine did not run for this row — different from a zero,
+   *  which is a statement about the token. */
+  explosion: Explosion | null;
   /** True when the row was restored from SQLite rather than produced by a live
    *  scan. Such a row is a genuine subset: fields never journalled are null. */
   from_journal?: boolean;
@@ -476,4 +480,68 @@ export interface PumpResponse {
     atr_pct: number | null;
   };
   data_mode: 'LIVE' | 'DEMO';
+}
+
+/** EXPLOSION_15M_SCORE — a ranking of how likely a move is inside a stated
+ *  window. The only score in this project whose claim is already measured: the
+ *  15m row of the horizon table is what the price actually did over exactly
+ *  this window. */
+export interface Explosion {
+  symbol: string;
+  explosion_score: number;
+  /** IMMINENT / EN FORMATION / CALME / BLOQUÉ. */
+  explosion_label: string;
+  horizon_minutes: number;
+  vetoed: boolean;
+  veto_reason: string | null;
+  engine_version: string;
+  weights_fingerprint: string;
+  components: Component[];
+  why: string[];
+  risks: string[];
+  disclaimer: string;
+}
+
+export type Decision = 'VALIDATED' | 'REJECTED' | 'WATCHLIST' | 'ANALYSE';
+
+/** One decision the user made, stored with the screen that produced it. */
+export interface Validation {
+  id: number;
+  symbol: string;
+  decision: Decision;
+  decided_at: string | null;
+  signal_timestamp_ms: number;
+  price: number;
+  final_score: number | null;
+  explosion_score: number | null;
+  discovery_score: number | null;
+  pump_maturity: number | null;
+  data_confidence: number | null;
+  setup_state: string | null;
+  verdict_level: string | null;
+  engine_version: string | null;
+  why: string[];
+  risks: string[];
+  trigger: string | null;
+  invalidation: string | null;
+  note: string | null;
+  data_source: string;
+  synthetic: boolean;
+  outcome: {
+    evaluated: boolean;
+    horizon_minutes: number | null;
+    price: number | null;
+    change_pct: number | null;
+    note: string | null;
+  };
+}
+
+export interface ValidationsResponse {
+  validations: Validation[];
+  counts: Record<Decision, number>;
+  total: number;
+  /** Decisions taken on generated candles. Counted apart, never pooled. */
+  synthetic: number;
+  decisions: Decision[];
+  note: string;
 }

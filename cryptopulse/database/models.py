@@ -195,3 +195,83 @@ class ScanRunRecord(Base):
     provider: Mapped[str] = mapped_column(String(32))
     synthetic: Mapped[bool] = mapped_column(Boolean, default=False)
     errors: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class ValidationRecord(Base):
+    """A decision the user made about a token, with the state it was made in.
+
+    WHY THE CONTEXT IS COPIED IN RATHER THAN JOINED
+
+    Every other table here records what the software thought. This records what
+    the *person* thought, and it is the only place in the project where a human
+    judgement becomes data. For that to be worth anything later, the row must
+    say what was on screen at the moment of the decision — the price, all three
+    scores, the verdict, the reasons and the invalidation the user was looking
+    at when they tapped.
+
+    Joining to `signals` instead would look tidier and would be wrong. A signal
+    row exists only for states at OBSERVE or above, so validating a token in
+    IGNORE would have nothing to join to; the scan that produced the screen may
+    have been pruned by the time the decision is analysed; and a later engine
+    version would re-explain an old decision in words the user never saw. The
+    duplication is the point: this row is a photograph, not a pointer.
+
+    The decision is immutable once written. Changing one's mind creates a new
+    row, so a sequence of decisions on the same token stays legible as a
+    sequence rather than being flattened into its last state.
+    """
+
+    __tablename__ = "validations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(40), index=True)
+    # VALIDATED / REJECTED / WATCHLIST / ANALYSE
+    decision: Mapped[str] = mapped_column(String(16), index=True)
+    decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+    # The moment on the chart the decision was about, which is not the moment it
+    # was taken: a user reading a card at 14:03 is looking at the 14:00 bar.
+    signal_timestamp_ms: Mapped[int] = mapped_column(
+        Integer().with_variant(Integer, "sqlite"), index=True
+    )
+    # Set when the screen was showing a journalled signal, NULL otherwise. A
+    # convenience for joins, never the source of the context below.
+    signal_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+
+    # --- what was on screen, copied at the moment of the decision ----------- #
+    price: Mapped[float] = mapped_column(Float)
+    final_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    explosion_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    discovery_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pump_maturity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    data_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    setup_state: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    verdict_level: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    engine_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    # The sentences the user actually read, so a decision can be reread in the
+    # words that produced it rather than in whatever the engine would say today.
+    why: Mapped[list] = mapped_column(JSON, default=list)
+    risks: Mapped[list] = mapped_column(JSON, default=list)
+    trigger: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    invalidation: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    note: Mapped[str | None] = mapped_column(String(400), nullable=True)
+
+    # A decision taken on generated candles must never be counted alongside one
+    # taken on a real feed, and the distinction has to survive in the row itself.
+    data_source: Mapped[str] = mapped_column(String(32), default="unknown")
+    synthetic: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+
+    # --- filled in later, exactly like the signal outcomes ------------------ #
+    # Never written at insert time: what followed a decision is not knowable at
+    # the moment it is taken.
+    outcome_evaluated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    outcome_horizon_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    outcome_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    outcome_change_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    outcome_note: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
+    __table_args__ = (
+        Index("ix_validations_symbol_time", "symbol", "decided_at"),
+    )

@@ -154,12 +154,12 @@ export function HomeView({
             hint={top.length ? `${top[0].symbol} et chaque fiche` : 'ouvrez une fiche token'}
             onClick={() => (top.length ? onSelect(top[0].symbol) : onOpenTab('scanner'))}
           />
-          <Tile label="Tokens validés" hint="phase 07" pending />
+          <Tile
+            label="Mes décisions"
+            hint="ce que j'ai validé ou rejeté"
+            onClick={() => onOpenTab('decisions')}
+          />
         </div>
-        <p className="home-note">
-          La dernière attend son moteur. Elle est affichée grisée plutôt que masquée :
-          rien n'est oublié, et rien n'est simulé en attendant.
-        </p>
         <InstallStatus />
       </section>
     </div>

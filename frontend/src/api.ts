@@ -1,6 +1,6 @@
 import type {
   AlertItem, AssetDetail, DeepScanResponse, Health, HorizonResponse, HuntResponse,
-  PerformanceResponse, PumpResponse, ScanResponse,
+  PerformanceResponse, PumpResponse, ScanResponse, Validation, ValidationsResponse,
 } from './types';
 
 const BASE = '/api';
@@ -38,6 +38,21 @@ export const api = {
   horizons: () => get<HorizonResponse>('/horizons'),
   hunt: (limit = 40) => get<HuntResponse>('/hunt', { limit }),
   pumps: (symbol: string, bars = 1000) => get<PumpResponse>(`/pumps/${symbol}`, { bars }),
+  validations: (limit = 100) => get<ValidationsResponse>('/validations', { limit }),
+  currentValidations: () =>
+    get<{ current: Record<string, Validation> }>('/validations/current'),
+  validate: async (body: Record<string, unknown>): Promise<Validation> => {
+    const resp = await fetch(`${BASE}/validations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.detail ?? `validation failed: ${resp.status}`);
+    }
+    return resp.json();
+  },
   deepScan: async (maxSymbols = 40): Promise<DeepScanResponse> => {
     const resp = await fetch(`${BASE}/hunt/deep?max_symbols=${maxSymbols}`, { method: 'POST' });
     if (!resp.ok) {

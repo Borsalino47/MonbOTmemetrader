@@ -59,12 +59,14 @@ that justifies it.
 | `TokenDiscoveryProvider` | **IMPLEMENTED** | Binance / Kraken / fixture. The seat Robinhood Chain plugs into |
 | Deep scan (`hunter/deep.py`) | **TESTED** | Reuses the scan's own results; states its request cost |
 | `TOKEN_DISCOVERY_SCORE` (`scoring/discovery.py`) | **TESTED** | 18 tests. DISCOVERY_ENGINE_V1, weights are a hypothesis |
+| Explosion 15m (`scoring/explosion.py`) | **TESTED** | 18 tests. EXPLOSION_ENGINE_V1. The only score whose window is already measured |
+| Manual validation (`repo.save_validation`) | **TESTED** | 13 tests. Append-only; the row is a photograph of the screen |
 | Pump history (`pumps/detect.py`) | **TESTED** | 18 tests. Threshold-free episodes on 1h; 23-38 found per token |
 | Pump similarity (`pumps/stats.py`) | **TESTED** | Refuses any rate below n=20, which is the common case |
 | PWA (manifest + service worker) | **TESTED** | 11 tests. Verified installable in a real browser on 127.0.0.1 |
 | Schema migration (`database/migrate.py`) | **TESTED** | Additive columns only; refuses destructive changes |
 
-**Test suite: 429 tests, all passing.** Run `pytest -q`.
+**Test suite: 464 tests, all passing.** Run `pytest -q`.
 
 ---
 
@@ -157,6 +159,7 @@ cryptopulse/
     states.py            IGNORE/OBSERVE/WATCH/ARMED/BREAKOUT/RETEST/...
     verdict.py           🟢/🟡/🟠/🔴 in four words, computed last, caveat attached
     discovery.py         TOKEN_DISCOVERY_SCORE — has this behaviour just changed?
+    explosion.py         EXPLOSION_15M_SCORE — is it about to move, within 15 min?
     engine.py            SCORE_ENGINE_V1 orchestrator + weights fingerprint
   risk/
     liquidity.py         Liquidity gate, DANGEROUS => veto
@@ -186,7 +189,7 @@ cryptopulse/
     splits.py            Chronological split + walk-forward with embargo
     engine.py            Replays the live scorer over history via series.upto()
   database/
-    models.py            signals / score_points / alerts / scan_runs
+    models.py            signals / score_points / alerts / scan_runs / validations
     migrate.py           Additive ALTER TABLE for columns create_all cannot add
     session.py           SQLAlchemy engine
     repo.py              The only module that writes; `prune` applies retention
@@ -210,7 +213,7 @@ frontend/                Vite + React 18 + TypeScript (strict), mobile-first
   HomeView               The five-second view: can I trust it, and what moved
   AssetCards             The scanner as cards; the table is wide-screen only
   bottom-nav             Thumb-reachable navigation, phones only
-tests/                   429 tests
+tests/                   464 tests
 pine/                    TradingView companion scripts
 ```
 
@@ -406,6 +409,51 @@ Break these and the product is lying to its user.
 36. **LIVE vs DEMO is decided server-side.** `status()["data_mode"]` is the
     single source; the dashboard never infers it from a provider name it happens
     to recognise, or a new synthetic source would slip past the banner.
+
+37. **Three engines, three questions, three fingerprints — never one number.**
+    Opportunity asks "is this a good setup?", Discovery "has this behaviour just
+    changed?", Explosion "is this about to move within fifteen minutes?". They
+    disagree constantly and that is the point. Averaging any two would produce a
+    number describing neither, and would make it impossible to learn later which
+    of the three carried signal.
+
+38. **The explosion score's horizon is part of its identity, not a parameter.**
+    `EXPLOSION_HORIZON_MINUTES` goes into the weights fingerprint, because the
+    same weights over a different window are a different claim. It is 15 minutes
+    because `outcomes/horizons.py` has been measuring exactly that window since
+    phase 15 — this is the only score in the project that can be shown to be
+    wrong, and `build_horizon_performance()["by_explosion_band"]` is where that
+    happens.
+
+39. **The explosion engine reads 5m and 15m and nothing slower.** A 4h indicator
+    cannot say anything about the next quarter hour. A test adds 4h and 1d
+    timeframes to an asset and asserts the score does not move by a point; that
+    is the guard against this quietly becoming a second opportunity score.
+
+40. **A hard gate zeroes the explosion score rather than reducing it.** On a
+    fifteen-minute horizon an illiquid token's ten-percent candle is a trap, and
+    a merely-reduced score would still let it outrank a tradeable one. The zero
+    always carries its reason — a silent zero is indistinguishable from a calm
+    market.
+
+41. **A validation row is a photograph of the screen, not a pointer to a scan.**
+    The price, all three scores, the verdict, the reasons and the invalidation
+    are copied in at the moment of the decision. Joining to `signals` instead
+    would look tidier and would be wrong: a token in IGNORE has no signal row to
+    join to, the scan behind the decision may be pruned, and a reweighted engine
+    would re-explain a past decision in words the user never read.
+
+42. **Validations are append-only and never pruned.** Changing one's mind writes
+    a second row, because the sequence is the part worth studying. `prune` does
+    not touch the table at all: a person's judgement is low-volume, cannot be
+    recomputed, and is the one thing here that re-running the scanner could not
+    regenerate.
+
+43. **No success rate is shown for the user's own decisions.** Not even above
+    n=20. A percentage over a handful of judgements would be read as a verdict on
+    the reader's own skill, which is the most misleading number this product
+    could display. The Verification tab says what the price did; the Decisions
+    tab says only what was decided, and when.
 
 ---
 

@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { api } from '../api';
 import type { AssetDetail } from '../types';
 import { DASH, age, compact, maturityColor, num, pct, price, scoreColor } from '../format';
+import { DecisionBar } from './DecisionBar';
+import { ExplosionPanel } from './ExplosionBadge';
 import { PumpPanel } from './PumpPanel';
 import { VerdictPanel } from './VerdictBadge';
 
@@ -49,6 +51,11 @@ export function AssetDrawer({ symbol, onClose }: Props) {
           <>
             {data.verdict && <VerdictPanel verdict={data.verdict} />}
 
+            {/* Placed directly under the verdict: it is the decision the
+                verdict most often leads to, and it is worth as little as
+                possible if it has to be hunted for. */}
+            <DecisionBar data={data} symbol={symbol} />
+
             <div className="score-grid">
               <Box k="Opportunity" v={num(data.final_score, 1)} color={scoreColor(data.final_score)} />
               <Box k="Acceleration" v={num(data.acceleration.momentum_acceleration, 0)} />
@@ -57,6 +64,11 @@ export function AssetDrawer({ symbol, onClose }: Props) {
               <Box k="Confidence" v={num(data.data_confidence.score, 0)}
                    color={data.data_confidence.score < 60 ? 'var(--down)' : undefined} />
             </div>
+
+            {/* High in the card on purpose: it is the only score with a
+                deadline, so it is the only one whose value decays while the
+                reader scrolls. */}
+            {data.explosion && <ExplosionPanel explosion={data.explosion} />}
 
             <div className="panel">
               <h3>Status</h3>

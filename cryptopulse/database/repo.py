@@ -22,6 +22,7 @@ from cryptopulse.database.models import (
     ScorePointRecord,
     SignalHorizonRecord,
     SignalRecord,
+    ValidationRecord,
     _utcnow,
 )
 from cryptopulse.database.session import get_session
@@ -39,6 +40,8 @@ __all__ = [
     "pending_signals", "save_resolutions", "resolved_signals", "outcome_counts",
     "signals_needing_horizons", "save_horizons", "horizon_rows", "horizons_for_signal",
     "prune", "retained_but_unsettled", "last_scan_snapshot",
+    "save_validation", "recent_validations", "latest_validation_per_symbol",
+    "validation_counts", "VALID_DECISIONS",
 ]
 
 _PERSIST_STATES = {
@@ -938,3 +941,143 @@ class _JournalRow:
             items=[SimpleNamespace(reason=i.get("reason", "")) for i in items]
         )
         self.is_premium = bool(r.is_premium)
+
+
+# --------------------------------------------------------------------------- #
+# Validations — the only human judgements this system stores.
+#
+# Everything else here records what the software thought. These record what the
+# user decided, and they are the one dataset that can eventually answer "does
+# the person using this outperform the scanner, or the other way round?" — a
+# question no amount of internal scoring can answer on its own.
+# --------------------------------------------------------------------------- #
+
+VALID_DECISIONS = ("VALIDATED", "REJECTED", "WATCHLIST", "ANALYSE")
+
+
+def save_validation(payload: dict) -> dict:
+    """Record one decision. Returns the stored row.
+
+    Appends rather than upserts. A user who validates a token and rejects it an
+    hour later has made two decisions, and flattening them into a final state
+    would destroy exactly the sequence worth studying.
+    """
+    decision = str(payload.get("decision", "")).upper()
+    if decision not in VALID_DECISIONS:
+        raise ValueError(
+            f"unknown decision {decision!r}; expected one of {', '.join(VALID_DECISIONS)}"
+        )
+
+    with get_session() as session:
+        row = ValidationRecord(
+            symbol=str(payload["symbol"]).upper(),
+            decision=decision,
+            signal_timestamp_ms=int(payload["signal_timestamp_ms"]),
+            signal_id=payload.get("signal_id"),
+            price=float(payload["price"]),
+            final_score=payload.get("final_score"),
+            explosion_score=payload.get("explosion_score"),
+            discovery_score=payload.get("discovery_score"),
+            pump_maturity=payload.get("pump_maturity"),
+            data_confidence=payload.get("data_confidence"),
+            setup_state=payload.get("setup_state"),
+            verdict_level=payload.get("verdict_level"),
+            engine_version=payload.get("engine_version"),
+            why=(payload.get("why") or [])[:12],
+            risks=(payload.get("risks") or [])[:12],
+            trigger=_clip(payload.get("trigger"), 200),
+            invalidation=_clip(payload.get("invalidation"), 200),
+            note=_clip(payload.get("note"), 400),
+            data_source=payload.get("data_source") or "unknown",
+            synthetic=bool(payload.get("synthetic", False)),
+        )
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+        return _validation_to_dict(row)
+
+
+def recent_validations(
+    limit: int = 100, *, symbol: str | None = None, decision: str | None = None
+) -> list[dict]:
+    with get_session() as session:
+        stmt = select(ValidationRecord).order_by(desc(ValidationRecord.decided_at)).limit(limit)
+        if symbol:
+            stmt = stmt.where(ValidationRecord.symbol == symbol.upper())
+        if decision:
+            stmt = stmt.where(ValidationRecord.decision == decision.upper())
+        return [_validation_to_dict(r) for r in session.execute(stmt).scalars().all()]
+
+
+def latest_validation_per_symbol(limit: int = 200) -> dict[str, dict]:
+    """The most recent decision for each symbol, for marking rows on screen.
+
+    Deliberately derived rather than stored: the table is append-only, so "the
+    current state" is a view over the history and can never drift from it.
+    """
+    latest: dict[str, dict] = {}
+    for row in recent_validations(limit):
+        latest.setdefault(row["symbol"], row)
+    return latest
+
+
+def validation_counts() -> dict:
+    with get_session() as session:
+        rows = session.execute(
+            select(ValidationRecord.decision, func.count(ValidationRecord.id)).group_by(
+                ValidationRecord.decision
+            )
+        ).all()
+        synthetic = session.execute(
+            select(func.count(ValidationRecord.id)).where(ValidationRecord.synthetic.is_(True))
+        ).scalar_one()
+    counts = {d: 0 for d in VALID_DECISIONS}
+    counts.update({d: n for d, n in rows})
+    return {
+        "counts": counts,
+        "total": sum(counts.values()),
+        # Decisions taken on generated candles say nothing about the user's
+        # judgement of a market, and must never be pooled with the real ones.
+        "synthetic": synthetic,
+    }
+
+
+def _clip(value, length: int) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text[:length] if text else None
+
+
+def _validation_to_dict(r: ValidationRecord) -> dict:
+    return {
+        "id": r.id,
+        "symbol": r.symbol,
+        "decision": r.decision,
+        "decided_at": r.decided_at.isoformat() if r.decided_at else None,
+        "signal_timestamp_ms": r.signal_timestamp_ms,
+        "signal_id": r.signal_id,
+        "price": r.price,
+        "final_score": r.final_score,
+        "explosion_score": r.explosion_score,
+        "discovery_score": r.discovery_score,
+        "pump_maturity": r.pump_maturity,
+        "data_confidence": r.data_confidence,
+        "setup_state": r.setup_state,
+        "verdict_level": r.verdict_level,
+        "engine_version": r.engine_version,
+        "why": r.why,
+        "risks": r.risks,
+        "trigger": r.trigger,
+        "invalidation": r.invalidation,
+        "note": r.note,
+        "data_source": r.data_source,
+        "synthetic": r.synthetic,
+        "outcome": {
+            "evaluated": r.outcome_evaluated_at is not None,
+            "horizon_minutes": r.outcome_horizon_minutes,
+            "price": r.outcome_price,
+            "change_pct": r.outcome_change_pct,
+            "note": r.outcome_note,
+        },
+    }

@@ -7,6 +7,7 @@ to show a "data is stale" banner — the front end never has to guess.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 from cryptopulse.api.service import get_service
 from cryptopulse.config.settings import get_settings
@@ -26,6 +28,68 @@ from cryptopulse.scoring.discovery import WEIGHTS as DISCOVERY_WEIGHTS
 log = get_logger("api")
 
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+
+
+class ValidationRequest(BaseModel):
+    """One decision, plus whatever context the client was showing.
+
+    Every context field is optional and defaults to None rather than to a
+    number. A decision taken from a compact list view legitimately does not
+    carry a discovery score, and recording a zero there would later read as
+    "the user validated a token the discovery engine rated at zero" — a
+    statement nobody made.
+    """
+
+    symbol: str
+    decision: str = Field(description="VALIDATED / REJECTED / WATCHLIST / ANALYSE")
+    signal_timestamp_ms: int | None = None
+    signal_id: int | None = None
+    price: float | None = None
+    final_score: float | None = None
+    explosion_score: float | None = None
+    discovery_score: float | None = None
+    pump_maturity: float | None = None
+    data_confidence: float | None = None
+    setup_state: str | None = None
+    verdict_level: str | None = None
+    engine_version: str | None = None
+    why: list[str] | None = None
+    risks: list[str] | None = None
+    trigger: str | None = None
+    invalidation: str | None = None
+    note: str | None = None
+    data_source: str | None = None
+    synthetic: bool | None = None
+
+
+def _merge_validation_context(payload: dict, result) -> dict:
+    """Fill blanks from the live scan; never overwrite what the client sent.
+
+    The client's values are what was actually on the user's screen. The server's
+    are what the scanner holds now — close, but a scan may have landed between
+    the render and the tap. Where both exist the screen wins, because the
+    decision was made against the screen.
+    """
+    d = result.to_dict()
+    defaults = {
+        "signal_timestamp_ms": d["timestamp_ms"],
+        "price": d["price"],
+        "final_score": d["final_score"],
+        "explosion_score": (d["explosion"] or {}).get("explosion_score"),
+        "pump_maturity": d["pump_maturity"]["score"],
+        "data_confidence": d["data_confidence"]["score"],
+        "setup_state": d["setup"]["state"],
+        "verdict_level": (d.get("verdict") or {}).get("level"),
+        "engine_version": d["engine_version"],
+        "why": d["why"][:12],
+        "risks": d["risks"][:12],
+        "trigger": d["setup"].get("trigger"),
+        "invalidation": next(iter(d["risks"]), None),
+    }
+    for key, value in defaults.items():
+        if payload.get(key) is None:
+            payload[key] = value
+    return payload
 
 
 def service_now_ms() -> int:
@@ -501,6 +565,89 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
             raise HTTPException(
                 502, f"could not read history for {symbol.upper()}: {type(exc).__name__}"
             ) from exc
+
+    # -------------------------------------------------------- validations #
+
+    @app.post("/api/validations", tags=["validations"])
+    async def record_validation(body: ValidationRequest):
+        """Record what the user decided about a token, and what was on screen.
+
+        The context is copied in rather than joined to the signal table. That is
+        deliberate: a token in IGNORE has no signal row to join to, an old scan
+        may have been pruned by the time the decision is analysed, and a later
+        engine version would re-explain a past decision in words the user never
+        read. The row is a photograph of the moment, not a pointer to it.
+
+        Append-only. Changing one's mind writes a second row, because a sequence
+        of decisions is the thing worth studying and flattening it to a final
+        state would erase it.
+        """
+        service = get_service()
+        payload = body.model_dump()
+
+        # Fill anything the client did not send from the live scan, so a
+        # decision taken from a list view still carries the full context. What
+        # cannot be found stays None — never zero, never a guess.
+        result = service.find(body.symbol)
+        if result is not None:
+            payload = _merge_validation_context(payload, result)
+
+        # `setdefault` would not fire here: the request model carries these keys
+        # with an explicit None, so the test is on the value rather than the key.
+        if payload.get("data_source") is None:
+            payload["data_source"] = service.scanner.provider.name
+        if payload.get("synthetic") is None:
+            payload["synthetic"] = service.status()["data_mode"] == "DEMO"
+
+        service.ensure_db()
+        try:
+            row = await asyncio.to_thread(repo.save_validation, payload)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except Exception as exc:
+            # A decision the user believes was recorded, and was not, is worse
+            # than a refused one. Reported as a named failure rather than as a
+            # bare 500, so the screen can say what happened.
+            log.error("validation_write_failed", symbol=body.symbol, error=type(exc).__name__)
+            raise HTTPException(
+                503, f"la décision n'a pas pu être enregistrée ({type(exc).__name__})"
+            ) from exc
+        return row
+
+    @app.get("/api/validations", tags=["validations"])
+    async def list_validations(
+        limit: int = Query(100, ge=1, le=500),
+        symbol: str | None = None,
+        decision: str | None = None,
+    ):
+        """The decision history, newest first, plus the current state per symbol."""
+        service = get_service()
+        service.ensure_db()
+        rows = await asyncio.to_thread(
+            repo.recent_validations, limit, symbol=symbol, decision=decision
+        )
+        summary = await asyncio.to_thread(repo.validation_counts)
+        return {
+            "validations": rows,
+            **summary,
+            "decisions": list(repo.VALID_DECISIONS),
+            "note": (
+                "These are the user's own decisions, stored with the screen state that "
+                "produced them. Decisions taken in DEMO mode are counted separately and "
+                "must never be pooled with real ones."
+            ),
+        }
+
+    @app.get("/api/validations/current", tags=["validations"])
+    async def current_validations(limit: int = Query(300, ge=1, le=1000)):
+        """The latest decision per symbol, for marking rows on screen.
+
+        Derived from the append-only history rather than stored, so the badge on
+        a row can never disagree with the record behind it.
+        """
+        service = get_service()
+        service.ensure_db()
+        return {"current": await asyncio.to_thread(repo.latest_validation_per_symbol, limit)}
 
     # ---------------------------------------------------------- maintenance #
 

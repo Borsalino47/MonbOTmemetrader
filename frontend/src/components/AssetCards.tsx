@@ -1,5 +1,6 @@
 import { DASH, maturityColor, num, pct, price, scoreColor, signClass } from '../format';
 import type { ScoreRow } from '../types';
+import { ExplosionBadge } from './ExplosionBadge';
 import { VerdictBadge } from './VerdictBadge';
 
 interface Props {
@@ -50,6 +51,13 @@ export function AssetCards({ rows, onSelect, expert }: Props) {
                 )}
               </span>
             </div>
+
+            {/* Shown only when it says something. A CALME badge on every row
+                would train the eye to skip the badge entirely, which is exactly
+                when the loud one needs to be noticed. */}
+            {r.explosion && (r.explosion.explosion_score >= 45 || r.explosion.vetoed) && (
+              <div className="card-exp"><ExplosionBadge explosion={r.explosion} size="sm" /></div>
+            )}
 
             <div className="card-why">{r.why[0] ?? r.setup.rationale ?? DASH}</div>
 
