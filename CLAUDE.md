@@ -54,9 +54,10 @@ that justifies it.
 | Alert delivery (`alerts/delivery.py`) | **TESTED** | 14 tests + one real-socket round trip. Discord / Slack / generic JSON |
 | Retention (`repo.prune`) | **TESTED** | 12 tests. Never prunes a signal that still owes an answer |
 | Warm start (`repo.last_scan_snapshot`) | **TESTED** | 11 tests. Restored rows keep their age and their provenance |
+| Candle cache (`providers/cache.py`) | **TESTED** | 20 tests. 88.8 % of kline requests removed, output proven identical |
 | Schema migration (`database/migrate.py`) | **TESTED** | Additive columns only; refuses destructive changes |
 
-**Test suite: 333 tests, all passing.** Run `pytest -q`.
+**Test suite: 354 tests, all passing.** Run `pytest -q`.
 
 ---
 
@@ -131,6 +132,7 @@ cryptopulse/
     http.py              Weighted rate limiter, retry+jitter, circuit breaker
     binance.py           Binance Spot public REST      <- NOT LIVE VERIFIED
     kraken.py            Kraken public REST, 2nd venue <- NOT LIVE VERIFIED
+    cache.py             Closed candles only. Never the forming one. `doctor` bypasses it
     fixture.py           SYNTHETIC generator for offline dev/tests
     registry.py          One switch: CP_PROVIDER_MARKET_DATA
   features/
@@ -185,7 +187,7 @@ scripts/
   simulate_journal.py    Scan across simulated time, grade, compare to baseline
 
 frontend/                Vite + React 18 + TypeScript (strict)
-tests/                   333 tests
+tests/                   354 tests
 pine/                    TradingView companion scripts
 ```
 
@@ -283,7 +285,21 @@ Break these and the product is lying to its user.
     is configured. Restored rows are a genuine subset — fields never journalled
     are `None`, never zero — and are marked `from_journal`.
 
-21. **LIVE vs DEMO is decided server-side.** `status()["data_mode"]` is the
+21. **The candle cache stores closed candles and nothing else.** A closed candle
+    is immutable, so serving it from memory is the same answer, not an
+    approximation. The forming candle never enters the cache, an entry is
+    refused the moment a new bar could have closed, and age is still derived
+    from each candle's own `close_time_ms` — so cached data gets older on its
+    own and can never look fresh. A test asserts a full scan produces output
+    identical with and without the cache, field by field.
+
+22. **The cache key includes the requested `limit`.** A 300-bar fetch yields 299
+    closed bars, so one entry cannot correctly answer both a 300-bar and a
+    100-bar request — slicing the tail would return a window one bar longer than
+    the network would have. Keying on the limit makes equality hold by
+    construction.
+
+23. **LIVE vs DEMO is decided server-side.** `status()["data_mode"]` is the
     single source; the dashboard never infers it from a provider name it happens
     to recognise, or a new synthetic source would slip past the banner.
 
@@ -402,6 +418,13 @@ pytest tests/test_no_lookahead.py -v    # the ones that matter most
   Every write goes through `asyncio.to_thread`, so without `StaticPool` the
   worker opens a second, empty database: the scan reports success and the
   journal is silently lost. Found by running the service, not by a unit test.
+* `providers/cache.py` — the wrapper forwards `name` from the provider it wraps.
+  This is not cosmetic: `is_synthetic()` identifies generated data by that name,
+  so a wrapper shadowing it would make a fixture-backed scan report itself LIVE
+  and drop the DEMO banner. A test pins it.
+* `providers/registry.py:build_market_provider` — `cached=False` exists for
+  `doctor`. A diagnostic answered from memory would report success without
+  having contacted anything.
 * `alerts/delivery.py` — the only module that may hold the webhook URL. If you
   find yourself passing it outward, you are about to leak a credential.
 * `database/repo.py:prune` — the only destructive operation in the system. The

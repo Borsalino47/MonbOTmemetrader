@@ -308,6 +308,7 @@ class ScannerService:
                 else None
             ),
             "provider_health": [h.to_dict() for h in (report.provider_health if report else [])],
+            "candle_cache": _cache_stats(self.scanner.provider),
             "retention": {
                 "retention_days": self.settings.database.retention_days,
                 "last_run": self.last_prune,
@@ -361,6 +362,18 @@ def set_service(service: ScannerService | None) -> None:
     """Test hook: inject a service built on a fixture provider."""
     global _service
     _service = service
+
+
+def _cache_stats(provider) -> dict:
+    """Cache figures if the provider is wrapped, otherwise a stated absence.
+
+    Reported so the saving is visible rather than assumed — and so a cache that
+    silently stopped working looks different from one that is switched off.
+    """
+    stats = getattr(provider, "cache_stats", None)
+    if stats is None:
+        return {"enabled": False, "note": "candle cache disabled (CP_PROVIDER_CANDLE_CACHE)"}
+    return {"enabled": True, **stats()}
 
 
 def _iso_or_none(ms: int | None) -> str | None:

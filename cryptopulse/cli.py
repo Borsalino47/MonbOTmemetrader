@@ -58,7 +58,9 @@ async def cmd_doctor(args) -> int:
     from cryptopulse.core.types import Timeframe
     from cryptopulse.providers.registry import build_market_provider
 
-    provider = build_market_provider(settings, SYSTEM_CLOCK)
+    # No cache: `doctor` exists to prove the network round trip works. An answer
+    # served from memory would report success without having contacted anything.
+    provider = build_market_provider(settings, SYSTEM_CLOCK, cached=False)
     # Venues disagree on naming — BTCUSDT on Binance, XBTUSDT on Kraken — so the
     # provider names the symbol it is certain to have rather than the CLI guessing.
     ref = provider.reference_symbol

@@ -308,3 +308,16 @@ def test_prune_endpoint_reports_what_it_removed_and_what_it_held_back(client):
     body = client.post("/api/maintenance/prune").json()
     assert body["removed"]["signals"] == 0, "nothing is old enough to prune"
     assert "held_back_unsettled" in body
+
+
+def test_health_reports_the_candle_cache(client):
+    """The saving must be visible, and a cache that silently stopped working
+    must look different from one that is switched off."""
+    c = client.get("/api/health").json()["candle_cache"]
+    assert c["enabled"] is True
+    assert c["hit_rate"] is None, "nothing asked yet must not read as a 0% hit rate"
+
+    client.post("/api/scan/run")
+    c = client.get("/api/health").json()["candle_cache"]
+    assert c["requests"] > 0
+    assert c["stored_series"] > 0

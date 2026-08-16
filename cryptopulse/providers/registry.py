@@ -14,7 +14,31 @@ __all__ = ["build_market_provider", "is_synthetic"]
 
 
 def build_market_provider(
-    settings: CryptoPulseSettings, clock: Clock = SYSTEM_CLOCK
+    settings: CryptoPulseSettings,
+    clock: Clock = SYSTEM_CLOCK,
+    *,
+    cached: bool = True,
+) -> MarketDataProvider | OrderBookProvider:
+    """The configured provider, wrapped in the candle cache unless told not to.
+
+    `cached=False` exists for `doctor`, whose whole purpose is a real network
+    round trip — a diagnostic answered from memory proves nothing.
+    """
+    inner = _build_inner(settings, clock)
+    if not cached or not settings.providers.candle_cache:
+        return inner
+
+    from cryptopulse.providers.cache import CachedMarketDataProvider
+
+    return CachedMarketDataProvider(
+        inner,
+        max_entries=settings.providers.candle_cache_max_entries,
+        clock=clock,
+    )
+
+
+def _build_inner(
+    settings: CryptoPulseSettings, clock: Clock
 ) -> MarketDataProvider | OrderBookProvider:
     choice = settings.providers.market_data
     if choice == "binance":
