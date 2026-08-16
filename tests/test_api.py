@@ -427,3 +427,77 @@ def test_pump_history_reports_its_resolution_and_never_fakes_a_rate(client):
         assert sim["reached"] == {}
         assert sim["median_gain_pct"] is None
     assert sim["min_sample"] == 20
+
+
+# --------------------------------------------------------------------------- #
+# Pump history endpoint — the contract the token card renders against.
+#
+# These assert the payload's *shape and refusals*, not its values: the values
+# come from the synthetic provider and mean nothing. What matters is that the
+# fields the UI reads are always present, and that the one forward-looking block
+# stays silent below the sample floor no matter what the numbers say.
+# --------------------------------------------------------------------------- #
+
+
+def test_pump_history_carries_every_field_the_token_card_renders(client):
+    client.post("/api/scan/run")
+    body = client.get("/api/pumps/BTCUSDT").json()
+
+    history = body["history"]
+    for key in (
+        "symbol", "timeframe", "bars_examined", "days_covered", "resolution_minutes",
+        "definition", "definition_fr", "episodes_found", "episodes",
+    ):
+        assert key in history, f"the token card reads history.{key}"
+
+    for key in ("n", "by_size", "insufficient_sample", "min_sample"):
+        assert key in body["stats"]
+
+    for key in ("comparable", "examined", "not_comparable", "reached",
+                "insufficient_sample", "min_sample"):
+        assert key in body["similarity"]
+
+    assert set(body["current_setup"]) == {
+        "rvol", "volume_change_pct", "range_position", "atr_pct"
+    }
+    # The panel is rendered inside a screen whose banner is driven by this.
+    assert body["data_mode"] == "DEMO"
+
+
+def test_pump_episodes_state_their_timing_resolution(client):
+    """Timing is known to the bar. An episode that did not say so would let the
+    UI render a minute figure the 1h detection cannot support."""
+    body = client.get("/api/pumps/BTCUSDT").json()
+    for episode in body["history"]["episodes"]:
+        assert episode["resolution_minutes"] == 60
+        assert episode["minutes_to_peak"] % 60 == 0
+
+
+def test_similarity_sends_no_rate_at_all_below_the_sample_floor(client):
+    """Not a greyed-out rate — no rate. A number on screen gets read however it
+    is styled, and on a few weeks of history this is the ordinary outcome."""
+    similarity = client.get("/api/pumps/BTCUSDT").json()["similarity"]
+    if similarity["insufficient_sample"]:
+        assert similarity["reached"] == {}
+        assert similarity["median_gain_pct"] is None
+        assert similarity["median_minutes_to_peak"] is None
+        assert similarity["median_drawdown_after_pct"] is None
+    else:
+        assert similarity["comparable"] >= similarity["min_sample"]
+
+
+def test_pump_definition_is_carried_in_both_languages(client):
+    """The definition is the whole meaning of the panel it heads, and the owner
+    of this product reads French. Same choice as the verdict, same reason."""
+    history = client.get("/api/pumps/BTCUSDT").json()["history"]
+    assert "at least" in history["definition"]
+    assert "au moins" in history["definition_fr"]
+    assert history["definition"] != history["definition_fr"]
+
+
+def test_unknown_symbol_reports_a_failure_rather_than_an_empty_history(client):
+    """An empty episode list means 'this token had no accelerations'. A symbol
+    that does not exist must never produce that sentence."""
+    resp = client.get("/api/pumps/NOSUCHTOKEN")
+    assert resp.status_code == 502
+    assert "NOSUCHTOKEN" in resp.json()["detail"]

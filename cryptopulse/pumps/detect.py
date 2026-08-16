@@ -82,6 +82,19 @@ class PumpConfig:
             f"{self.end_retrace_fraction:.0%} of the run"
         )
 
+    def describe_fr(self) -> str:
+        """The same sentence in French, carried alongside rather than translated.
+
+        This definition is the whole meaning of the panel it heads, and the
+        product's owner reads French while the code and the API read English.
+        Same choice, same reason as `scoring/verdict.py`.
+        """
+        return (
+            f"une hausse d'au moins {self.min_gain_pct:.0f}% atteinte en moins de "
+            f"{self.max_bars_to_peak} bougies depuis un creux local, qui se termine "
+            f"quand le prix rend {self.end_retrace_fraction:.0%} du mouvement"
+        )
+
 
 DEFAULT_PUMP_CONFIG = PumpConfig()
 
@@ -315,6 +328,7 @@ class PumpHistory:
             "days_covered": round(self.days_covered, 2),
             "resolution_minutes": self.episodes[0].resolution_minutes if self.episodes else None,
             "definition": self.config.describe(),
+            "definition_fr": self.config.describe_fr(),
             "episodes_found": len(self.episodes),
             "notes": self.notes,
             "episodes": [e.to_dict() for e in self.episodes],

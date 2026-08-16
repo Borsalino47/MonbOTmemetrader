@@ -146,12 +146,19 @@ export function HomeView({
             hint="tout le venue, 0 requête"
             onClick={() => onOpenTab('hunter')}
           />
+          {/* Pump history belongs to one token, so this opens a token rather than
+              a list. When nothing passes the filters there is no token to open,
+              and the scanner is where one gets chosen. */}
+          <Tile
+            label="Historique pumps"
+            hint={top.length ? `${top[0].symbol} et chaque fiche` : 'ouvrez une fiche token'}
+            onClick={() => (top.length ? onSelect(top[0].symbol) : onOpenTab('scanner'))}
+          />
           <Tile label="Tokens validés" hint="phase 07" pending />
-          <Tile label="Historique pumps" hint="phase 06" pending />
         </div>
         <p className="home-note">
-          Les deux dernières attendent leur moteur. Elles sont affichées grisées plutôt
-          que masquées : rien n'est oublié, et rien n'est simulé en attendant.
+          La dernière attend son moteur. Elle est affichée grisée plutôt que masquée :
+          rien n'est oublié, et rien n'est simulé en attendant.
         </p>
         <InstallStatus />
       </section>

@@ -1,6 +1,6 @@
 import type {
   AlertItem, AssetDetail, DeepScanResponse, Health, HorizonResponse, HuntResponse,
-  PerformanceResponse, ScanResponse,
+  PerformanceResponse, PumpResponse, ScanResponse,
 } from './types';
 
 const BASE = '/api';
@@ -37,6 +37,7 @@ export const api = {
   performance: () => get<PerformanceResponse>('/performance'),
   horizons: () => get<HorizonResponse>('/horizons'),
   hunt: (limit = 40) => get<HuntResponse>('/hunt', { limit }),
+  pumps: (symbol: string, bars = 1000) => get<PumpResponse>(`/pumps/${symbol}`, { bars }),
   deepScan: async (maxSymbols = 40): Promise<DeepScanResponse> => {
     const resp = await fetch(`${BASE}/hunt/deep?max_symbols=${maxSymbols}`, { method: 'POST' });
     if (!resp.ok) {

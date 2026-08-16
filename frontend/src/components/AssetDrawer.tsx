@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api';
 import type { AssetDetail } from '../types';
 import { DASH, age, compact, maturityColor, num, pct, price, scoreColor } from '../format';
+import { PumpPanel } from './PumpPanel';
 import { VerdictPanel } from './VerdictBadge';
 
 interface Props {
@@ -113,6 +114,10 @@ export function AssetDrawer({ symbol, onClose }: Props) {
                 ? <ul>{data.what_can_invalidate_it.filter(Boolean).map((w, i) => <li key={i} className="risk">{w}</li>)}</ul>
                 : <div className="empty" style={{ padding: 10 }}>No specific invalidation identified.</div>}
             </div>
+
+            {/* Loaded on its own, after the card is already useful: it is a
+                separate 1000-bar request and must never delay the score. */}
+            <PumpPanel symbol={symbol} />
 
             <TimeframePanel data={data} />
             <MarketPanel data={data} />

@@ -404,3 +404,76 @@ export interface DeepScanResponse {
   engine: { discovery_engine: string; weights_fingerprint: string; weights: Record<string, number> };
   disclaimer: string;
 }
+
+/** One acceleration this token actually had, with the state that preceded it.
+ *  `resolution_minutes` is carried because timing is known to the bar and no
+ *  finer — the UI must never render a precision the detection does not have. */
+export interface PumpEpisode {
+  symbol: string;
+  timeframe: string;
+  resolution_minutes: number;
+  start_ms: number;
+  start_price: number;
+  peak_ms: number;
+  peak_price: number;
+  gain_pct: number;
+  size_bucket: string;
+  bars_to_peak: number;
+  minutes_to_peak: number;
+  drawdown_after_pct: number | null;
+  rvol_at_start: number | null;
+  volume_change_before_pct: number | null;
+  range_position_at_start: number | null;
+  atr_pct_at_start: number | null;
+}
+
+export interface PumpResponse {
+  history: {
+    symbol: string;
+    timeframe: string;
+    bars_examined: number;
+    days_covered: number;
+    resolution_minutes: number | null;
+    definition: string;
+    definition_fr: string;
+    episodes_found: number;
+    notes: string[];
+    episodes: PumpEpisode[];
+  };
+  stats: {
+    n: number;
+    mean_gain_pct: number | null;
+    median_gain_pct: number | null;
+    largest_gain_pct: number | null;
+    smallest_gain_pct: number | null;
+    median_minutes_to_peak: number | null;
+    mean_drawdown_after_pct: number | null;
+    median_rvol_at_start: number | null;
+    median_volume_change_before_pct: number | null;
+    resolution_minutes: number | null;
+    by_size: Record<string, number>;
+    insufficient_sample: boolean;
+    min_sample: number;
+  };
+  similarity: {
+    comparable: number;
+    examined: number;
+    not_comparable: number;
+    similarity_threshold: number;
+    /** Empty below the sample floor — the API omits rates rather than greying them. */
+    reached: Record<string, number>;
+    median_gain_pct: number | null;
+    median_minutes_to_peak: number | null;
+    median_drawdown_after_pct: number | null;
+    insufficient_sample: boolean;
+    min_sample: number;
+    notes: string[];
+  };
+  current_setup: {
+    rvol: number | null;
+    volume_change_pct: number | null;
+    range_position: number | null;
+    atr_pct: number | null;
+  };
+  data_mode: 'LIVE' | 'DEMO';
+}
