@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from cryptopulse.config.settings import CryptoPulseSettings
 from cryptopulse.features.pipeline import AssetFeatures
@@ -36,6 +37,11 @@ from cryptopulse.scoring.components import (
 from cryptopulse.scoring.confidence import DataConfidence, compute_confidence
 from cryptopulse.scoring.pump_maturity import PumpMaturity, compute_pump_maturity
 from cryptopulse.scoring.states import SetupState, StateDecision, determine_state
+
+if TYPE_CHECKING:  # `scoring/explosion.py` reads AssetFeatures, not this module,
+    # so there is no runtime cycle — but the import stays behind the guard to keep
+    # the dependency one-directional and obvious.
+    from cryptopulse.scoring.explosion import ExplosionResult
 
 __all__ = ["ScoreResult", "ScoreEngine"]
 
@@ -68,6 +74,13 @@ class ScoreResult:
     features: AssetFeatures | None = None
     score_acceleration: float | None = None  # filled in by ScoreMemory
     previous_score: float | None = None
+
+    # A separate engine's answer to a separate question — "is this about to move
+    # in the next fifteen minutes?" — carried alongside rather than folded in.
+    # Filled in by the scanner after the order-book pass, so the leaders' books
+    # reach it. `None` means the explosion engine did not run, which is different
+    # from a score of zero and must stay distinguishable.
+    explosion: ExplosionResult | None = None
 
     # Never a probability. See README §"Score is not a probability".
     @property
@@ -163,6 +176,10 @@ class ScoreResult:
             "setup": self.state.to_dict(),
             "is_premium": self.is_premium,
             "verdict": self.verdict(),
+            # Absent rather than zero when the engine did not run: a token that
+            # scored 0 for explosion said something, one that was never scored
+            # did not.
+            "explosion": self.explosion.to_dict() if self.explosion else None,
             "metrics": self.table_metrics(),
             "why": self.why(),
             "risks": self.risks(),

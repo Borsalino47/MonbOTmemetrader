@@ -29,6 +29,7 @@ from cryptopulse.providers.registry import build_market_provider, is_synthetic
 from cryptopulse.scanner.base import Scanner, ScanReport
 from cryptopulse.scanner.memory import ScoreMemory, ScorePoint
 from cryptopulse.scoring.engine import ScoreEngine, ScoreResult
+from cryptopulse.scoring.explosion import ExplosionEngine
 
 log = get_logger("scanner.cex")
 
@@ -54,6 +55,7 @@ class CexScanner(Scanner):
         self.clock = clock
         self.provider = provider or build_market_provider(settings, clock)
         self.engine = ScoreEngine(settings)
+        self.explosion_engine = ExplosionEngine()
         self.memory = memory or ScoreMemory()
         self.regime: RegimeReport = RegimeReport.unknown()
         self._last_report: ScanReport | None = None
@@ -249,6 +251,27 @@ class CexScanner(Scanner):
         now_ms = self.clock.now_ms()
         for af, provisional in first_pass:
             result = self.engine.score(af, now_ms) if af in leaders else provisional
+
+            # Scored here rather than inside ScoreEngine because it needs the
+            # order book, which only exists after pass 2, and because it is a
+            # separate engine answering a separate question. A hard gate zeroes
+            # it outright: on a fifteen-minute horizon an illiquid token's ten
+            # percent candle is a trap, and a merely-reduced score would still
+            # let it outrank a tradeable one.
+            result.explosion = self.explosion_engine.score(
+                af,
+                timestamp_ms=result.timestamp_ms,
+                maturity_score=result.maturity.score,
+                hard_veto=result.safety.hard_veto or result.liquidity.veto,
+                veto_reason=(
+                    "liquidity gate: a fast move here could not be exited"
+                    if result.liquidity.veto
+                    else "safety gate: this asset is flagged and a fast move is not an opportunity"
+                    if result.safety.hard_veto
+                    else None
+                ),
+            )
+
             self.memory.record(
                 af.symbol,
                 ScorePoint(

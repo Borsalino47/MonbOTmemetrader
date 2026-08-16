@@ -79,6 +79,18 @@ class SignalRecord(Base):
     why: Mapped[list] = mapped_column(JSON, default=list)
     risks: Mapped[list] = mapped_column(JSON, default=list)
 
+    # --- the explosion engine's separate claim ------------------------------ #
+    # Journalled beside the opportunity score, never merged into it. This is the
+    # only score in the system whose horizon is already measured: the 15m row in
+    # `signal_horizons` records exactly what the price did over the window this
+    # number makes a claim about, which is what will eventually make it testable.
+    # NULL means the engine did not run for this row — distinct from a zero,
+    # which is a statement.
+    explosion_score: Mapped[float | None] = mapped_column(Float, nullable=True, index=True)
+    explosion_label: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    explosion_engine_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    explosion_weights_fingerprint: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
     # --- filled in later by the outcome tracker; NULL at insert time --------- #
     # These are never written at insert time. Doing so would be look-ahead bias
     # committed straight to disk: the outcome of a signal is not knowable at the

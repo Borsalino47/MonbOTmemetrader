@@ -51,6 +51,29 @@ _PERSIST_STATES = {
 }
 
 
+def _explosion_columns(r) -> dict:
+    """The explosion engine's claim, journalled beside the opportunity score.
+
+    All four columns stay NULL when the engine did not run. Writing a zero
+    instead would be indistinguishable from "this token is calm", and the row
+    would then be counted in any rate computed later — turning an absence of
+    measurement into a measured failure.
+
+    Its own version and fingerprint travel with it for the same reason the
+    opportunity score's do: when there are enough 15m horizon rows to fit these
+    weights, rows scored under the old ones must not be reinterpreted.
+    """
+    e = getattr(r, "explosion", None)
+    if e is None:
+        return {}
+    return {
+        "explosion_score": round(e.score, 2),
+        "explosion_label": e.label,
+        "explosion_engine_version": e.engine_version,
+        "explosion_weights_fingerprint": e.weights_fingerprint,
+    }
+
+
 def persist_scan(report: ScanReport, *, provider: str, regime: str | None = None) -> int:
     """Write the scan run, the score points and the qualifying signals.
 
@@ -116,6 +139,7 @@ def persist_scan(report: ScanReport, *, provider: str, regime: str | None = None
                         penalties=r.penalties.to_dict(),
                         why=r.why()[:12],
                         risks=r.risks()[:12],
+                        **_explosion_columns(r),
                     )
                 )
                 written += 1
@@ -176,6 +200,7 @@ def _commit_individually(report: ScanReport, provider: str, regime: str | None) 
                     penalties=r.penalties.to_dict(),
                     why=r.why()[:12],
                     risks=r.risks()[:12],
+                    **_explosion_columns(r),
                 )
             )
             try:
@@ -332,6 +357,13 @@ def _signal_to_dict(r: SignalRecord) -> dict:
         "components": r.components,
         "why": r.why,
         "risks": r.risks,
+        # NULL on every row written before this engine existed, and on any row
+        # it did not score. Carried flat rather than nested so a later query can
+        # bucket 15m horizon results by explosion score without unpacking JSON.
+        "explosion_score": r.explosion_score,
+        "explosion_label": r.explosion_label,
+        "explosion_engine_version": r.explosion_engine_version,
+        "explosion_weights_fingerprint": r.explosion_weights_fingerprint,
         "outcome": {
             "label": r.outcome_label,
             "return_pct": r.outcome_return_pct,
@@ -613,6 +645,11 @@ def horizon_rows(limit: int | None = None, include_synthetic: bool = True) -> li
             "provider": sig.data_source,
             "regime": sig.market_regime,
             "synthetic": sig.synthetic,
+            # NULL on rows written before the explosion engine existed. The
+            # statistics layer drops them from the explosion buckets rather than
+            # treating an unscored row as a zero-scored one.
+            "explosion_score": sig.explosion_score,
+            "explosion_label": sig.explosion_label,
         }
         for h, sig in pairs
     ]

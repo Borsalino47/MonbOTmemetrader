@@ -129,6 +129,20 @@ def _score_band(score: float) -> str:
     return "<35"
 
 
+# The bands the explosion engine's own labels use, so the table reads in the
+# same vocabulary as the screen rather than in a second, private one.
+EXPLOSION_CLAIM_HORIZON = "15m"
+
+
+def _explosion_band(score: float) -> str:
+    if score <= 0.0:
+        return "0 (bloqué)"
+    for lo, hi in ((1, 45), (45, 70), (70, 101)):
+        if lo <= score < hi:
+            return f"{lo}-{hi - 1 if hi == 101 else hi}"
+    return "unknown"
+
+
 def _maturity_band(score: float) -> str:
     for lo, hi in ((0, 25), (25, 50), (50, 70), (70, 101)):
         if lo <= score < hi:
@@ -397,6 +411,21 @@ def build_horizon_performance(
         "by_score_band": slice_by("final_score", _score_band),
         "by_state": slice_by("state"),
         "by_provider": slice_by("provider"),
+        # The one table in this project that can falsify a score rather than
+        # merely describe it. The explosion engine claims a move within fifteen
+        # minutes; the 15m row here is what the price actually did over exactly
+        # that window. If its high band does not beat its low band, the engine is
+        # wrong and this is where that becomes visible.
+        #
+        # `slice_by` drops rows whose explosion_score is None, so signals written
+        # before the engine existed are absent rather than counted as zeros.
+        "by_explosion_band": slice_by("explosion_score", _explosion_band),
+        "explosion_note": (
+            f"The {EXPLOSION_CLAIM_HORIZON} row of this table is the explosion score's own "
+            "scorecard: it is the only window the engine makes a claim about. A high band "
+            "that does not beat a low band means the weights are wrong, and no other table "
+            "here can show that."
+        ),
         "return_basis": "net_change_pct" if use_net else "change_pct",
         "min_sample": MIN_SAMPLE,
         "synthetic_count": synthetic_count,
