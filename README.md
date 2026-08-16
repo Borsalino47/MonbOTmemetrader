@@ -80,6 +80,30 @@ and why, split into reasons (arguments for) and caveats (arguments against).
 **Remembers.** Score history per symbol means a coin going `50 → 80` in twenty
 minutes ranks above one that has sat at `80` for three hours.
 
+**Asks three separate questions, and never averages them.** The Opportunity
+score asks "is this a good setup?", Token Discovery asks "has this token's
+behaviour just changed?", and Explosion 15m asks "is this about to move inside
+the next quarter hour?". They disagree constantly, and that is the point — a
+textbook daily retest scores well on the first and near zero on the third.
+Blending them would produce a number describing none of them, and would make it
+impossible to learn later which of the three carried any signal. Each has its own
+version and its own weights fingerprint.
+
+**Makes one falsifiable claim.** The Explosion score names a window: fifteen
+minutes. The horizon tracker has been recording what the price actually did
+fifteen minutes after every signal since it was built, so
+`build_horizon_performance()["by_explosion_band"]` is the one table in this
+project that can show a score to be wrong rather than merely describe it. A claim
+without a window cannot be wrong, and a claim that cannot be wrong is worthless.
+
+**Records what you decided, not just what it thought.** Four decisions on every
+token — validate, watch, analyse, reject — each stored with the screen that
+produced it: price, all three scores, the verdict, the reasons and the
+invalidation as rendered. Append-only, so changing your mind keeps the sequence.
+No success rate is ever shown for those decisions: a percentage over a handful of
+judgements reads as a verdict on your own skill, which is the most misleading
+number this product could display.
+
 **Grades itself.** Every emitted signal is written to a journal with NULL outcome
 columns. Once its horizon elapses, the outcome tracker fetches the bars that
 actually followed and records WIN / LOSS / TIMEOUT with the realised return, MFE
@@ -278,8 +302,33 @@ stale feed raises its own permanent banner.
 
 ## Alerts on your phone
 
-Alerts that only exist inside a dashboard nobody is watching are not alerts. Set
-one variable and they get delivered:
+Alerts that only exist inside a dashboard nobody is watching are not alerts.
+There are two independent channels; either may be off and neither can break the
+other, or the scan.
+
+### Android, directly (no account, no token, no third party)
+
+If the scanner runs on the phone in Termux, the device the alert is *for* is the
+device producing it, so nothing needs to leave it:
+
+```bash
+pkg install termux-api          # …and install the Termux:API *app* as well
+python -m cryptopulse.cli notify   # sends a real one, so you can confirm it
+```
+
+Both installs are required and people routinely do one. Without the package the
+command does not exist; without the app it exists and hangs. `notify` names which
+case it is instead of saying "notifications do not work".
+
+Only HIGH and CRITICAL make a sound, and a symbol buzzes again only when its
+level **rises**. That rule is not politeness: a phone that vibrates for the same
+thing every cycle gets its notifications switched off, and then the CRITICAL one
+is missed too. `CP_ALERT_ANDROID_MIN_LEVEL=WATCH` lowers the bar if you want
+everything.
+
+### Webhook (works from anywhere)
+
+Set one variable and alerts get delivered:
 
 ```bash
 CP_ALERT_WEBHOOK_URL=https://discord.com/api/webhooks/...
@@ -350,20 +399,35 @@ pytest -q                            # 322 tests
 pytest tests/test_no_lookahead.py -v # the ones that matter most
 ```
 
+**486 tests, all passing.**
+
 | File | Tests | Covers |
 |---|---:|---|
-| `test_indicators.py` | 21 | Indicators against hand-computed references |
+| `test_api.py` | 44 | Endpoint contracts, filters, freshness, no-probability rule, pump payload |
+| `test_horizons.py` | 25 | 15m/1h/4h/24h windows, the PENDING rule, one place for the success rule |
 | `test_no_lookahead.py` | 24 | Prefix stability, swing confirmation, forming-candle isolation |
-| `test_structure.py` | 15 | Swings, level clustering, breakout, fake breakout, compression |
-| `test_scoring.py` | 21 | Weight validation, arithmetic, explainability, maturity, states |
-| `test_risk.py` | 17 | Liquidity tiers, vetoes, safety, penalty caps |
-| `test_providers.py` | 19 | Rate limiter, circuit breaker, retries, Binance parsing, synthetic labelling |
-| `test_stale_data.py` | 12 | Provenance age, confidence decay, staleness cap |
+| `test_providers.py` | 24 | Rate limiter, circuit breaker, retries, Binance parsing, synthetic labelling |
+| `test_kraken.py` | 23 | Error envelope, field mapping, pair rename, 2 full-pipeline runs |
+| `test_outcomes.py` | 23 | Fixture stability, resolution correctness, honest non-answers, analytics |
 | `test_scanner_alerts.py` | 23 | Pipeline resilience, score memory, alert dedup and cooldown |
 | `test_backtest.py` | 22 | Labels, metrics, splits, costs, replay isolation |
-| `test_api.py` | 21 | Endpoint contracts, filters, freshness, no-probability rule |
-| `test_outcomes.py` | 23 | Fixture stability, resolution correctness, honest non-answers, analytics |
-| `test_kraken.py` | 23 | Error envelope, field mapping, pair rename, 2 full-pipeline runs |
+| `test_notify.py` | 22 | Argv construction against a stand-in binary, timeouts, process cleanup, the gate |
+| `test_indicators.py` | 21 | Indicators against hand-computed references |
+| `test_hunter.py` | 21 | Whole-venue pre-scan, rolling-delta naming, zero extra requests |
+| `test_scoring.py` | 21 | Weight validation, arithmetic, explainability, maturity, states |
+| `test_cache.py` | 20 | Closed candles only, limit in the key, output identical with and without |
+| `test_discovery.py` | 18 | DISCOVERY_ENGINE_V1 weights, refusals, separation from opportunity |
+| `test_pumps.py` | 18 | Episodes not thresholds, non-circular context, overlap resolution |
+| `test_explosion.py` | 17 | EXPLOSION_ENGINE_V1, the 15m horizon in the fingerprint, no slow timeframes |
+| `test_risk.py` | 17 | Liquidity tiers, vetoes, safety, penalty caps |
+| `test_structure.py` | 15 | Swings, level clustering, breakout, fake breakout, compression |
+| `test_verdict.py` | 15 | Four levels, ordering, a caveat on every one including the green |
+| `test_delivery.py` | 14 | Webhook formats, URL redaction, failure containment |
+| `test_validations.py` | 13 | Context copied not joined, append-only, DEMO counted apart |
+| `test_retention.py` | 12 | Never prunes a signal that still owes an answer |
+| `test_stale_data.py` | 12 | Provenance age, confidence decay, staleness cap |
+| `test_pwa.py` | 11 | Manifest, service worker, and that `/api` is never cached |
+| `test_warm_start.py` | 11 | Restored rows keep their age and their provenance |
 
 ---
 
@@ -520,6 +584,26 @@ otherwise leak the test window into training.
 * **Two venues, no cross-validation yet.** Binance and Kraken are both
   implemented and switchable with `--provider`, but nothing yet compares their
   quotes against each other to catch a bad feed. That is Phase 2.
+* **Three engines, none of them fitted.** Opportunity, Discovery and Explosion
+  each carry their own weights, and all three sets are reasoned rather than
+  measured. The Explosion score is the only one whose window is already being
+  recorded, so it is the only one that can be checked at all today.
+* **On synthetic data the scanner selects slightly worse than random entry** —
+  about 5 points below on the barrier label and 1.4 to 5.1 points below at every
+  horizon, over 1048 windows. The explosion bands show the same shape: the 45-70
+  band succeeds 31.9% of the time at 15m against 34.1% for 1-45. Generated
+  candles say nothing about markets, and this is the pipeline proving it can
+  report a negative result rather than a finding about trading. The identical
+  comparison on real history is the first thing worth running.
+* **Android notifications have never run on Android.** The gate, the argument
+  construction, the timeout and the process cleanup are tested against a
+  stand-in binary that is genuinely executed — but no test here has spoken to a
+  real `termux-notification`. `cryptopulse notify` is the one-command check on
+  the device.
+* **Manual validations are stored but never graded.** The rows carry outcome
+  columns that nothing fills in yet. Grading them means answering "did the user
+  beat the scanner?", which needs real decisions on a real feed over months, not
+  code.
 
 ---
 
