@@ -7,7 +7,7 @@ import { PerformanceView } from './components/PerformanceView';
 import { ScannerTable } from './components/ScannerTable';
 import { TopOpportunities } from './components/TopOpportunities';
 import { age, clock } from './format';
-import type { AlertItem, Health, ScoreRow } from './types';
+import type { AlertItem, Health, ScanResponse, ScoreRow } from './types';
 
 type Tab = 'scanner' | 'alerts' | 'verification' | 'performance';
 
@@ -22,6 +22,10 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const [noScanYet, setNoScanYet] = useState(false);
+  // Where the rows currently on screen came from. Restored rows are shown
+  // immediately after a restart so the dashboard is never blank, but they are
+  // never presented as live.
+  const [scanMeta, setScanMeta] = useState<ScanResponse['meta'] | null>(null);
 
   // Filters
   const [minScore, setMinScore] = useState(0);
@@ -46,6 +50,7 @@ export default function App() {
       if (!mounted.current) return;
       if (scan.status === 'fulfilled') {
         setRows(scan.value.results);
+        setScanMeta(scan.value.meta);
         setNoScanYet(false);
         setError(null);
       } else if (String(scan.reason?.message).includes('NO_SCAN_YET')) {
@@ -111,7 +116,10 @@ export default function App() {
   const providerDown = health?.provider_health?.some((p) => !p.available) ?? false;
   // The server decides LIVE vs DEMO. The dashboard must never infer it from a
   // provider name it happens to recognise — a new synthetic source would slip past.
-  const isDemo = health ? health.data_mode === 'DEMO' : false;
+  // Server-decided, and it follows the rows on screen: a restored synthetic
+  // snapshot stays DEMO even when a real feed is what the next scan will use.
+  const isDemo = scanMeta ? scanMeta.data_mode === 'DEMO' : health?.data_mode === 'DEMO';
+  const fromJournal = scanMeta?.source === 'journal';
 
   return (
     <div className="app">
@@ -194,6 +202,17 @@ export default function App() {
             {health?.data_mode_detail} Every price, volume, score and verdict below is generated.
             Run <code>python -m cryptopulse.cli doctor</code> to check whether a real exchange feed
             is reachable, then set <code>CP_PROVIDER_MARKET_DATA=binance</code> (or <code>kraken</code>).
+          </span>
+        </div>
+      )}
+
+      {fromJournal && (
+        <div className="banner journal">
+          <strong>DERNIER SCAN ENREGISTRÉ</strong>
+          <span>
+            Affiché depuis la base pendant qu'un scan frais tourne — {age(scanMeta?.age_seconds)} d'ancienneté.
+            Ce ne sont pas des prix en direct. Les colonnes carnet d'ordres n'ont jamais été
+            enregistrées et restent inconnues.
           </span>
         </div>
       )}

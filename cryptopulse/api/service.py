@@ -241,6 +241,28 @@ class ScannerService:
                 budget = self.settings.scanner.stale_after_seconds + self.settings.scanner.primary_timeframe.seconds
                 data_stale = data_age > budget
 
+        # Before this process has scanned, the dashboard is showing journal rows.
+        # Their provenance governs the banner, not the provider configured now:
+        # a snapshot written by the synthetic provider stays DEMO on screen even
+        # if a real feed is what will answer the next scan.
+        snapshot = None
+        if report is None:
+            try:
+                snap = repo.last_scan_snapshot(limit=1)
+            except Exception:
+                snap = None
+            if snap is not None:
+                snapshot = {
+                    "age_seconds": snap["age_seconds"],
+                    "provider": snap["provider"],
+                    "synthetic": snap["synthetic"],
+                    "data_mode": "DEMO" if snap["synthetic"] else "LIVE",
+                    "scanned": snap["scanned"],
+                    "succeeded": snap["succeeded"],
+                }
+                if snap["synthetic"]:
+                    synthetic = True
+
         return {
             "app": self.settings.app_name,
             "environment": self.settings.environment,
@@ -262,6 +284,8 @@ class ScannerService:
                 if synthetic
                 else None
             ),
+            "displaying": "journal" if snapshot else ("live" if report else "nothing"),
+            "journal_snapshot": snapshot,
             "scan_count": self.scan_count,
             "consecutive_failures": self.consecutive_failures,
             "scan_interval_seconds": self.settings.scanner.scan_interval_seconds,

@@ -54,6 +54,9 @@ export interface ScoreRow {
   setup: { state: SetupState; rationale: string; trigger: string | null; invalidation: string | null };
   is_premium: boolean;
   verdict: Verdict;
+  /** True when the row was restored from SQLite rather than produced by a live
+   *  scan. Such a row is a genuine subset: fields never journalled are null. */
+  from_journal?: boolean;
   metrics: TableMetrics;
   why: string[];
   risks: string[];
@@ -146,6 +149,15 @@ export interface Health {
   /** Server-decided. The dashboard must never infer LIVE vs DEMO from a provider name. */
   data_mode: 'LIVE' | 'DEMO';
   data_mode_detail: string;
+  displaying: 'live' | 'journal' | 'nothing';
+  journal_snapshot: {
+    age_seconds: number;
+    provider: string;
+    synthetic: boolean;
+    data_mode: 'LIVE' | 'DEMO';
+    scanned: number;
+    succeeded: number;
+  } | null;
   synthetic_warning: string | null;
   scan_count: number;
   consecutive_failures: number;
@@ -188,6 +200,15 @@ export interface ScanResponse {
     duration_ms: number; universe_size: number; scanned: number;
     succeeded: number; failed: number; synthetic_data: boolean;
     notes: string[]; errors: Record<string, string>; matched: number;
+    /** Which source answered: a scan run by this process, or the journal on disk. */
+    source: 'live' | 'journal';
+    live: boolean;
+    stale: boolean;
+    data_mode: 'LIVE' | 'DEMO';
+    /** Only present on a journal answer: how old the restored rows are. */
+    age_seconds?: number;
+    message?: string;
+    provider?: string;
   };
   results: ScoreRow[];
 }

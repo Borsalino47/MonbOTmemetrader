@@ -25,6 +25,37 @@ log = get_logger("api")
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 
 
+def _filter_snapshot(
+    rows: list[dict],
+    min_score: float,
+    max_pump_maturity: float,
+    state: str | None,
+    min_liquidity: str | None,
+    premium_only: bool,
+) -> list[dict]:
+    """Apply the /api/scan filters to journal rows.
+
+    Kept deliberately parallel to the live path so the same query returns the
+    same selection whichever source answered it.
+    """
+    from cryptopulse.risk.liquidity import LiquidityStatus
+
+    out = [r for r in rows if r["final_score"] >= min_score]
+    out = [r for r in out if r["pump_maturity"]["score"] <= max_pump_maturity]
+    if state:
+        wanted = {s.strip().upper() for s in state.split(",")}
+        out = [r for r in out if r["setup"]["state"] in wanted]
+    if min_liquidity:
+        try:
+            floor = LiquidityStatus(min_liquidity.upper()).rank
+        except ValueError as exc:
+            raise HTTPException(400, f"unknown liquidity status {min_liquidity!r}") from exc
+        out = [r for r in out if LiquidityStatus(r["liquidity"]["status"]).rank >= floor]
+    if premium_only:
+        out = [r for r in out if r["is_premium"]]
+    return out
+
+
 def create_app(*, start_loop: bool = True) -> FastAPI:
     settings = get_settings()
     configure_logging(settings.log_level, settings.log_json)
@@ -106,13 +137,49 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
         service = get_service()
         report = service.last_report
         if report is None:
-            return JSONResponse(
-                status_code=503,
-                content={
-                    "reason": "NO_SCAN_YET",
-                    "message": "No scan has completed. Call POST /api/scan/run or wait for the loop.",
-                },
+            # No scan has run in THIS process yet. Rather than an empty screen
+            # for the length of a full scan, serve the last one from the journal
+            # — labelled with its real age and its own provenance, never as live.
+            snap = repo.last_scan_snapshot(limit=limit)
+            if snap is None:
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "reason": "NO_SCAN_YET",
+                        "message": "No scan has ever completed and the journal is empty. "
+                                   "Call POST /api/scan/run or wait for the loop.",
+                    },
+                )
+            rows = _filter_snapshot(
+                snap["rows"], min_score, max_pump_maturity, state, min_liquidity, premium_only
             )
+            return {
+                "meta": {
+                    "source": "journal",
+                    "live": False,
+                    "stale": True,
+                    "age_seconds": snap["age_seconds"],
+                    "message": (
+                        "Last recorded scan, restored from the journal while a fresh one runs. "
+                        "Order-book columns were never journalled and read as unknown."
+                    ),
+                    "started_at_ms": snap["started_at_ms"],
+                    "finished_at_ms": snap["signals_at_ms"],
+                    "duration_ms": snap["duration_ms"],
+                    "universe_size": snap["universe_size"],
+                    "scanned": snap["scanned"],
+                    "succeeded": snap["succeeded"],
+                    "failed": snap["failed"],
+                    "provider": snap["provider"],
+                    "synthetic_data": snap["synthetic"],
+                    "data_mode": "DEMO" if snap["synthetic"] else "LIVE",
+                    "notes": [],
+                    "errors": {},
+                    "returned": min(len(rows), limit),
+                    "matched": len(rows),
+                },
+                "results": rows[:limit],
+            }
 
         from cryptopulse.risk.liquidity import LiquidityStatus
 
@@ -134,6 +201,10 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
         return {
             "meta": {
                 **{k: v for k, v in report.to_dict().items() if k != "results"},
+                "source": "live",
+                "live": True,
+                "stale": False,
+                "data_mode": "DEMO" if report.synthetic_data else "LIVE",
                 "returned": min(len(rows), limit),
                 "matched": len(rows),
             },

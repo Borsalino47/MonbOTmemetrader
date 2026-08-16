@@ -38,7 +38,7 @@ __all__ = [
     "persist_scan", "persist_alerts", "recent_signals", "score_history", "recent_alerts", "signal_stats",
     "pending_signals", "save_resolutions", "resolved_signals", "outcome_counts",
     "signals_needing_horizons", "save_horizons", "horizon_rows", "horizons_for_signal",
-    "prune", "retained_but_unsettled",
+    "prune", "retained_but_unsettled", "last_scan_snapshot",
 ]
 
 _PERSIST_STATES = {
@@ -750,3 +750,154 @@ def retained_but_unsettled() -> int:
                 (SignalRecord.outcome_label.is_(None)) | (SignalRecord.id.not_in(settled))
             )
         ).scalar_one()
+
+
+# --------------------------------------------------------------------------- #
+# Warm start
+#
+# `/api/scan` used to read an in-memory variable that is empty until the first
+# scan of the *process* completes. After a restart the dashboard therefore showed
+# nothing for as long as a full scan takes — on a phone, hundreds of requests over
+# a mobile connection — even though the journal on disk held the previous scan.
+#
+# This rebuilds the last scan from that journal so the screen is populated
+# immediately. Two rules keep it honest:
+#
+#   * The snapshot carries its own age and its own provenance. It is never
+#     presented as live, and a snapshot written by the synthetic provider stays
+#     marked synthetic even if the process is now running against a real feed.
+#     Showing old DEMO rows without the DEMO banner would be the worst possible
+#     regression.
+#   * It is a genuine subset. Only signals at OBSERVE or above are journalled, and
+#     order-book-derived fields were never stored, so a snapshot row has fewer
+#     columns than a live one. Missing values are `None` — never zero, never
+#     carried over from a neighbouring row.
+# --------------------------------------------------------------------------- #
+
+
+def last_scan_snapshot(limit: int = 200) -> dict | None:
+    """The most recent scan, rebuilt from the journal. `None` if none exists."""
+    with get_session() as session:
+        run = session.execute(
+            select(ScanRunRecord).order_by(desc(ScanRunRecord.started_at_ms)).limit(1)
+        ).scalars().first()
+        if run is None:
+            return None
+
+        # Signals belonging to that run: the scan writes them all with the close
+        # time of the candle they were scored on, so the newest batch shares a
+        # timestamp. Take the newest distinct timestamp rather than a time range,
+        # which would mix two scans when the interval is short.
+        newest_ts = session.execute(
+            select(func.max(SignalRecord.timestamp_ms))
+        ).scalar_one_or_none()
+        rows: list[SignalRecord] = []
+        if newest_ts is not None:
+            rows = list(
+                session.execute(
+                    select(SignalRecord)
+                    .where(SignalRecord.timestamp_ms == newest_ts)
+                    .order_by(desc(SignalRecord.final_score))
+                    .limit(limit)
+                ).scalars().all()
+            )
+
+    now_ms = int(_utcnow().timestamp() * 1000)
+    # Provenance follows the rows on screen, not the process. If every row came
+    # from the synthetic provider, this snapshot is DEMO whatever runs now.
+    synthetic = bool(rows[0].synthetic) if rows else bool(run.synthetic)
+    provider = rows[0].data_source if rows else run.provider
+
+    return {
+        "started_at_ms": run.started_at_ms,
+        "signals_at_ms": newest_ts,
+        "age_seconds": round((now_ms - (newest_ts or run.started_at_ms)) / 1000, 1),
+        "duration_ms": run.duration_ms,
+        "universe_size": run.universe_size,
+        "scanned": run.scanned,
+        "succeeded": run.succeeded,
+        "failed": run.failed,
+        "provider": provider,
+        "synthetic": synthetic,
+        "regime": rows[0].market_regime if rows else None,
+        "rows": [_snapshot_row(r) for r in rows],
+    }
+
+
+def _snapshot_row(r: SignalRecord) -> dict:
+    """One journal row shaped like a live scan row, with holes left as holes."""
+    from cryptopulse.scoring.verdict import build_verdict
+
+    return {
+        "symbol": r.symbol,
+        "price": r.price,
+        "timestamp_ms": r.timestamp_ms,
+        "engine_version": r.engine_version,
+        "weights_fingerprint": r.weights_fingerprint,
+        "raw_score": r.raw_score,
+        "risk_penalty": r.risk_penalty,
+        "final_score": r.final_score,
+        "opportunity_label": f"{r.final_score:.0f}/100",
+        "score_acceleration": r.score_acceleration,
+        "previous_score": None,
+        "components": [
+            {"name": k, "points": v, "max_points": 0, "fraction": 0.0,
+             "available": True, "reasons": [], "detail": {}}
+            for k, v in (r.components or {}).items()
+        ],
+        "penalties": r.penalties or {"total": r.risk_penalty, "items": []},
+        "pump_maturity": {"score": r.pump_maturity, "is_late": False, "reasons": []},
+        "acceleration": {"momentum_acceleration": 0.0, "early_move": 0.0, "reasons": []},
+        "data_confidence": {"score": r.data_confidence, "issues": [], "max_age_seconds": None},
+        "liquidity": {"status": r.liquidity_status, "veto": bool(r.hard_veto), "reasons": []},
+        "safety": {"score": r.safety_score, "hard_veto": bool(r.hard_veto), "reasons": []},
+        "setup": {"state": r.setup_state, "rationale": "", "trigger": None, "invalidation": None},
+        "is_premium": bool(r.is_premium),
+        "verdict": build_verdict(_JournalRow(r)).to_dict(),
+        # Order-book fields were never journalled, so they stay absent rather
+        # than being reported as zero.
+        "metrics": {
+            "rvol": r.rvol,
+            "atr_pct": None,
+            "distance_to_breakout_atr": r.distance_to_breakout_atr,
+            "resistance": r.breakout_level,
+        },
+        "why": r.why or [],
+        "risks": r.risks or [],
+        "from_journal": True,
+    }
+
+
+class _JournalRow:
+    """Adapter letting `build_verdict` read a stored row.
+
+    `build_verdict` is typed loosely on purpose and touches only fields the
+    journal already keeps, so a snapshot verdict is computed by the same code as
+    a live one rather than by a second implementation that could drift.
+    """
+
+    __slots__ = ("final_score", "risk_penalty", "maturity", "confidence",
+                 "liquidity", "safety", "state", "penalties", "is_premium")
+
+    def __init__(self, r: SignalRecord) -> None:
+        from types import SimpleNamespace
+
+        from cryptopulse.risk.liquidity import LiquidityStatus
+        from cryptopulse.scoring.states import SetupState
+
+        self.final_score = r.final_score
+        self.risk_penalty = r.risk_penalty
+        self.maturity = SimpleNamespace(score=r.pump_maturity, is_late=r.pump_maturity >= 70.0)
+        self.confidence = SimpleNamespace(score=r.data_confidence, issues=[])
+        self.liquidity = SimpleNamespace(
+            status=LiquidityStatus(r.liquidity_status), veto=bool(r.hard_veto), reasons=[]
+        )
+        self.safety = SimpleNamespace(score=r.safety_score, hard_veto=bool(r.hard_veto), reasons=[])
+        self.state = SimpleNamespace(
+            state=SetupState(r.setup_state), rationale="recorded in the journal", trigger=None
+        )
+        items = (r.penalties or {}).get("items", [])
+        self.penalties = SimpleNamespace(
+            items=[SimpleNamespace(reason=i.get("reason", "")) for i in items]
+        )
+        self.is_premium = bool(r.is_premium)

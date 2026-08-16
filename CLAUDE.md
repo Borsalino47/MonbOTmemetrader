@@ -53,9 +53,10 @@ that justifies it.
 | Verdict (`scoring/verdict.py`) | **TESTED** | 15 tests. Compression of existing gates; introduces no new opinion |
 | Alert delivery (`alerts/delivery.py`) | **TESTED** | 14 tests + one real-socket round trip. Discord / Slack / generic JSON |
 | Retention (`repo.prune`) | **TESTED** | 12 tests. Never prunes a signal that still owes an answer |
+| Warm start (`repo.last_scan_snapshot`) | **TESTED** | 11 tests. Restored rows keep their age and their provenance |
 | Schema migration (`database/migrate.py`) | **TESTED** | Additive columns only; refuses destructive changes |
 
-**Test suite: 322 tests, all passing.** Run `pytest -q`.
+**Test suite: 333 tests, all passing.** Run `pytest -q`.
 
 ---
 
@@ -184,7 +185,7 @@ scripts/
   simulate_journal.py    Scan across simulated time, grade, compare to baseline
 
 frontend/                Vite + React 18 + TypeScript (strict)
-tests/                   322 tests
+tests/                   333 tests
 pine/                    TradingView companion scripts
 ```
 
@@ -275,7 +276,14 @@ Break these and the product is lying to its user.
     is. Those are precisely the rows about to become evidence, and their loss
     would look like a quiet journal rather than a bug.
 
-20. **LIVE vs DEMO is decided server-side.** `status()["data_mode"]` is the
+20. **A restored scan keeps the provenance of its rows, not of the process.**
+    `/api/scan` serves the journal until this process has scanned, so the screen
+    is never blank after a restart. The banner follows what is *displayed*: a
+    snapshot written by the synthetic provider stays DEMO even when a real feed
+    is configured. Restored rows are a genuine subset — fields never journalled
+    are `None`, never zero — and are marked `from_journal`.
+
+21. **LIVE vs DEMO is decided server-side.** `status()["data_mode"]` is the
     single source; the dashboard never infers it from a provider name it happens
     to recognise, or a new synthetic source would slip past the banner.
 

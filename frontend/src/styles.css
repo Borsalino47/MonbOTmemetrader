@@ -358,3 +358,12 @@ tbody td.sym { font-weight: 600; text-align: left; }
 
 .table-scroll { overflow-x: auto; }
 .table-scroll table { min-width: 620px; }
+
+/* Restored-from-journal state: visually distinct from both the DEMO banner
+   (which is about fabricated data) and the STALE banner (which is about a feed
+   falling behind). This one means "real data, just not current". */
+.banner.journal {
+  background: rgba(74, 158, 255, 0.10);
+  color: var(--info);
+  border-bottom-color: rgba(74, 158, 255, 0.28);
+}
