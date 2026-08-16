@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api';
 import { AlertsView } from './components/AlertsView';
 import { AssetDrawer } from './components/AssetDrawer';
+import { AssetCards } from './components/AssetCards';
+import { HomeView } from './components/HomeView';
 import { HorizonsView } from './components/HorizonsView';
 import { PerformanceView } from './components/PerformanceView';
 import { ScannerTable } from './components/ScannerTable';
@@ -9,12 +11,31 @@ import { TopOpportunities } from './components/TopOpportunities';
 import { age, clock } from './format';
 import type { AlertItem, Health, ScanResponse, ScoreRow } from './types';
 
-type Tab = 'scanner' | 'alerts' | 'verification' | 'performance';
+type Tab = 'home' | 'scanner' | 'alerts' | 'verification' | 'performance';
+
+/** Simple hides the measured columns; expert shows the same row with more of it.
+ *  Persisted because it is a preference about the person, not about the session. */
+type Mode = 'simple' | 'expert';
+
+const MODE_KEY = 'cryptopulse.mode';
+
+function loadMode(): Mode {
+  try {
+    return localStorage.getItem(MODE_KEY) === 'expert' ? 'expert' : 'simple';
+  } catch {
+    return 'simple';   // private browsing, or storage disabled
+  }
+}
 
 const REFRESH_MS = 15_000;
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>('scanner');
+  const [tab, setTab] = useState<Tab>('home');
+  const [mode, setMode] = useState<Mode>(loadMode);
+
+  useEffect(() => {
+    try { localStorage.setItem(MODE_KEY, mode); } catch { /* storage unavailable */ }
+  }, [mode]);
   const [health, setHealth] = useState<Health | null>(null);
   const [rows, setRows] = useState<ScoreRow[]>([]);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
@@ -35,6 +56,9 @@ export default function App() {
   const [minLiquidity, setMinLiquidity] = useState('');
   const [hideVetoed, setHideVetoed] = useState(true);
   const [search, setSearch] = useState('');
+  // Filters are collapsed by default on a phone: six controls before the first
+  // row would push the list itself off the screen.
+  const [showFilters, setShowFilters] = useState(false);
 
   const mounted = useRef(true);
   useEffect(() => () => { mounted.current = false; }, []);
@@ -130,6 +154,7 @@ export default function App() {
         </div>
 
         <nav className="nav">
+          <button className={tab === 'home' ? 'active' : ''} onClick={() => setTab('home')}>Accueil</button>
           <button className={tab === 'scanner' ? 'active' : ''} onClick={() => setTab('scanner')}>Scanner</button>
           <button className={tab === 'alerts' ? 'active' : ''} onClick={() => setTab('alerts')}>
             Alerts{alerts.length > 0 ? ` (${alerts.length})` : ''}
@@ -141,6 +166,26 @@ export default function App() {
             Performance
           </button>
         </nav>
+
+        {/* Phones get one line, not ten stats: the same facts, in the space a
+            phone actually has. The full strip returns on a wide screen. */}
+        <div className="status-compact">
+          <span className={`dot ${isDemo || providerDown ? 'bad' : 'ok'}`} />
+          <span className={isDemo ? 'bad' : 'ok'}>{health?.data_mode ?? '—'}</span>
+          <span className="sep">·</span>
+          <span className={isStale ? 'bad' : ''}>{last ? age(last.age_seconds) : '—'}</span>
+          <span className="sep">·</span>
+          <span>{last ? `${last.succeeded}/${last.scanned}` : '—'}</span>
+          <button
+            className="mode-toggle"
+            onClick={() => setMode(mode === 'simple' ? 'expert' : 'simple')}
+          >
+            {mode === 'simple' ? 'Simple' : 'Expert'}
+          </button>
+          <button className="action small" onClick={runScan} disabled={scanning}>
+            {scanning ? '…' : 'Scan'}
+          </button>
+        </div>
 
         <div className="status-strip">
           <div className="stat">
@@ -189,27 +234,42 @@ export default function App() {
             <span className="k">Mode</span>
             <span className="v ok">{health?.paper_mode ? 'PAPER' : 'LIVE'}</span>
           </div>
+          <button
+            className="mode-toggle"
+            onClick={() => setMode(mode === 'simple' ? 'expert' : 'simple')}
+            title="Simple montre l'essentiel ; expert ajoute les colonnes mesurées"
+          >
+            {mode === 'simple' ? 'Simple' : 'Expert'}
+          </button>
           <button className="action" onClick={runScan} disabled={scanning}>
             {scanning ? 'Scanning…' : 'Scan now'}
           </button>
         </div>
       </header>
 
-      {isDemo && (
+      {/* The home screen opens with its own trust line, in the same amber, saying
+          exactly this. Repeating it immediately below is noise on a phone. The
+          warning is never absent: HomeView renders that line unconditionally,
+          and every other tab still gets the full banner. */}
+      {isDemo && tab !== 'home' && (
         <div className="banner synthetic">
-          <strong>DEMO — NOT REAL MARKET DATA</strong>
-          <span>
-            {health?.data_mode_detail} Every price, volume, score and verdict below is generated.
-            Run <code>python -m cryptopulse.cli doctor</code> to check whether a real exchange feed
-            is reachable, then set <code>CP_PROVIDER_MARKET_DATA=binance</code> (or <code>kraken</code>).
+          <strong>DÉMO</strong>
+          <span className="banner-short">Chiffres générés — aucun ne vient d'un marché.</span>
+          <span className="banner-long">
+            {health?.data_mode_detail} Chaque prix, volume, score et verdict ci-dessous est généré.
+            Lancez <code>python -m cryptopulse.cli doctor</code> pour savoir si un vrai flux est
+            joignable, puis réglez <code>CP_PROVIDER_MARKET_DATA=binance</code> (ou <code>kraken</code>).
           </span>
         </div>
       )}
 
-      {fromJournal && (
+      {fromJournal && tab !== 'home' && (
         <div className="banner journal">
-          <strong>DERNIER SCAN ENREGISTRÉ</strong>
-          <span>
+          <strong>ENREGISTRÉ</strong>
+          <span className="banner-short">
+            Dernier scan, {age(scanMeta?.age_seconds)} d'ancienneté. Pas des prix en direct.
+          </span>
+          <span className="banner-long">
             Affiché depuis la base pendant qu'un scan frais tourne — {age(scanMeta?.age_seconds)} d'ancienneté.
             Ce ne sont pas des prix en direct. Les colonnes carnet d'ordres n'ont jamais été
             enregistrées et restent inconnues.
@@ -219,15 +279,28 @@ export default function App() {
 
       {isStale && (
         <div className="banner stale">
-          <strong>STALE DATA</strong>
-          <span>The newest candle is {age(dataAge)} old. These values are not live.</span>
+          <strong>PÉRIMÉ</strong>
+          <span>La bougie la plus récente a {age(dataAge)}. Ces valeurs ne sont pas en direct.</span>
         </div>
       )}
 
       <main className="main">
         {error && <div className="error-box">Error: {error}</div>}
 
-        {noScanYet && tab === 'scanner' && (
+        {tab === 'home' && (
+          <HomeView
+            rows={rows}
+            alerts={alerts}
+            health={health}
+            journalAgeSeconds={fromJournal ? (scanMeta?.age_seconds ?? 0) : null}
+            onOpenTab={(t) => setTab(t as Tab)}
+            onSelect={setSelected}
+            scanning={scanning}
+            onScan={runScan}
+          />
+        )}
+
+        {noScanYet && (tab === 'scanner' || tab === 'home') && (
           <div className="table-wrap">
             <div className="empty">
               No scan has completed yet. Press <strong>Scan now</strong>, or wait for the background loop
@@ -238,10 +311,20 @@ export default function App() {
 
         {tab === 'scanner' && !noScanYet && (
           <>
-            <TopOpportunities rows={top} onSelect={setSelected} />
+            {/* Wide screens only: the home tab already shows the top setups, and
+                repeating them here costs a phone screen before the list starts. */}
+            <div className="only-wide">
+              <TopOpportunities rows={top} onSelect={setSelected} />
+            </div>
 
-            <div className="section-title">Live market scanner</div>
-            <div className="toolbar">
+            <div className="scanner-head">
+              <span className="section-title">Scanner — {filtered.length} / {rows.length}</span>
+              <button className="filters-toggle" onClick={() => setShowFilters(!showFilters)}>
+                {showFilters ? 'Masquer les filtres' : 'Filtres'}
+              </button>
+            </div>
+
+            <div className={`toolbar ${showFilters ? 'open' : ''}`}>
               <div className="filter">
                 <label>Opportunity ≥</label>
                 <input type="range" min={0} max={100} value={minScore}
@@ -291,12 +374,27 @@ export default function App() {
                 <input type="checkbox" checked={hideVetoed} onChange={(e) => setHideVetoed(e.target.checked)} />
                 <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>Hide vetoed</span>
               </label>
-              <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-faint)' }}>
+              <span className="only-wide" style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-faint)' }}>
                 {filtered.length} of {rows.length}
               </span>
             </div>
 
-            <ScannerTable rows={filtered} onSelect={setSelected} />
+            {/* Two renderings of the same rows. CSS decides which is visible:
+                a thirteen-column table is right on a desktop and wrong on a
+                phone, where it becomes horizontal scrolling. */}
+            <div className="only-wide">
+              <ScannerTable rows={filtered} onSelect={setSelected} />
+            </div>
+            <div className="only-narrow">
+              <AssetCards rows={filtered} onSelect={setSelected} expert={mode === 'expert'} />
+            </div>
+
+            {mode === 'simple' && (
+              <p className="mode-note">
+                Mode simple. Le score d'explosion 15 min et l'historique des pumps arrivent
+                en phases 06 et 07 — ils ne sont pas masqués ici, ils n'existent pas encore.
+              </p>
+            )}
           </>
         )}
 
@@ -315,7 +413,38 @@ export default function App() {
         </div>
       </main>
 
+      {/* Thumb-reachable navigation. Shown only on narrow screens, where the
+          top bar is out of reach of a hand holding the phone. */}
+      <nav className="bottom-nav">
+        <BottomTab id="home" label="Accueil" current={tab} onPick={setTab} />
+        <BottomTab id="scanner" label="Scanner" current={tab} onPick={setTab} />
+        <BottomTab id="alerts" label="Alertes" current={tab} onPick={setTab} badge={alerts.length} />
+        <BottomTab id="verification" label="Vérif." current={tab} onPick={setTab} />
+        <BottomTab id="performance" label="Perf." current={tab} onPick={setTab} />
+      </nav>
+
       {selected && <AssetDrawer symbol={selected} onClose={() => setSelected(null)} />}
     </div>
+  );
+}
+
+function BottomTab({
+  id, label, current, onPick, badge,
+}: {
+  id: Tab;
+  label: string;
+  current: Tab;
+  onPick: (t: Tab) => void;
+  badge?: number;
+}) {
+  return (
+    <button
+      className={current === id ? 'active' : ''}
+      onClick={() => onPick(id)}
+      aria-current={current === id ? 'page' : undefined}
+    >
+      {label}
+      {badge ? <span className="bottom-badge">{badge}</span> : null}
+    </button>
   );
 }

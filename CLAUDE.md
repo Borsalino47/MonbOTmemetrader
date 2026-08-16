@@ -38,7 +38,7 @@ that justifies it.
 | Database + signal journal | **TESTED** | SQLite verified; Postgres **NOT** verified |
 | Backtest engine + labels + walk-forward | **TESTED** | Never run on real market data |
 | FastAPI API | **TESTED** | 16 endpoint tests |
-| React dashboard | **IMPLEMENTED** | Builds clean, renders, screenshotted against fixture data |
+| React dashboard | **IMPLEMENTED** | Mobile-first. Builds clean, screenshotted at 412px and 1500px, zero horizontal scroll |
 | **Binance connector** | **IMPLEMENTED — NOT LIVE VERIFIED** | Contract cross-checked vs python-binance 1.0.37; still no live round-trip. See §3 |
 | Fixture (synthetic) provider | **TESTED / MOCKED** | Time-anchored, Brownian. Generates data, never market data |
 | **Kraken connector** | **IMPLEMENTED — NOT LIVE VERIFIED** | 23 tests incl. 2 full-pipeline. Contract cross-checked vs ccxt 4.5.73 |
@@ -186,7 +186,10 @@ start.sh                 One-command launcher: install, verify feed, scan
 scripts/
   simulate_journal.py    Scan across simulated time, grade, compare to baseline
 
-frontend/                Vite + React 18 + TypeScript (strict)
+frontend/                Vite + React 18 + TypeScript (strict), mobile-first
+  HomeView               The five-second view: can I trust it, and what moved
+  AssetCards             The scanner as cards; the table is wide-screen only
+  bottom-nav             Thumb-reachable navigation, phones only
 tests/                   354 tests
 pine/                    TradingView companion scripts
 ```
@@ -299,7 +302,14 @@ Break these and the product is lying to its user.
     the network would have. Keying on the limit makes equality hold by
     construction.
 
-23. **LIVE vs DEMO is decided server-side.** `status()["data_mode"]` is the
+23. **The DEMO warning is present on every screen, in some form.** The home tab
+    drops the banner only because its own trust line, rendered unconditionally
+    and in the same amber, says the same thing immediately above — repeating it
+    was noise on a phone. Every other tab keeps the full banner. Verified across
+    all five tabs before shipping; if a future change removes that trust line,
+    the banner suppression must go with it.
+
+24. **LIVE vs DEMO is decided server-side.** `status()["data_mode"]` is the
     single source; the dashboard never infers it from a provider name it happens
     to recognise, or a new synthetic source would slip past the banner.
 

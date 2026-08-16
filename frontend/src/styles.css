@@ -367,3 +367,267 @@ tbody td.sym { font-weight: 600; text-align: left; }
   color: var(--info);
   border-bottom-color: rgba(74, 158, 255, 0.28);
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   MOBILE FIRST — phase 03
+
+   The phone is the primary platform, so the narrow layout is the default and
+   the wide one is the exception. Two rules carry most of the work:
+
+     .only-narrow / .only-wide  — the scanner is a card list on a phone and a
+       table on a desktop. Same rows, same data; a thirteen-column table on a
+       430px screen is horizontal scrolling, which means reading a number
+       whose column header is off-screen.
+
+     .bottom-nav — a hand holding a phone reaches the bottom, not the top.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.only-narrow { display: block; }
+.only-wide { display: none; }
+
+/* ------------------------------------------------------------- accueil -- */
+
+.home { display: flex; flex-direction: column; gap: 20px; padding-bottom: 8px; }
+
+/* Trust before numbers: whether the feed can be believed is answered first. */
+.home-state {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; text-align: left;
+  padding: 13px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  color: var(--text);
+  font: inherit; font-size: 13px;
+  cursor: pointer;
+}
+.home-state.ok  { border-color: rgba(38,217,127,0.34); }
+.home-state.bad { border-color: rgba(255,176,32,0.40); background: rgba(255,176,32,0.07); }
+.home-state-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+.home-state.ok  .home-state-dot { background: var(--up); }
+.home-state.bad .home-state-dot { background: var(--warn); }
+.home-state-text { flex: 1 1 auto; line-height: 1.4; }
+.home-state-meta { font-family: var(--mono); font-size: 12px; color: var(--text-faint); }
+
+.home-block { display: flex; flex-direction: column; gap: 11px; }
+.home-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.home-block h2 {
+  font-size: 12px; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase;
+  color: var(--text-dim); margin: 0;
+}
+.home-refresh, .home-more {
+  font: inherit; font-size: 12px;
+  background: var(--bg-panel-2); color: var(--text-dim);
+  border: 1px solid var(--border); border-radius: 5px;
+  padding: 5px 11px; cursor: pointer;
+}
+.home-refresh:disabled { opacity: 0.5; cursor: default; }
+.home-refresh:hover:not(:disabled), .home-more:hover { color: var(--text); border-color: var(--border-strong); }
+
+.home-counts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.home-count {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 11px 8px;
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: 7px;
+  text-align: center;
+}
+.home-count-n { font-family: var(--mono); font-size: 21px; font-weight: 600; line-height: 1.1; }
+.home-count-l { font-size: 9.5px; color: var(--text-faint); line-height: 1.25; }
+.home-count.good  .home-count-n { color: var(--up); }
+.home-count.warn  .home-count-n { color: var(--warn); }
+.home-count.bad   .home-count-n { color: var(--down); }
+.home-count.muted .home-count-n { color: var(--text-dim); }
+
+.home-top { display: flex; flex-direction: column; gap: 9px; }
+.home-card {
+  display: flex; gap: 11px; align-items: flex-start;
+  width: 100%; text-align: left;
+  padding: 13px;
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text); font: inherit; cursor: pointer;
+}
+.home-card:hover { border-color: var(--border-strong); background: var(--bg-hover); }
+.home-rank {
+  font-family: var(--mono); font-size: 15px; font-weight: 700;
+  color: var(--text-faint); flex: 0 0 auto; line-height: 1.5;
+}
+.home-card-body { display: flex; flex-direction: column; gap: 6px; flex: 1 1 auto; min-width: 0; }
+.home-card-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.home-sym { font-family: var(--mono); font-size: 14px; font-weight: 650; }
+.home-score { font-family: var(--mono); font-size: 19px; font-weight: 650; }
+.home-score small { font-size: 10px; color: var(--text-faint); }
+.home-why { font-size: 12px; color: var(--text-dim); line-height: 1.45; }
+.home-card-metrics {
+  display: flex; gap: 12px; flex-wrap: wrap;
+  font-family: var(--mono); font-size: 11px; color: var(--text-faint);
+}
+
+.home-tiles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.home-tile {
+  display: flex; flex-direction: column; gap: 3px;
+  padding: 13px 12px; text-align: left;
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: 7px;
+  color: var(--text); font: inherit; cursor: pointer;
+}
+.home-tile:hover:not(:disabled) { border-color: var(--border-strong); background: var(--bg-hover); }
+.home-tile-label { font-size: 13px; font-weight: 550; }
+.home-tile-hint { font-size: 10.5px; color: var(--text-faint); }
+.home-tile.pending { opacity: 0.42; cursor: default; }
+.home-tile.pending .home-tile-hint { font-family: var(--mono); color: var(--accent); }
+
+.home-empty, .home-note {
+  font-size: 12px; color: var(--text-faint); line-height: 1.5; margin: 0;
+}
+
+/* -------------------------------------------------------------- cartes -- */
+
+.cards { display: flex; flex-direction: column; gap: 8px; }
+.card {
+  display: flex; flex-direction: column; gap: 8px;
+  width: 100%; text-align: left;
+  padding: 12px;
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text); font: inherit; cursor: pointer;
+}
+.card:hover { border-color: var(--border-strong); background: var(--bg-hover); }
+.card.vetoed { opacity: 0.55; }
+.card-head { display: flex; align-items: baseline; gap: 8px; }
+.card-rank { font-family: var(--mono); font-size: 11px; color: var(--text-faint); min-width: 18px; }
+.card-sym { font-family: var(--mono); font-size: 14px; font-weight: 650; }
+.card-price { margin-left: auto; font-family: var(--mono); font-size: 13px; color: var(--text-dim); }
+.card-verdict { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.card-score { font-family: var(--mono); font-size: 18px; font-weight: 650; }
+.card-score small { font-size: 10px; color: var(--text-faint); }
+.card-why { font-size: 12px; color: var(--text-dim); line-height: 1.45; }
+.card-strip {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px;
+  padding-top: 8px; border-top: 1px solid var(--border);
+}
+.card-strip.expert { grid-template-columns: repeat(4, 1fr); }
+.card-cell { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.card-cell-k { font-size: 9px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-faint); }
+.card-cell-v {
+  font-family: var(--mono); font-size: 12px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.mode-note {
+  font-size: 11.5px; color: var(--text-faint); line-height: 1.5;
+  margin: 14px 0 0; padding: 10px 12px;
+  border: 1px dashed var(--border); border-radius: 6px;
+}
+
+.mode-toggle {
+  font: inherit; font-size: 11px; font-weight: 600; letter-spacing: 0.05em;
+  background: var(--bg-panel-2); color: var(--accent);
+  border: 1px solid var(--border-strong); border-radius: 5px;
+  padding: 6px 12px; cursor: pointer;
+}
+.mode-toggle:hover { background: var(--bg-hover); }
+
+/* -------------------------------------------------- navigation basse --- */
+
+.bottom-nav {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 40;
+  display: flex;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border-strong);
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+.bottom-nav button {
+  flex: 1 1 0; min-width: 0;
+  padding: 11px 2px calc(11px + env(safe-area-inset-bottom, 0px) * 0);
+  background: none; border: none; border-top: 2px solid transparent;
+  color: var(--text-faint); font: inherit; font-size: 10.5px;
+  cursor: pointer; position: relative;
+}
+.bottom-nav button.active { color: var(--accent); border-top-color: var(--accent); }
+.bottom-badge {
+  position: absolute; top: 4px; left: 50%; margin-left: 12px;
+  background: var(--warn); color: #101010;
+  font-family: var(--mono); font-size: 8.5px; font-weight: 700;
+  border-radius: 7px; padding: 0 4px; line-height: 1.5;
+}
+
+/* ---------------------------------------------------------- wide only -- */
+
+@media (min-width: 781px) {
+  .only-narrow { display: none; }
+  .only-wide { display: block; }
+  .bottom-nav { display: none; }
+  .home-counts { grid-template-columns: repeat(4, 1fr); }
+  .home-tiles { grid-template-columns: repeat(3, 1fr); }
+  .home-top { flex-direction: row; }
+  .home-card { flex: 1 1 0; }
+}
+
+@media (max-width: 780px) {
+  /* Room for the fixed bottom bar, plus the iOS home indicator. */
+  .main { padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)); }
+  .topbar { position: sticky; top: 0; z-index: 30; }
+  /* The top nav duplicates the bottom bar on a phone. */
+  .topbar .nav { display: none; }
+  .card-strip.expert { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ── Compact phone header ────────────────────────────────────────────────
+   The ten-stat strip is right on a desktop and wrong on a phone, where it
+   pushed the actual content below the fold — the opposite of understanding
+   the situation in five seconds. Same facts, one line. */
+
+.status-compact { display: none; }
+
+.banner-short { display: inline; }
+.banner-long  { display: none; }
+
+@media (max-width: 780px) {
+  .topbar { gap: 8px; padding: 8px 14px; row-gap: 6px; }
+  .brand h1 { font-size: 13px; }
+  .status-strip { display: none; }
+
+  .status-compact {
+    display: flex; align-items: center; gap: 6px;
+    margin-left: auto;
+    font-family: var(--mono); font-size: 11px; color: var(--text-dim);
+  }
+  .status-compact .ok  { color: var(--up); }
+  .status-compact .bad { color: var(--down); }
+  .status-compact .sep { color: var(--text-faint); }
+  .status-compact .mode-toggle { margin-left: 4px; padding: 4px 8px; font-size: 10px; }
+  .status-compact .action.small { padding: 4px 9px; font-size: 10px; }
+
+  /* The label must not be squeezed into a one-word column. */
+  .banner { flex-wrap: wrap; padding: 7px 14px; font-size: 11.5px; line-height: 1.45; gap: 7px; }
+  .banner strong { flex: 0 0 auto; }
+  .banner span { flex: 1 1 200px; min-width: 0; }
+}
+
+@media (min-width: 781px) {
+  .banner-short { display: none; }
+  .banner-long  { display: inline; }
+}
+
+/* Scanner head + collapsible filters on a phone. */
+.scanner-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; margin: 0 0 10px;
+}
+.scanner-head .section-title { margin: 0; }
+.filters-toggle {
+  font: inherit; font-size: 11px;
+  background: var(--bg-panel-2); color: var(--text-dim);
+  border: 1px solid var(--border); border-radius: 5px;
+  padding: 5px 11px; cursor: pointer; white-space: nowrap;
+}
+.filters-toggle:hover { color: var(--text); border-color: var(--border-strong); }
+
+@media (max-width: 780px) {
+  .filters-toggle { display: inline-block; }
+  .toolbar { display: none; }
+  .toolbar.open { display: flex; flex-wrap: wrap; }
+  .toolbar.open .filter { flex: 1 1 132px; }
+}
+@media (min-width: 781px) {
+  /* On a desktop the filters are always visible and the toggle is pointless. */
+  .filters-toggle { display: none; }
+}
