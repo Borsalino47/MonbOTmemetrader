@@ -18,6 +18,7 @@ from cryptopulse.core.clock import SYSTEM_CLOCK
 from cryptopulse.core.logging import get_logger
 from cryptopulse.database import repo
 from cryptopulse.database.session import init_engine
+from cryptopulse.hunter.discovery import PrescanReport, SnapshotMemory, prescan
 from cryptopulse.outcomes.horizons import HORIZONS, HorizonReport, HorizonTracker
 from cryptopulse.outcomes.tracker import OutcomeTracker, ResolutionReport
 from cryptopulse.providers.registry import is_synthetic
@@ -72,6 +73,12 @@ class ScannerService:
         # deleting on a one-minute loop would spend the disk budget on churn.
         self.last_prune: dict | None = None
         self._last_prune_ms = 0
+
+        # The Token Hunter reads the venue-wide ticker the scan already fetched,
+        # so a wide search costs no extra requests. Its memory of the previous
+        # reading is what turns two snapshots into an acceleration signal.
+        self.hunter_memory = SnapshotMemory(clock=SYSTEM_CLOCK)
+        self.last_prescan: PrescanReport | None = None
 
     # -- lifecycle ----------------------------------------------------------- #
 
@@ -155,6 +162,13 @@ class ScannerService:
         except Exception as exc:
             log.error("horizon_tracking_failed", error=str(exc)[:300])
 
+        # Free: reads the ticker dictionary the scan already holds. Running it
+        # every cycle is what builds the previous-reading memory the deltas need.
+        try:
+            self.hunt()
+        except Exception as exc:
+            log.error("prescan_failed", error=str(exc)[:300])
+
         try:
             await self.maybe_prune()
         except Exception as exc:
@@ -201,6 +215,31 @@ class ScannerService:
                 log.info("horizons_persisted", written=written)
             self.last_horizon_run = report
             return report
+
+    def hunt(self, limit: int = 40, *, record: bool = True) -> PrescanReport:
+        """Rank the whole venue on the ticker data the last scan already paid for.
+
+        Synchronous and instant: no request is made. It reads the snapshot the
+        scanner kept, which is why a wide search over hundreds of tokens costs
+        nothing and can be run on demand from a phone.
+
+        Only the scan cycle passes `record=True`. An on-demand search must not
+        advance the snapshot memory: doing so overwrote the previous reading and
+        wiped out the acceleration signal, which was the point of searching.
+        """
+        cfg = self.settings.scanner
+        report = prescan(
+            self.scanner.last_tickers,
+            self.hunter_memory,
+            quote_asset=cfg.quote_asset,
+            exclude_bases=tuple(cfg.exclude_stable_bases),
+            exclude_patterns=tuple(cfg.exclude_patterns),
+            limit=limit,
+            record=record,
+        )
+        if record:
+            self.last_prescan = report
+        return report
 
     async def maybe_prune(self, *, force: bool = False) -> dict | None:
         """Apply the retention window, at most once every six hours."""

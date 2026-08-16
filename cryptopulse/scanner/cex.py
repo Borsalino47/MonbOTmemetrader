@@ -57,6 +57,10 @@ class CexScanner(Scanner):
         self.memory = memory or ScoreMemory()
         self.regime: RegimeReport = RegimeReport.unknown()
         self._last_report: ScanReport | None = None
+        # The venue-wide ticker dictionary from the most recent scan. Kept so
+        # the Token Hunter can read the whole venue without spending a single
+        # extra request — that call has already been paid for.
+        self.last_tickers: dict = {}
 
     async def close(self) -> None:
         await self.provider.close()
@@ -206,6 +210,8 @@ class CexScanner(Scanner):
                 synthetic_data=synthetic,
                 notes=notes + ["scan aborted: could not build universe"],
             )
+
+        self.last_tickers = tickers
 
         await self._update_regime()
 

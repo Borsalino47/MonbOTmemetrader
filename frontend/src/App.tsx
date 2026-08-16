@@ -5,13 +5,14 @@ import { AssetDrawer } from './components/AssetDrawer';
 import { AssetCards } from './components/AssetCards';
 import { HomeView } from './components/HomeView';
 import { HorizonsView } from './components/HorizonsView';
+import { HunterView } from './components/HunterView';
 import { PerformanceView } from './components/PerformanceView';
 import { ScannerTable } from './components/ScannerTable';
 import { TopOpportunities } from './components/TopOpportunities';
 import { age, clock } from './format';
 import type { AlertItem, Health, ScanResponse, ScoreRow } from './types';
 
-type Tab = 'home' | 'scanner' | 'alerts' | 'verification' | 'performance';
+type Tab = 'home' | 'scanner' | 'hunter' | 'alerts' | 'verification' | 'performance';
 
 /** Simple hides the measured columns; expert shows the same row with more of it.
  *  Persisted because it is a preference about the person, not about the session. */
@@ -156,6 +157,7 @@ export default function App() {
         <nav className="nav">
           <button className={tab === 'home' ? 'active' : ''} onClick={() => setTab('home')}>Accueil</button>
           <button className={tab === 'scanner' ? 'active' : ''} onClick={() => setTab('scanner')}>Scanner</button>
+          <button className={tab === 'hunter' ? 'active' : ''} onClick={() => setTab('hunter')}>Recherche</button>
           <button className={tab === 'alerts' ? 'active' : ''} onClick={() => setTab('alerts')}>
             Alerts{alerts.length > 0 ? ` (${alerts.length})` : ''}
           </button>
@@ -400,6 +402,8 @@ export default function App() {
 
         {tab === 'alerts' && <AlertsView alerts={alerts} onSelect={setSelected} />}
 
+        {tab === 'hunter' && <HunterView onSelect={setSelected} />}
+
         {tab === 'verification' && <HorizonsView />}
 
         {tab === 'performance' && <PerformanceView />}
@@ -418,6 +422,7 @@ export default function App() {
       <nav className="bottom-nav">
         <BottomTab id="home" label="Accueil" current={tab} onPick={setTab} />
         <BottomTab id="scanner" label="Scanner" current={tab} onPick={setTab} />
+        <BottomTab id="hunter" label="Recherche" current={tab} onPick={setTab} />
         <BottomTab id="alerts" label="Alertes" current={tab} onPick={setTab} badge={alerts.length} />
         <BottomTab id="verification" label="Vérif." current={tab} onPick={setTab} />
         <BottomTab id="performance" label="Perf." current={tab} onPick={setTab} />

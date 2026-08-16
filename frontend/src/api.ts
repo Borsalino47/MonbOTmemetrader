@@ -1,5 +1,5 @@
 import type {
-  AlertItem, AssetDetail, Health, HorizonResponse, PerformanceResponse, ScanResponse,
+  AlertItem, AssetDetail, Health, HorizonResponse, HuntResponse, PerformanceResponse, ScanResponse,
 } from './types';
 
 const BASE = '/api';
@@ -35,6 +35,7 @@ export const api = {
     get<{ stats: Record<string, unknown>; signals: Record<string, unknown>[] }>('/signals', { limit }),
   performance: () => get<PerformanceResponse>('/performance'),
   horizons: () => get<HorizonResponse>('/horizons'),
+  hunt: (limit = 40) => get<HuntResponse>('/hunt', { limit }),
   trackHorizons: async () => {
     const resp = await fetch(`${BASE}/horizons/track`, { method: 'POST' });
     if (!resp.ok) throw new Error(`horizon tracking failed: ${resp.status}`);

@@ -63,7 +63,12 @@ from cryptopulse.core.types import (
     Ticker24h,
     Timeframe,
 )
-from cryptopulse.providers.base import MarketDataProvider, OrderBookProvider, ProviderHealth
+from cryptopulse.providers.base import (
+    MarketDataProvider,
+    OrderBookProvider,
+    ProviderHealth,
+    TokenDiscoveryProvider,
+)
 from cryptopulse.providers.http import HttpClient
 
 log = get_logger("providers.kraken")
@@ -97,7 +102,7 @@ TIMEFRAME_MINUTES: dict[Timeframe, int] = {
 MAX_OHLC_ROWS = 720
 
 
-class KrakenProvider(MarketDataProvider, OrderBookProvider):
+class KrakenProvider(MarketDataProvider, OrderBookProvider, TokenDiscoveryProvider):
     name = "kraken"
     reference_symbol = "XBTUSDT"
 
@@ -295,6 +300,12 @@ class KrakenProvider(MarketDataProvider, OrderBookProvider):
         if not out:
             raise DataUnavailable("kraken: no parsable tickers in response")
         return out
+
+    # -- token discovery ------------------------------------------------------ #
+
+    async def discover_universe(self, quote_asset: str) -> dict[str, Ticker24h]:
+        """The whole venue in one request — the call that makes a wide search viable."""
+        return await self.get_tickers_24h(None)
 
     # -- klines -------------------------------------------------------------- #
 

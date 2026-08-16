@@ -631,3 +631,19 @@ tbody td.sym { font-weight: 600; text-align: left; }
   /* On a desktop the filters are always visible and the toggle is pointless. */
   .filters-toggle { display: none; }
 }
+
+/* ── Recherche (Token Hunter) ─────────────────────────────────────────── */
+.hunt-summary {
+  display: flex; gap: 16px; flex-wrap: wrap;
+  font-family: var(--mono); font-size: 11px; color: var(--text-faint);
+  margin-bottom: 12px;
+}
+.hunt-summary strong { color: var(--text); font-weight: 600; }
+.hunt-warn {
+  font-size: 11.5px; color: var(--warn); line-height: 1.5;
+  background: rgba(255,176,32,0.08); border: 1px solid rgba(255,176,32,0.25);
+  border-radius: 6px; padding: 10px 12px; margin-bottom: 12px;
+}
+.hunt-priority { font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
+.hunt-priority strong { font-size: 17px; color: var(--accent); font-weight: 650; }
+.card-why.risk { color: var(--warn); }

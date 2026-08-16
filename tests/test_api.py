@@ -321,3 +321,68 @@ def test_health_reports_the_candle_cache(client):
     c = client.get("/api/health").json()["candle_cache"]
     assert c["requests"] > 0
     assert c["stored_series"] > 0
+
+
+# --------------------------------------------------------------------------- #
+# Token Hunter
+# --------------------------------------------------------------------------- #
+
+
+def test_hunt_says_it_needs_a_scan_before_one_has_run(client):
+    """The hunter reads the ticker snapshot a scan produces; it does not fetch."""
+    resp = client.get("/api/hunt")
+    assert resp.status_code == 503
+    assert resp.json()["reason"] == "NO_SCAN_YET"
+
+
+def test_hunt_ranks_the_venue_without_spending_a_request(client):
+    client.post("/api/scan/run")
+    body = client.get("/api/hunt").json()
+    p = body["prescan"]
+
+    assert p["requests_used"] == 0, "a wide search must cost nothing extra"
+    assert p["universe_size"] > 0
+    assert p["candidates"], "the venue produced no candidates at all"
+    assert body["data_mode"] == "DEMO"
+    assert "not a score" in body["disclaimer"]
+
+
+def test_hunt_candidates_never_claim_an_acceleration_they_cannot_measure(client):
+    """One scan means one reading, so every delta must be null rather than 0."""
+    client.post("/api/scan/run")
+    p = client.get("/api/hunt").json()["prescan"]
+
+    assert p["has_previous_reading"] is False
+    for c in p["candidates"]:
+        assert c["volume_excess_vs_yesterday"] is None
+        assert c["seconds_since_previous"] is None
+        assert c["reasons"] or c["caveats"], f"{c['symbol']} ranked with no explanation"
+
+
+def test_hunt_serves_the_cycle_report_so_deltas_survive_being_read(client):
+    """Recomputing on read would return the same ranking against a memory the
+    cycle had just advanced, so every delta would come back null exactly when
+    the user asked for it."""
+    import dataclasses
+
+    from cryptopulse.api.service import get_service
+
+    service = get_service()
+    client.post("/api/scan/run")
+
+    # Age the recorded snapshots so the next cycle has a real interval to measure.
+    service.hunter_memory._previous = {
+        k: dataclasses.replace(s, at_ms=s.at_ms - 90_000, quote_volume_24h=s.quote_volume_24h * 0.94)
+        for k, s in service.hunter_memory._previous.items()
+    }
+    client.post("/api/scan/run")
+
+    first = client.get("/api/hunt").json()["prescan"]
+    assert first["has_previous_reading"] is True
+
+    # Reading repeatedly must not degrade the answer.
+    for _ in range(3):
+        again = client.get("/api/hunt").json()["prescan"]
+        assert again["has_previous_reading"] is True
+        assert again["candidates"][0]["volume_excess_vs_yesterday"] == \
+            first["candidates"][0]["volume_excess_vs_yesterday"]

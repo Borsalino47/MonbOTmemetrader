@@ -67,7 +67,12 @@ from cryptopulse.core.types import (
     Ticker24h,
     Timeframe,
 )
-from cryptopulse.providers.base import MarketDataProvider, OrderBookProvider, ProviderHealth
+from cryptopulse.providers.base import (
+    MarketDataProvider,
+    OrderBookProvider,
+    ProviderHealth,
+    TokenDiscoveryProvider,
+)
 from cryptopulse.providers.http import HttpClient
 
 log = get_logger("providers.binance")
@@ -91,7 +96,7 @@ KLINE_FIELDS = (
 )
 
 
-class BinanceSpotProvider(MarketDataProvider, OrderBookProvider):
+class BinanceSpotProvider(MarketDataProvider, OrderBookProvider, TokenDiscoveryProvider):
     name = "binance-spot"
     reference_symbol = "BTCUSDT"
 
@@ -207,6 +212,11 @@ class BinanceSpotProvider(MarketDataProvider, OrderBookProvider):
                     provenance=Provenance(
                         source=self.name, as_of_ms=as_of, fetched_at_ms=fetched, note=qv_note
                     ),
+                    # Present in the same payload, so a venue-wide spread
+                    # estimate costs no extra request. Absent or unusable
+                    # values stay None rather than becoming zero.
+                    bid=_positive_or_none(row.get("bidPrice")),
+                    ask=_positive_or_none(row.get("askPrice")),
                 )
             except (KeyError, TypeError, ValueError) as exc:
                 log.warning("ticker_parse_failed", row=str(row)[:120], error=str(exc))
@@ -215,6 +225,12 @@ class BinanceSpotProvider(MarketDataProvider, OrderBookProvider):
         if not out:
             raise DataUnavailable("binance: no parsable 24h tickers in response")
         return out
+
+    # -- token discovery ------------------------------------------------------ #
+
+    async def discover_universe(self, quote_asset: str) -> dict[str, Ticker24h]:
+        """The whole venue in one request — the call that makes a wide search viable."""
+        return await self.get_tickers_24h(None)
 
     # -- klines -------------------------------------------------------------- #
 
@@ -309,6 +325,16 @@ class BinanceSpotProvider(MarketDataProvider, OrderBookProvider):
                 source=self.name, as_of_ms=fetched, fetched_at_ms=fetched, note="REST snapshot, no venue timestamp"
             ),
         )
+
+
+def _positive_or_none(raw) -> float | None:
+    """A price we can use, or an honest absence. Binance sends "0.00000000" for
+    an empty book side, and a zero bid would compute as a 20000 bps spread."""
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
 
 
 def _quote_volume_from(row: dict) -> tuple[float, str | None]:

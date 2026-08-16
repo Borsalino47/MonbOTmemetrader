@@ -377,6 +377,35 @@ class Ticker24h:
     low_24h: float
     trades_24h: int
     provenance: Provenance
+    # Best bid/ask when the venue includes them in the same response. Binance
+    # does, which gives a spread estimate for the whole venue at no extra
+    # request. `None` where the venue does not, never zero — a zero spread would
+    # read as a perfectly tight market.
+    bid: float | None = None
+    ask: float | None = None
+
+    @property
+    def spread_bps(self) -> float | None:
+        """Half-spread in basis points, or None when the venue did not say."""
+        if self.bid is None or self.ask is None:
+            return None
+        if self.bid <= 0 or self.ask <= 0 or self.ask < self.bid:
+            return None
+        mid = (self.bid + self.ask) / 2.0
+        return (self.ask - self.bid) / mid * 10_000.0 if mid > 0 else None
+
+    @property
+    def range_position_24h(self) -> float | None:
+        """Where the price sits in its 24h range: 0.0 at the low, 1.0 at the high."""
+        span = self.high_24h - self.low_24h
+        if span <= 0:
+            return None
+        return max(0.0, min(1.0, (self.last_price - self.low_24h) / span))
+
+    @property
+    def avg_trade_size(self) -> float | None:
+        """Mean quote value per trade. Distinguishes many small fills from few large ones."""
+        return self.quote_volume_24h / self.trades_24h if self.trades_24h > 0 else None
 
 
 # --------------------------------------------------------------------------- #

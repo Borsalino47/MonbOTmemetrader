@@ -62,7 +62,12 @@ from cryptopulse.core.types import (
     Ticker24h,
     Timeframe,
 )
-from cryptopulse.providers.base import MarketDataProvider, OrderBookProvider, ProviderHealth
+from cryptopulse.providers.base import (
+    MarketDataProvider,
+    OrderBookProvider,
+    ProviderHealth,
+    TokenDiscoveryProvider,
+)
 
 __all__ = ["FixtureProvider", "Scenario", "SYNTHETIC_SOURCE", "SYNTHETIC_NOTE", "generate_window"]
 
@@ -313,7 +318,7 @@ def _scenario_for(symbol: str) -> tuple[float, Scenario, float]:
     raise KeyError(symbol)
 
 
-class FixtureProvider(MarketDataProvider, OrderBookProvider):
+class FixtureProvider(MarketDataProvider, OrderBookProvider, TokenDiscoveryProvider):
     """Offline stand-in. Emits synthetic data, loudly labelled."""
 
     name = SYNTHETIC_SOURCE
@@ -454,3 +459,9 @@ class FixtureProvider(MarketDataProvider, OrderBookProvider):
                 quality=DataQuality.PARTIAL, note=SYNTHETIC_NOTE,
             ),
         )
+
+    # -- token discovery ------------------------------------------------------ #
+
+    async def discover_universe(self, quote_asset: str) -> dict[str, Ticker24h]:
+        """The whole venue in one request — the call that makes a wide search viable."""
+        return await self.get_tickers_24h(None)

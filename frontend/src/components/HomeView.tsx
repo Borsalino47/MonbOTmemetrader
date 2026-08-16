@@ -140,12 +140,16 @@ export function HomeView({
             hint="taux de réussite réel"
             onClick={() => onOpenTab('performance')}
           />
-          <Tile label="Recherche token" hint="phase 04" pending />
+          <Tile
+            label="Recherche token"
+            hint="tout le venue, 0 requête"
+            onClick={() => onOpenTab('hunter')}
+          />
           <Tile label="Tokens validés" hint="phase 07" pending />
           <Tile label="Historique pumps" hint="phase 06" pending />
         </div>
         <p className="home-note">
-          Les trois dernières attendent leur moteur. Elles sont affichées grisées plutôt
+          Les deux dernières attendent leur moteur. Elles sont affichées grisées plutôt
           que masquées : rien n'est oublié, et rien n'est simulé en attendant.
         </p>
       </section>

@@ -17,12 +17,17 @@ from fastapi.staticfiles import StaticFiles
 
 from cryptopulse.api.service import get_service
 from cryptopulse.config.settings import get_settings
+from cryptopulse.core.clock import SYSTEM_CLOCK
 from cryptopulse.core.logging import configure_logging, get_logger
 from cryptopulse.database import repo
 
 log = get_logger("api")
 
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+
+
+def service_now_ms() -> int:
+    return SYSTEM_CLOCK.now_ms()
 
 
 def _filter_snapshot(
@@ -378,6 +383,58 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
                 {"id": p.id, "symbol": p.symbol, "timestamp_ms": p.timestamp_ms, "price": p.price, "atr": p.atr}
                 for p in pending
             ],
+        }
+
+    # ----------------------------------------------------------- hunter #
+
+    @app.get("/api/hunt", tags=["hunter"])
+    async def hunt(limit: int = Query(40, ge=1, le=200)):
+        """Rank the whole venue on cheap data and return the best candidates.
+
+        Costs no request: it reads the venue-wide ticker the last scan already
+        fetched. Candidates are ranked by *anomaly*, not by size — a small token
+        whose activity has doubled outranks a large one trading normally, which
+        is the opposite of what the volume-sorted scanner universe does.
+
+        A candidate is a suggestion to look closer, never a judgement about the
+        asset. That belongs to the deep scan, which sees the price history this
+        stage deliberately never fetches.
+        """
+        service = get_service()
+        if not service.scanner.last_tickers:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "reason": "NO_SCAN_YET",
+                    "message": "The hunter reads the ticker snapshot a scan produces. "
+                               "Run POST /api/scan/run first, or wait for the loop.",
+                },
+            )
+        # Serve the cycle's own report rather than recomputing.
+        #
+        # Recomputing would read the same ticker dictionary and produce the same
+        # ranking, but against a snapshot memory the cycle has just advanced —
+        # so every delta would come back null and the acceleration signal would
+        # vanish exactly when it is asked for. The stored report already holds
+        # it. A recompute happens only when no cycle has produced one yet.
+        stored = service.last_prescan
+        report = stored.to_dict() if stored else service.hunt(limit=limit, record=False).to_dict()
+        report["candidates"] = report["candidates"][:limit]
+        report["returned"] = len(report["candidates"])
+        age_s = (
+            round((service_now_ms() - report["computed_at_ms"]) / 1000, 1)
+            if report.get("computed_at_ms")
+            else None
+        )
+        return {
+            "prescan": report,
+            "age_seconds": age_s,
+            "refreshes_with_the_scan": True,
+            "data_mode": "DEMO" if service.status()["synthetic_data"] else "LIVE",
+            "disclaimer": (
+                "Priority ranks which tokens deserve an expensive look. It is not a score, "
+                "not a probability, and says nothing about whether a token is worth buying."
+            ),
         }
 
     # ---------------------------------------------------------- maintenance #

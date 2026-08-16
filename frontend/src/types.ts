@@ -324,3 +324,40 @@ export interface HorizonResponse {
     notes: string[];
   };
 }
+
+// ---------------------------------------------------------------- hunter --
+
+export interface Candidate {
+  symbol: string;
+  price: number;
+  quote_volume_24h: number;
+  change_pct_24h: number | null;
+  range_position_24h: number | null;
+  spread_bps: number | null;
+  trades_24h: number;
+  avg_trade_size: number | null;
+  seconds_since_previous: number | null;
+  /** Excess over the same moment yesterday, NOT volume in the last minute:
+   *  it is the difference between two 24h rolling counters. */
+  volume_excess_vs_yesterday: number | null;
+  trade_excess_vs_yesterday: number | null;
+  price_change_since_previous_pct: number | null;
+  priority: number;
+  reasons: string[];
+  caveats: string[];
+}
+
+export interface HuntResponse {
+  prescan: {
+    universe_size: number;
+    eligible: number;
+    returned: number;
+    rejected: Record<string, number>;
+    has_previous_reading: boolean;
+    requests_used: number;
+    notes: string[];
+    candidates: Candidate[];
+  };
+  data_mode: 'LIVE' | 'DEMO';
+  disclaimer: string;
+}

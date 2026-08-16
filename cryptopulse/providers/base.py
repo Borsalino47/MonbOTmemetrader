@@ -26,6 +26,7 @@ from cryptopulse.core.types import (
 __all__ = [
     "ProviderHealth",
     "MarketDataProvider",
+    "TokenDiscoveryProvider",
     "OrderBookProvider",
     "DEXProvider",
     "OnChainProvider",
@@ -124,3 +125,32 @@ class SocialDataProvider(ABC):
 
     @abstractmethod
     async def mentions(self, symbol: str, window_hours: int) -> dict: ...
+
+
+class TokenDiscoveryProvider(ABC):
+    """A source that can enumerate a whole venue cheaply, for the Token Hunter.
+
+    Separate from `MarketDataProvider` on purpose. That interface is about one
+    symbol at a time and its price history; this one is about *breadth* — every
+    tradeable asset a venue knows, in as few requests as possible, carrying only
+    the fields a wide pre-scan can afford.
+
+    A CEX satisfies this with its 24h ticker endpoint. A chain indexer will
+    satisfy it with a pools listing, which is why the return type is a plain
+    mapping rather than anything exchange-shaped: the Robinhood Chain and DEX
+    sources planned for later must be able to implement it without either side
+    learning about the other.
+    """
+
+    name: str
+
+    @abstractmethod
+    async def discover_universe(self, quote_asset: str) -> dict[str, Ticker24h]:
+        """Every tradeable pair the source knows, keyed by symbol.
+
+        Implementations must spend as few requests as possible — this is called
+        on every cycle, and its cheapness is what makes a wide search viable.
+        Raises `SourceUnavailable` on failure rather than returning a partial
+        universe, because a silently truncated universe looks exactly like a
+        quiet market.
+        """

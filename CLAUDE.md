@@ -55,9 +55,11 @@ that justifies it.
 | Retention (`repo.prune`) | **TESTED** | 12 tests. Never prunes a signal that still owes an answer |
 | Warm start (`repo.last_scan_snapshot`) | **TESTED** | 11 tests. Restored rows keep their age and their provenance |
 | Candle cache (`providers/cache.py`) | **TESTED** | 20 tests. 88.8 % of kline requests removed, output proven identical |
+| Token Hunter pre-scan (`hunter/discovery.py`) | **TESTED** | 21 tests. Whole venue ranked by anomaly, 0 extra requests |
+| `TokenDiscoveryProvider` | **IMPLEMENTED** | Binance / Kraken / fixture. The seat Robinhood Chain plugs into |
 | Schema migration (`database/migrate.py`) | **TESTED** | Additive columns only; refuses destructive changes |
 
-**Test suite: 354 tests, all passing.** Run `pytest -q`.
+**Test suite: 379 tests, all passing.** Run `pytest -q`.
 
 ---
 
@@ -161,6 +163,8 @@ cryptopulse/
   alerts/
     engine.py            Levels, gates, dedup, cooldown
     delivery.py          Webhook delivery. The URL is a credential and is never logged
+  hunter/
+    discovery.py         Wide pre-scan. Reads the scan's own ticker call, costs nothing
   outcomes/
     tracker.py           Grades emitted signals against the bars that followed
     horizons.py          What the price did 15m/1h/4h/24h later — path, not verdict
@@ -190,7 +194,7 @@ frontend/                Vite + React 18 + TypeScript (strict), mobile-first
   HomeView               The five-second view: can I trust it, and what moved
   AssetCards             The scanner as cards; the table is wide-screen only
   bottom-nav             Thumb-reachable navigation, phones only
-tests/                   354 tests
+tests/                   379 tests
 pine/                    TradingView companion scripts
 ```
 
@@ -309,7 +313,25 @@ Break these and the product is lying to its user.
     all five tabs before shipping; if a future change removes that trust line,
     the banner suppression must go with it.
 
-24. **LIVE vs DEMO is decided server-side.** `status()["data_mode"]` is the
+24. **A rolling-counter delta is named for what it measures.** `quoteVolume` and
+    `count` are 24-hour rolling figures, so the difference between two readings
+    is the excess over *the same moment yesterday*, not volume in the last
+    minute. The field is `volume_excess_vs_yesterday` and a test forbids any
+    `volume_1m`-style name. It is a genuine anomaly detector; calling it recent
+    volume would be a fabrication.
+
+25. **Reading the search never advances its memory.** Found by running the
+    service: an on-demand hunt that recorded a snapshot overwrote the previous
+    reading, so tapping "search again" seconds after a scan erased the very
+    acceleration signal being asked for. `/api/hunt` serves the cycle's stored
+    report; only the scan cycle records.
+
+26. **The hunter's `priority` is a selection heuristic, not a score.** It answers
+    "is this worth four kline requests?" and carries no version or weights
+    fingerprint, because it is not an opinion about the asset. `TOKEN_DISCOVERY_SCORE`
+    (phase 05) will be, and will read the price history this stage never fetches.
+
+27. **LIVE vs DEMO is decided server-side.** `status()["data_mode"]` is the
     single source; the dashboard never infers it from a provider name it happens
     to recognise, or a new synthetic source would slip past the banner.
 
