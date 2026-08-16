@@ -307,6 +307,78 @@ class TradeDecisionEngine:
         decision.risks = [c.why for c in failed][:4] or result.risks()[:4]
         return decision
 
+    # -------------------------------------------------------------- holding #
+
+    def decide_position(self, position, result, health, exit_risk, *, current_price=None):
+        """What to do about something already held: 🔵 / 🟡 / 🟠 / 🔴.
+
+        ACHETER is not among the answers. Recommending a purchase of something
+        already owned would be a different instruction (adding to a position)
+        that this product does not model and must not appear to.
+
+        The rules are ordered by how much argument they need. A broken
+        invalidation needs none — it was agreed before the position existed, and
+        it ends the thesis whatever momentum happens to be doing. Everything
+        below it is a weighing of evidence.
+        """
+        price = current_price if current_price is not None else result.price
+        decision = TradeDecision(
+            symbol=result.symbol,
+            action=TradeAction.HOLD,
+            strength=None,
+            timestamp_ms=result.timestamp_ms,
+            price=price,
+            weights_fingerprint=self.weights_fingerprint,
+            invalidation_price=getattr(position, "invalidation_price", None),
+            trigger_price=getattr(position, "trigger_price", None),
+        )
+        decision.risks = exit_risk.messages(6)
+
+        # 1. The terms of the trade. Nothing outranks this, by design.
+        if exit_risk.invalidation_broken:
+            decision.action = TradeAction.SELL
+            decision.blocking = ["SETUP INVALIDÉ — la raison initiale de l'achat n'est plus valide"]
+            return decision
+
+        critical = exit_risk.critical
+        if critical:
+            decision.action = TradeAction.SELL
+            decision.blocking = [s.message for s in critical]
+            return decision
+
+        # 2. Weight of evidence. Counted by severity rather than summed: five
+        #    cosmetic warnings must never outweigh one broken support.
+        major = len(exit_risk.major)
+        minor = len(exit_risk.minor)
+        score = health.score
+
+        if score is None:
+            # An unknown health is not a bad one. Saying SELL because a request
+            # failed would be the worst false alarm this engine could produce.
+            decision.action = TradeAction.WATCH
+            decision.reasons = ["santé de la position non calculable — trop de données manquantes"]
+            decision.risks = decision.risks or ["données insuffisantes pour juger"]
+            return decision
+
+        if score < 30.0 or major >= 4:
+            decision.action = TradeAction.SELL
+            decision.blocking = [s.message for s in exit_risk.major[:4]]
+            return decision
+
+        if score < 50.0 or major >= 2:
+            decision.action = TradeAction.REDUCE
+            decision.reasons = health.reasons()[:2]
+            return decision
+
+        if score < 70.0 or major >= 1 or minor >= 3:
+            decision.action = TradeAction.WATCH
+            decision.reasons = health.reasons()[:3]
+            return decision
+
+        decision.action = TradeAction.HOLD
+        decision.reasons = health.reasons()[:4]
+        return decision
+
     # --------------------------------------------------------------- checks #
 
     def _entry_checks(self, result, discovery_score: float | None) -> list[_Check]:
