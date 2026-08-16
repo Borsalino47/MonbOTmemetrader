@@ -186,6 +186,31 @@ l'interface.
 
 ---
 
+## Recevoir les alertes sur votre téléphone
+
+Par défaut, les alertes n'existent que dans le tableau de bord — vous ne les
+voyez donc que si vous le regardez. Pour les recevoir sur votre téléphone,
+créez un webhook Discord ou Slack (dans Discord : *Paramètres du salon →
+Intégrations → Créer un webhook → Copier l'URL*), puis ajoutez la ligne
+suivante dans le fichier `.env` :
+
+```
+CP_ALERT_WEBHOOK_URL=https://discord.com/api/webhooks/...
+```
+
+Redémarrez, c'est tout. Le format est détecté automatiquement.
+
+> **Cette adresse est un mot de passe.** Toute personne qui la possède peut
+> écrire dans votre salon. Ne la publiez nulle part. Le logiciel ne l'écrit
+> jamais dans un journal ni dans une réponse d'API — seulement son domaine.
+> Le fichier `.env` n'est jamais envoyé sur GitHub.
+
+Si le webhook cesse de fonctionner, `http://localhost:8000/api/health` vous le
+dira dans la section `alert_delivery` : un webhook mort ne doit pas ressembler
+à un marché calme.
+
+---
+
 ## Ce que ce logiciel ne fait pas
 
 Dit clairement, pour qu'il n'y ait pas de malentendu :

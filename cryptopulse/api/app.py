@@ -309,6 +309,19 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
             ],
         }
 
+    # ---------------------------------------------------------- maintenance #
+
+    @app.post("/api/maintenance/prune", tags=["maintenance"])
+    async def prune_now():
+        """Apply the retention window immediately and report what was removed.
+
+        A signal is never pruned while it still owes a verdict or a horizon
+        window, however old it is — deleting those would remove exactly the rows
+        about to become evidence.
+        """
+        removed = await get_service().maybe_prune(force=True)
+        return {"removed": removed, "held_back_unsettled": repo.retained_but_unsettled()}
+
     # ------------------------------------------------------------- frontend #
 
     if FRONTEND_DIST.is_dir():

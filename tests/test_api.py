@@ -271,3 +271,40 @@ def test_every_scanned_row_carries_a_verdict_with_a_caveat(client):
         assert v["level"] in {"STRONG", "WATCH", "RISKY", "AVOID"}
         assert v["emoji"] and v["headline"] and v["headline_fr"]
         assert "not a probability" in v["caveat"], "a badge without its caveat reads as a prediction"
+
+
+# --------------------------------------------------------------------------- #
+# Alert delivery and retention
+# --------------------------------------------------------------------------- #
+
+
+def test_health_says_alerts_are_dashboard_only_when_no_webhook_is_set(client):
+    d = client.get("/api/health").json()["alert_delivery"]
+    assert d["configured"] is False
+    assert "CP_ALERT_WEBHOOK_URL" in d["note"]
+    assert d["last"]["attempted"] is False
+
+
+def test_health_never_exposes_the_webhook_url(client):
+    """A webhook URL is a bearer token. /api/health is often the first thing
+    pasted into a bug report."""
+    from cryptopulse.api.service import get_service
+
+    secret = "https://discord.com/api/webhooks/999/TOP-SECRET-TOKEN"
+    get_service().delivery.webhook_url = secret
+    body = client.get("/api/health").text
+    assert "TOP-SECRET-TOKEN" not in body
+    assert "999" not in body.split("alert_delivery")[-1]
+
+
+def test_health_reports_the_retention_policy(client):
+    r = client.get("/api/health").json()["retention"]
+    assert r["retention_days"] > 0
+    assert "still owes a verdict" in r["note"]
+
+
+def test_prune_endpoint_reports_what_it_removed_and_what_it_held_back(client):
+    client.post("/api/scan/run")
+    body = client.post("/api/maintenance/prune").json()
+    assert body["removed"]["signals"] == 0, "nothing is old enough to prune"
+    assert "held_back_unsettled" in body

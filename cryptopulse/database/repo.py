@@ -38,6 +38,7 @@ __all__ = [
     "persist_scan", "persist_alerts", "recent_signals", "score_history", "recent_alerts", "signal_stats",
     "pending_signals", "save_resolutions", "resolved_signals", "outcome_counts",
     "signals_needing_horizons", "save_horizons", "horizon_rows", "horizons_for_signal",
+    "prune", "retained_but_unsettled",
 ]
 
 _PERSIST_STATES = {
@@ -636,3 +637,116 @@ def horizons_for_signal(signal_id: int) -> list[dict]:
         }
         for r in rows
     ]
+
+
+# --------------------------------------------------------------------------- #
+# Retention
+#
+# `CP_DB_RETENTION_DAYS` existed as a setting long before anything applied it,
+# so the journal grew without bound. That matters most where the disk is
+# smallest — a phone running this under Termux.
+#
+# Pruning is deliberately asymmetric, because the three tables are worth very
+# different amounts:
+#
+#   * `score_points` and `scan_runs` are high-volume operational noise. One row
+#     per symbol per scan means tens of thousands a day, and nothing downstream
+#     reads them beyond a short window. They go first and are cut hardest.
+#   * `signals` are the point of the whole exercise — they are what makes the
+#     scanner evaluable at all. They are only ever dropped past the full
+#     retention window, and never while they still owe an answer.
+#
+# The rule that stops this being destructive: **a signal that has not yet been
+# graded, or whose horizon windows are not all recorded, is never deleted.**
+# Pruning it would silently remove exactly the rows that were about to become
+# evidence, and the loss would look like a quiet journal rather than a bug.
+# --------------------------------------------------------------------------- #
+
+
+def prune(retention_days: int, *, operational_days: int | None = None) -> dict:
+    """Drop rows past their retention window. Returns what was removed.
+
+    `operational_days` bounds the cheap high-volume tables and defaults to a
+    quarter of the retention window (at least one day).
+    """
+    from cryptopulse.outcomes.horizons import HORIZONS
+
+    if retention_days <= 0:
+        return {"skipped": "retention disabled (retention_days <= 0)"}
+
+    op_days = operational_days if operational_days is not None else max(1, retention_days // 4)
+    now_ms = int(_utcnow().timestamp() * 1000)
+    signal_cutoff = now_ms - retention_days * 86_400_000
+    op_cutoff = now_ms - op_days * 86_400_000
+    wanted_horizons = len(HORIZONS)
+
+    with get_session() as session:
+        score_points = session.execute(
+            delete(ScorePointRecord).where(ScorePointRecord.timestamp_ms < op_cutoff)
+        ).rowcount
+        scan_runs = session.execute(
+            delete(ScanRunRecord).where(ScanRunRecord.started_at_ms < op_cutoff)
+        ).rowcount
+        alerts = session.execute(
+            delete(AlertRecord).where(AlertRecord.timestamp_ms < signal_cutoff)
+        ).rowcount
+
+        # Only signals that have finished answering: a verdict recorded AND every
+        # horizon window stored. Anything still owed stays, however old it is.
+        settled_horizons = (
+            select(SignalHorizonRecord.signal_id)
+            .group_by(SignalHorizonRecord.signal_id)
+            .having(func.count(SignalHorizonRecord.id) >= wanted_horizons)
+        )
+        doomed = [
+            row[0]
+            for row in session.execute(
+                select(SignalRecord.id).where(
+                    SignalRecord.timestamp_ms < signal_cutoff,
+                    SignalRecord.outcome_label.is_not(None),
+                    SignalRecord.id.in_(settled_horizons),
+                )
+            ).all()
+        ]
+
+        horizons = 0
+        if doomed:
+            horizons = session.execute(
+                delete(SignalHorizonRecord).where(SignalHorizonRecord.signal_id.in_(doomed))
+            ).rowcount
+            session.execute(delete(SignalRecord).where(SignalRecord.id.in_(doomed)))
+
+        session.commit()
+
+    removed = {
+        "signals": len(doomed),
+        "signal_horizons": horizons,
+        "score_points": score_points,
+        "scan_runs": scan_runs,
+        "alerts": alerts,
+        "retention_days": retention_days,
+        "operational_days": op_days,
+    }
+    log.info("retention_pruned", **removed)
+    return removed
+
+
+def retained_but_unsettled() -> int:
+    """Signals held past retention because they still owe a verdict or a window.
+
+    Surfaced so a journal that stops shrinking is understood rather than
+    mistaken for a pruning failure.
+    """
+    from cryptopulse.outcomes.horizons import HORIZONS
+
+    settled = (
+        select(SignalHorizonRecord.signal_id)
+        .group_by(SignalHorizonRecord.signal_id)
+        .having(func.count(SignalHorizonRecord.id) >= len(HORIZONS))
+    )
+    with get_session() as session:
+        return session.execute(
+            select(func.count(SignalRecord.id)).where(
+                (SignalRecord.outcome_label.is_(None)) | (SignalRecord.id.not_in(settled))
+            )
+        ).scalar_one()

@@ -276,6 +276,48 @@ stale feed raises its own permanent banner.
 
 ---
 
+## Alerts on your phone
+
+Alerts that only exist inside a dashboard nobody is watching are not alerts. Set
+one variable and they get delivered:
+
+```bash
+CP_ALERT_WEBHOOK_URL=https://discord.com/api/webhooks/...
+```
+
+The payload shape is inferred from the host — Discord and Slack incoming
+webhooks get readable text, anything else gets a JSON POST carrying the full
+alert. Nothing to configure beyond the URL.
+
+**That URL is a credential.** A Discord or Slack webhook URL contains its own
+bearer token: anyone holding the string can post as you. It never appears in a
+log line, an error message, an exception trace or an API response — only its
+host, redacted. `/api/health` reports whether delivery is configured and how the
+last attempt went, so a webhook that quietly stopped working is visible rather
+than mistaken for a quiet market. A delivery failure costs a notification, never
+a scan.
+
+Notifications carry the same caveats as the dashboard: the score goes out as
+`84/100` and never `84%`, and a DEMO alert is labelled as synthetic on its first
+line, before anything a reader might act on.
+
+---
+
+## Retention
+
+`CP_DB_RETENTION_DAYS` (default 90) is applied automatically every six hours, and
+on demand via `POST /api/maintenance/prune`. Score points and scan runs are cut
+sooner — a quarter of that window — because they are high-volume operational
+noise that nothing reads for long.
+
+**A signal that still owes an answer is never pruned**, however old it is: no
+verdict recorded, or any of its four horizon windows missing, and it stays. Those
+are exactly the rows about to become evidence, and losing them would look like a
+quiet journal rather than a bug. `/api/maintenance/prune` reports how many rows
+were held back for this reason. Set the value to `0` to disable pruning entirely.
+
+---
+
 ## Data sources
 
 | Provider | Type | Status |
@@ -304,7 +346,7 @@ retried — it is our bug, not a transient failure.
 ## Testing
 
 ```bash
-pytest -q                            # 292 tests
+pytest -q                            # 322 tests
 pytest tests/test_no_lookahead.py -v # the ones that matter most
 ```
 

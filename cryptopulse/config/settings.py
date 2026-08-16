@@ -27,8 +27,14 @@ class ProviderSettings(BaseSettings):
     # independent quote source rather than a mirror.
     kraken_base_url: str = "https://api.kraken.com"
 
-    binance_api_key: str | None = None
-    binance_api_secret: str | None = None
+    # There is deliberately no api_key / api_secret field here. The scanner reads
+    # only public market-data endpoints, which require no account, so a key field
+    # would accept a credential that nothing could ever use — pure downside, and
+    # a standing invitation to paste a secret into a file that might get
+    # committed. `extra="ignore"` means an existing CP_PROVIDER_BINANCE_API_KEY
+    # in someone's .env is silently ignored rather than crashing them.
+    # If an authenticated module is ever added, it introduces its own settings
+    # class, so the credential surface arrives with the feature that needs it.
 
     # Conservative default: Binance documents a 6000 request-weight/minute IP
     # budget for spot REST. We target a fraction of it so a bug cannot get the
@@ -42,7 +48,6 @@ class ProviderSettings(BaseSettings):
     circuit_failure_threshold: int = 5
     circuit_reset_seconds: float = 60.0
 
-    fixture_dir: str = "data/fixtures"
 
 
 class ScannerSettings(BaseSettings):

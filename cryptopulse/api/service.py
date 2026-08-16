@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 from datetime import UTC
 
+from cryptopulse.alerts.delivery import AlertDelivery, send_alerts
 from cryptopulse.alerts.engine import Alert, AlertEngine
 from cryptopulse.config.settings import CryptoPulseSettings, get_settings
 from cryptopulse.core.clock import SYSTEM_CLOCK
@@ -27,6 +28,10 @@ from cryptopulse.scoring.engine import ScoreResult
 
 log = get_logger("api.service")
 
+# Retention is bookkeeping. Running it every scan would spend the disk budget on
+# delete churn rather than on the journal it is meant to protect.
+PRUNE_INTERVAL_MS = 6 * 3600 * 1000
+
 __all__ = ["ScannerService", "get_service", "set_service"]
 
 
@@ -36,6 +41,13 @@ class ScannerService:
         self.memory = ScoreMemory()
         self.scanner = CexScanner(self.settings, memory=self.memory, clock=SYSTEM_CLOCK)
         self.alerts = AlertEngine(self.settings.alerts, self.settings.scoring)
+        # Delivery is a no-op until CP_ALERT_WEBHOOK_URL is set. The synthetic
+        # flag travels with it so a DEMO alert can never read as a live one.
+        self.delivery = AlertDelivery(
+            webhook_url=self.settings.alerts.webhook_url,
+            timeout=self.settings.providers.request_timeout_seconds,
+            synthetic=is_synthetic(self.scanner.provider),
+        )
         self.last_report: ScanReport | None = None
         self.last_alerts: list[Alert] = []
         self.scan_count = 0
@@ -55,6 +67,11 @@ class ScannerService:
         self.horizons = HorizonTracker(self.settings, self.scanner.provider, clock=SYSTEM_CLOCK)
         self.last_horizon_run: HorizonReport | None = None
         self._horizon_lock = asyncio.Lock()
+
+        # Retention runs on a slow clock, not every scan: it is bookkeeping, and
+        # deleting on a one-minute loop would spend the disk budget on churn.
+        self.last_prune: dict | None = None
+        self._last_prune_ms = 0
 
     # -- lifecycle ----------------------------------------------------------- #
 
@@ -120,6 +137,11 @@ class ScannerService:
             except Exception as exc:
                 log.error("persist_failed", error=str(exc)[:300])
 
+            # Notification is the last thing in the cycle and cannot fail it: an
+            # unreachable webhook must not cost a scan.
+            if alerts and self.delivery.configured:
+                await send_alerts(self.delivery, alerts)
+
         # Outside the scan lock: resolution is independent of scanning and must
         # not delay the next pass if the provider is slow. Each follow-up job is
         # guarded separately — a failure in one must not skip the other.
@@ -132,6 +154,11 @@ class ScannerService:
             await self.track_horizons()
         except Exception as exc:
             log.error("horizon_tracking_failed", error=str(exc)[:300])
+
+        try:
+            await self.maybe_prune()
+        except Exception as exc:
+            log.error("retention_failed", error=str(exc)[:300])
 
         return report
 
@@ -174,6 +201,17 @@ class ScannerService:
                 log.info("horizons_persisted", written=written)
             self.last_horizon_run = report
             return report
+
+    async def maybe_prune(self, *, force: bool = False) -> dict | None:
+        """Apply the retention window, at most once every six hours."""
+        now_ms = SYSTEM_CLOCK.now_ms()
+        if not force and now_ms - self._last_prune_ms < PRUNE_INTERVAL_MS:
+            return None
+        self._last_prune_ms = now_ms
+        self.ensure_db()
+        removed = await asyncio.to_thread(repo.prune, self.settings.database.retention_days)
+        self.last_prune = {**removed, "at_ms": now_ms}
+        return self.last_prune
 
     # -- reads --------------------------------------------------------------- #
 
@@ -246,6 +284,25 @@ class ScannerService:
                 else None
             ),
             "provider_health": [h.to_dict() for h in (report.provider_health if report else [])],
+            "retention": {
+                "retention_days": self.settings.database.retention_days,
+                "last_run": self.last_prune,
+                "note": (
+                    "A signal is never pruned while it still owes a verdict or a horizon window, "
+                    "however old it is."
+                ),
+            },
+            "alert_delivery": {
+                "configured": self.delivery.configured,
+                # Only ever the redacted host: a webhook URL is a credential.
+                "last": self.delivery.last.to_dict(),
+                "note": (
+                    None
+                    if self.delivery.configured
+                    else "No webhook configured. Alerts appear in the dashboard only. "
+                         "Set CP_ALERT_WEBHOOK_URL to receive them on your phone."
+                ),
+            },
             "outcome_tracker": {
                 "label_config": self.tracker.label.name,
                 "definition": self.tracker.label.describe(),

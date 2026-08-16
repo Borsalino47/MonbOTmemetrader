@@ -51,9 +51,11 @@ that justifies it.
 | Multi-horizon verification (`outcomes/horizons.py`) | **TESTED** | 25 tests; run end to end on 1240 windows |
 | Performance analytics (`outcomes/stats.py`) | **TESTED** | Buckets + component edge + horizon buckets, `n` on every rate |
 | Verdict (`scoring/verdict.py`) | **TESTED** | 15 tests. Compression of existing gates; introduces no new opinion |
+| Alert delivery (`alerts/delivery.py`) | **TESTED** | 14 tests + one real-socket round trip. Discord / Slack / generic JSON |
+| Retention (`repo.prune`) | **TESTED** | 12 tests. Never prunes a signal that still owes an answer |
 | Schema migration (`database/migrate.py`) | **TESTED** | Additive columns only; refuses destructive changes |
 
-**Test suite: 292 tests, all passing.** Run `pytest -q`.
+**Test suite: 322 tests, all passing.** Run `pytest -q`.
 
 ---
 
@@ -153,7 +155,9 @@ cryptopulse/
     base.py              Scanner ABC + ScanReport
     cex.py               Two-pass pipeline (cheap filter, then order books)
     memory.py            Score history ring buffer, score acceleration
-  alerts/engine.py       Levels, gates, dedup, cooldown
+  alerts/
+    engine.py            Levels, gates, dedup, cooldown
+    delivery.py          Webhook delivery. The URL is a credential and is never logged
   outcomes/
     tracker.py           Grades emitted signals against the bars that followed
     horizons.py          What the price did 15m/1h/4h/24h later — path, not verdict
@@ -168,7 +172,7 @@ cryptopulse/
     models.py            signals / score_points / alerts / scan_runs
     migrate.py           Additive ALTER TABLE for columns create_all cannot add
     session.py           SQLAlchemy engine
-    repo.py              The only module that writes
+    repo.py              The only module that writes; `prune` applies retention
   api/
     service.py           Owns the scanner, the loop and shared state
     app.py               FastAPI routes, serves the built dashboard
@@ -180,7 +184,7 @@ scripts/
   simulate_journal.py    Scan across simulated time, grade, compare to baseline
 
 frontend/                Vite + React 18 + TypeScript (strict)
-tests/                   292 tests
+tests/                   322 tests
 pine/                    TradingView companion scripts
 ```
 
@@ -255,7 +259,23 @@ Break these and the product is lying to its user.
     badge with no disclaimer is precisely how a ranking gets read as a
     prediction. A test asserts the caveat on all four levels.
 
-17. **LIVE vs DEMO is decided server-side.** `status()["data_mode"]` is the
+17. **A webhook URL is a credential and never leaves `alerts/delivery.py`.**
+    A Discord or Slack webhook URL contains its own bearer token. Only
+    `redacted()` output — scheme and host — appears in a log, an error, or an
+    API response. `str(exc)` from httpx embeds the request URL, so failures
+    report the exception *type* and deliberately not its message.
+
+18. **Notification failure costs a notification, never a scan.** Delivery is the
+    last step of the cycle and every path returns a `DeliveryReport` instead of
+    raising. A failure is recorded and surfaced on `/api/health` — never silent,
+    because a dead webhook otherwise looks exactly like a quiet market.
+
+19. **Pruning never deletes a signal that still owes an answer.** A row without a
+    verdict, or missing any of its four horizon windows, is kept however old it
+    is. Those are precisely the rows about to become evidence, and their loss
+    would look like a quiet journal rather than a bug.
+
+20. **LIVE vs DEMO is decided server-side.** `status()["data_mode"]` is the
     single source; the dashboard never infers it from a provider name it happens
     to recognise, or a new synthetic source would slip past the banner.
 
@@ -369,6 +389,16 @@ pytest tests/test_no_lookahead.py -v    # the ones that matter most
 * `outcomes/horizons.py:_track_one` — same exact-match rule, and the PENDING
   branch is load-bearing: it is what stops an unfinished 24h window from being
   settled at whatever price is current. Do not "fill in" a pending window.
+* `database/session.py:_is_sqlite_memory` — an in-memory SQLite database lives
+  inside its *connection*, and the default pool gives one connection per thread.
+  Every write goes through `asyncio.to_thread`, so without `StaticPool` the
+  worker opens a second, empty database: the scan reports success and the
+  journal is silently lost. Found by running the service, not by a unit test.
+* `alerts/delivery.py` — the only module that may hold the webhook URL. If you
+  find yourself passing it outward, you are about to leak a credential.
+* `database/repo.py:prune` — the only destructive operation in the system. The
+  `outcome_label IS NOT NULL AND all horizons recorded` filter is what makes it
+  safe; loosening it silently deletes the evidence the journal exists to collect.
 * `scoring/verdict.py` — reads only what the score already computed. If you find
   yourself adding a new threshold here, it belongs in a component instead; the
   verdict is a compression, not a ninth opinion.
