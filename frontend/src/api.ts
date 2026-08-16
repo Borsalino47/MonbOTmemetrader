@@ -1,5 +1,6 @@
 import type {
-  AlertItem, AssetDetail, Health, HorizonResponse, HuntResponse, PerformanceResponse, ScanResponse,
+  AlertItem, AssetDetail, DeepScanResponse, Health, HorizonResponse, HuntResponse,
+  PerformanceResponse, ScanResponse,
 } from './types';
 
 const BASE = '/api';
@@ -36,6 +37,14 @@ export const api = {
   performance: () => get<PerformanceResponse>('/performance'),
   horizons: () => get<HorizonResponse>('/horizons'),
   hunt: (limit = 40) => get<HuntResponse>('/hunt', { limit }),
+  deepScan: async (maxSymbols = 40): Promise<DeepScanResponse> => {
+    const resp = await fetch(`${BASE}/hunt/deep?max_symbols=${maxSymbols}`, { method: 'POST' });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      throw new Error(body.reason ?? `deep scan failed: ${resp.status}`);
+    }
+    return resp.json();
+  },
   trackHorizons: async () => {
     const resp = await fetch(`${BASE}/horizons/track`, { method: 'POST' });
     if (!resp.ok) throw new Error(`horizon tracking failed: ${resp.status}`);

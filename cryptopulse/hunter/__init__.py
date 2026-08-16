@@ -7,6 +7,7 @@ by reading the whole venue from the single ticker call the scan already makes,
 and handing a short list of candidates to the expensive deep scan.
 """
 
+from cryptopulse.hunter.deep import DeepScanner, DeepScanReport, DeepScanResult
 from cryptopulse.hunter.discovery import (
     Candidate,
     PrescanReport,
@@ -15,4 +16,7 @@ from cryptopulse.hunter.discovery import (
     prescan,
 )
 
-__all__ = ["Candidate", "PrescanReport", "SnapshotMemory", "TokenSnapshot", "prescan"]
+__all__ = [
+    "Candidate", "PrescanReport", "SnapshotMemory", "TokenSnapshot", "prescan",
+    "DeepScanner", "DeepScanReport", "DeepScanResult",
+]

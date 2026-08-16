@@ -386,3 +386,26 @@ def test_hunt_serves_the_cycle_report_so_deltas_survive_being_read(client):
         assert again["has_previous_reading"] is True
         assert again["candidates"][0]["volume_excess_vs_yesterday"] == \
             first["candidates"][0]["volume_excess_vs_yesterday"]
+
+
+def test_deep_scan_needs_a_prescan_first(client):
+    resp = client.post("/api/hunt/deep")
+    assert resp.status_code == 503
+    assert resp.json()["reason"] == "NO_PRESCAN_YET"
+
+
+def test_deep_scan_reports_what_it_cost_and_which_engine_scored(client):
+    client.post("/api/scan/run")
+    body = client.post("/api/hunt/deep", params={"max_symbols": 5}).json()
+
+    d = body["deep_scan"]
+    assert d["examined"] > 0
+    assert d["kline_requests"] == d["newly_fetched"] * 4, "the cost must be stated exactly"
+    assert body["engine"]["discovery_engine"] == "DISCOVERY_ENGINE_V1"
+    assert body["engine"]["weights_fingerprint"]
+    assert sum(body["engine"]["weights"].values()) == 100.0
+    assert "not a probability" in body["disclaimer"]
+
+    first = d["results"][0]
+    assert first["discovery"]["discovery_label"].endswith("/100")
+    assert "%" not in first["discovery"]["discovery_label"]

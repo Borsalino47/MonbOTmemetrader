@@ -647,3 +647,26 @@ tbody td.sym { font-weight: 600; text-align: left; }
 .hunt-priority { font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
 .hunt-priority strong { font-size: 17px; color: var(--accent); font-weight: 650; }
 .card-why.risk { color: var(--warn); }
+
+/* Deep scan: two questions, two numbers, never averaged into one. */
+.deep-bar {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin-bottom: 14px; padding: 11px 12px;
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: 7px;
+}
+.deep-cost { font-size: 11px; color: var(--text-faint); line-height: 1.45; flex: 1 1 180px; }
+.reused-flag {
+  font-family: var(--mono); font-size: 8.5px; letter-spacing: .05em;
+  color: var(--text-faint); border: 1px solid var(--border); border-radius: 3px;
+  padding: 1px 5px;
+}
+.dual-score {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+  padding: 9px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+}
+.dual { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.dual-k { font-size: 9px; letter-spacing: .05em; text-transform: uppercase; color: var(--text-faint); }
+.dual-v { font-family: var(--mono); font-size: 20px; font-weight: 650; line-height: 1.1; }
+.dual-v.accent { color: var(--accent); }
+.dual-v small { font-size: 10px; color: var(--text-faint); }
+.dual-q { font-size: 9.5px; color: var(--text-faint); line-height: 1.3; }

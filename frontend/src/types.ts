@@ -361,3 +361,46 @@ export interface HuntResponse {
   data_mode: 'LIVE' | 'DEMO';
   disclaimer: string;
 }
+
+export interface DeepResult {
+  candidate: Candidate;
+  discovery: {
+    symbol: string;
+    /** A 0-100 ranking of behavioural change. Never a probability. */
+    discovery_score: number;
+    discovery_label: string;
+    engine_version: string;
+    weights_fingerprint: string;
+    components: Component[];
+    why: string[];
+    risks: string[];
+    disclaimer: string;
+  };
+  /** Present only when the classic scan also covered this symbol. */
+  opportunity: {
+    final_score: number;
+    opportunity_label: string;
+    state: string;
+    pump_maturity: number;
+    data_confidence: number;
+    liquidity: string;
+    verdict: Verdict;
+  } | null;
+  reused_from_scan: boolean;
+}
+
+export interface DeepScanResponse {
+  deep_scan: {
+    examined: number;
+    reused_from_scan: number;
+    newly_fetched: number;
+    kline_requests: number;
+    errors: Record<string, string>;
+    duration_ms: number;
+    notes: string[];
+    results: DeepResult[];
+  };
+  data_mode: 'LIVE' | 'DEMO';
+  engine: { discovery_engine: string; weights_fingerprint: string; weights: Record<string, number> };
+  disclaimer: string;
+}

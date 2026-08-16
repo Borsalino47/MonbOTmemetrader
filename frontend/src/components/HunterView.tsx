@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
 import { DASH, compact, num, pct, price, signClass } from '../format';
-import type { HuntResponse } from '../types';
+import type { DeepScanResponse, HuntResponse } from '../types';
 
 /** The wide search: which of the whole venue deserves a closer look.
  *
@@ -13,6 +13,8 @@ export function HunterView({ onSelect }: { onSelect: (symbol: string) => void })
   const [data, setData] = useState<HuntResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [deep, setDeep] = useState<DeepScanResponse | null>(null);
+  const [deepBusy, setDeepBusy] = useState(false);
 
   const load = useCallback(async () => {
     setBusy(true);
@@ -27,6 +29,20 @@ export function HunterView({ onSelect }: { onSelect: (symbol: string) => void })
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // The deep scan is the only part of the search that spends requests, so it is
+  // never automatic: it runs when asked, and reports what it cost.
+  const runDeep = useCallback(async () => {
+    setDeepBusy(true);
+    try {
+      setDeep(await api.deepScan(40));
+      setError(null);
+    } catch (e) {
+      setError(String((e as Error).message ?? e));
+    } finally {
+      setDeepBusy(false);
+    }
+  }, []);
 
   if (error === 'NO_SCAN_YET') {
     return (
@@ -66,6 +82,57 @@ export function HunterView({ onSelect }: { onSelect: (symbol: string) => void })
         </div>
       )}
 
+      <div className="deep-bar">
+        <button className="action" onClick={runDeep} disabled={deepBusy}>
+          {deepBusy ? 'Analyse…' : 'Analyser en profondeur'}
+        </button>
+        <span className="deep-cost">
+          {deep
+            ? `${deep.deep_scan.examined} analysés · ${deep.deep_scan.reused_from_scan} réutilisés · `
+              + `${deep.deep_scan.kline_requests} requêtes dépensées`
+            : 'Télécharge les bougies des candidats. C\'est la seule étape payante.'}
+        </span>
+      </div>
+
+      {deep && (
+        <div className="cards" style={{ marginBottom: 18 }}>
+          {deep.deep_scan.results.map((r, i) => (
+            <button key={r.discovery.symbol} className="card" onClick={() => onSelect(r.discovery.symbol)}>
+              <div className="card-head">
+                <span className="card-rank">{i + 1}</span>
+                <span className="card-sym">{r.discovery.symbol}</span>
+                {r.reused_from_scan && <span className="reused-flag">déjà scanné</span>}
+              </div>
+
+              {/* Two questions, two numbers, deliberately never averaged. */}
+              <div className="dual-score">
+                <span className="dual">
+                  <span className="dual-k">Découverte</span>
+                  <span className="dual-v accent">{num(r.discovery.discovery_score, 0)}<small>/100</small></span>
+                  <span className="dual-q">le comportement a-t-il changé ?</span>
+                </span>
+                <span className="dual">
+                  <span className="dual-k">Opportunité</span>
+                  <span className="dual-v">
+                    {r.opportunity ? `${num(r.opportunity.final_score, 0)}` : DASH}
+                    {r.opportunity && <small>/100</small>}
+                  </span>
+                  <span className="dual-q">le setup est-il bon ?</span>
+                </span>
+              </div>
+
+              {r.discovery.why.slice(0, 2).map((w, k) => (
+                <div key={k} className="card-why">+ {w}</div>
+              ))}
+              {r.discovery.risks.slice(0, 1).map((w, k) => (
+                <div key={k} className="card-why risk">! {w}</div>
+              ))}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="section-title" style={{ marginTop: 4 }}>Candidats du pré-scan</div>
       <div className="cards">
         {p.candidates.map((c, i) => (
           <button key={c.symbol} className="card" onClick={() => onSelect(c.symbol)}>
@@ -115,7 +182,7 @@ export function HunterView({ onSelect }: { onSelect: (symbol: string) => void })
         <strong>La priorité n'est pas un score.</strong> Elle répond à « ce token
         mérite-t-il une analyse coûteuse ? », et à rien d'autre. Le jugement appartient
         à l'analyse approfondie, qui voit l'historique des prix que cette étape ne
-        télécharge délibérément pas. Le score de découverte versionné arrive en phase 05.
+        télécharge délibérément pas.
         <div style={{ marginTop: 6 }}>
           « Écart / hier » compare l'activité de maintenant au même moment hier — c'est
           ce que mesure la différence entre deux compteurs glissants sur 24 h. Ce n'est

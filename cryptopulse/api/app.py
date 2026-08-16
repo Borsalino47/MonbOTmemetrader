@@ -20,6 +20,8 @@ from cryptopulse.config.settings import get_settings
 from cryptopulse.core.clock import SYSTEM_CLOCK
 from cryptopulse.core.logging import configure_logging, get_logger
 from cryptopulse.database import repo
+from cryptopulse.scoring.discovery import DISCOVERY_ENGINE_VERSION
+from cryptopulse.scoring.discovery import WEIGHTS as DISCOVERY_WEIGHTS
 
 log = get_logger("api")
 
@@ -434,6 +436,46 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
             "disclaimer": (
                 "Priority ranks which tokens deserve an expensive look. It is not a score, "
                 "not a probability, and says nothing about whether a token is worth buying."
+            ),
+        }
+
+    @app.post("/api/hunt/deep", tags=["hunter"])
+    async def deep_scan(max_symbols: int = Query(40, ge=1, le=120)):
+        """Analyse the pre-scan's candidates properly, and score their discovery.
+
+        This is the only part of the hunter that spends requests: four klines per
+        symbol not already covered by the classic scan. The report says exactly
+        what it cost, because a search that quietly spent hundreds of requests
+        would be discovered as a rate-limit ban rather than as a number.
+
+        Returns two scores per token, deliberately side by side and never blended:
+        TOKEN_DISCOVERY_SCORE ("has its behaviour just changed?") and the ordinary
+        Opportunity Score ("is this a good setup?").
+        """
+        service = get_service()
+        if not service.last_prescan:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "reason": "NO_PRESCAN_YET",
+                    "message": "The deep scan analyses the pre-scan's candidates. "
+                               "Run a scan first so the wide search has something to rank.",
+                },
+            )
+        report = await service.deep_scan(max_symbols=max_symbols)
+        return {
+            "deep_scan": report.to_dict(),
+            "data_mode": "DEMO" if service.status()["synthetic_data"] else "LIVE",
+            "engine": {
+                "version": service.deep.engine.__class__.__name__,
+                "discovery_engine": DISCOVERY_ENGINE_VERSION,
+                "weights_fingerprint": service.deep.engine.weights_fingerprint,
+                "weights": DISCOVERY_WEIGHTS,
+            },
+            "disclaimer": (
+                "Discovery ranks how much a token's behaviour has changed. It is a 0-100 "
+                "ranking, not a probability, and these weights have never been validated "
+                "against outcomes."
             ),
         }
 

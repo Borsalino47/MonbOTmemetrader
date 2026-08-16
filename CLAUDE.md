@@ -57,9 +57,11 @@ that justifies it.
 | Candle cache (`providers/cache.py`) | **TESTED** | 20 tests. 88.8 % of kline requests removed, output proven identical |
 | Token Hunter pre-scan (`hunter/discovery.py`) | **TESTED** | 21 tests. Whole venue ranked by anomaly, 0 extra requests |
 | `TokenDiscoveryProvider` | **IMPLEMENTED** | Binance / Kraken / fixture. The seat Robinhood Chain plugs into |
+| Deep scan (`hunter/deep.py`) | **TESTED** | Reuses the scan's own results; states its request cost |
+| `TOKEN_DISCOVERY_SCORE` (`scoring/discovery.py`) | **TESTED** | 18 tests. DISCOVERY_ENGINE_V1, weights are a hypothesis |
 | Schema migration (`database/migrate.py`) | **TESTED** | Additive columns only; refuses destructive changes |
 
-**Test suite: 379 tests, all passing.** Run `pytest -q`.
+**Test suite: 399 tests, all passing.** Run `pytest -q`.
 
 ---
 
@@ -151,6 +153,7 @@ cryptopulse/
     confidence.py        Data confidence, with a hard staleness cap
     states.py            IGNORE/OBSERVE/WATCH/ARMED/BREAKOUT/RETEST/...
     verdict.py           🟢/🟡/🟠/🔴 in four words, computed last, caveat attached
+    discovery.py         TOKEN_DISCOVERY_SCORE — has this behaviour just changed?
     engine.py            SCORE_ENGINE_V1 orchestrator + weights fingerprint
   risk/
     liquidity.py         Liquidity gate, DANGEROUS => veto
@@ -165,6 +168,7 @@ cryptopulse/
     delivery.py          Webhook delivery. The URL is a credential and is never logged
   hunter/
     discovery.py         Wide pre-scan. Reads the scan's own ticker call, costs nothing
+    deep.py              The expensive look, only on selected candidates
   outcomes/
     tracker.py           Grades emitted signals against the bars that followed
     horizons.py          What the price did 15m/1h/4h/24h later — path, not verdict
@@ -194,7 +198,7 @@ frontend/                Vite + React 18 + TypeScript (strict), mobile-first
   HomeView               The five-second view: can I trust it, and what moved
   AssetCards             The scanner as cards; the table is wide-screen only
   bottom-nav             Thumb-reachable navigation, phones only
-tests/                   379 tests
+tests/                   399 tests
 pine/                    TradingView companion scripts
 ```
 
@@ -331,7 +335,20 @@ Break these and the product is lying to its user.
     fingerprint, because it is not an opinion about the asset. `TOKEN_DISCOVERY_SCORE`
     (phase 05) will be, and will read the price history this stage never fetches.
 
-27. **LIVE vs DEMO is decided server-side.** `status()["data_mode"]` is the
+27. **Discovery and opportunity are two engines, never one number.** They answer
+    different questions — "has this token's behaviour just changed?" versus "is
+    this a good setup?" — over different horizons, and a large-cap in a clean
+    retest legitimately scores high on one and near zero on the other. Blending
+    them would make it impossible to learn later which of the two carried any
+    signal. Each has its own version and weights fingerprint, and the UI shows
+    both with their question underneath.
+
+28. **The deep scan never pays twice.** A candidate the classic scan already
+    analysed this cycle is reused, and the report states `kline_requests`
+    exactly. A search that quietly spent hundreds of requests would be
+    discovered as a rate-limit ban rather than as a number.
+
+29. **LIVE vs DEMO is decided server-side.** `status()["data_mode"]` is the
     single source; the dashboard never infers it from a provider name it happens
     to recognise, or a new synthetic source would slip past the banner.
 

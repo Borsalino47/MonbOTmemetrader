@@ -18,6 +18,7 @@ from cryptopulse.core.clock import SYSTEM_CLOCK
 from cryptopulse.core.logging import get_logger
 from cryptopulse.database import repo
 from cryptopulse.database.session import init_engine
+from cryptopulse.hunter.deep import DeepScanner, DeepScanReport
 from cryptopulse.hunter.discovery import PrescanReport, SnapshotMemory, prescan
 from cryptopulse.outcomes.horizons import HORIZONS, HorizonReport, HorizonTracker
 from cryptopulse.outcomes.tracker import OutcomeTracker, ResolutionReport
@@ -79,6 +80,13 @@ class ScannerService:
         # reading is what turns two snapshots into an acceleration signal.
         self.hunter_memory = SnapshotMemory(clock=SYSTEM_CLOCK)
         self.last_prescan: PrescanReport | None = None
+
+        # The deep scan is on demand, never on the loop: it is the only part of
+        # the hunter that spends requests, and spending them every cycle for
+        # tokens nobody asked about is exactly what the pre-scan exists to avoid.
+        self.deep = DeepScanner(self.settings, self.scanner, clock=SYSTEM_CLOCK)
+        self.last_deep_scan: DeepScanReport | None = None
+        self._deep_lock = asyncio.Lock()
 
     # -- lifecycle ----------------------------------------------------------- #
 
@@ -240,6 +248,19 @@ class ScannerService:
         if record:
             self.last_prescan = report
         return report
+
+    async def deep_scan(self, *, max_symbols: int = 40) -> DeepScanReport:
+        """Analyse the pre-scan's candidates properly. Costs kline requests.
+
+        Serialised: two concurrent deep scans would double the request bill for
+        an identical answer.
+        """
+        async with self._deep_lock:
+            report = self.last_prescan
+            candidates = report.candidates if report else []
+            result = await self.deep.run(candidates, max_symbols=max_symbols)
+            self.last_deep_scan = result
+            return result
 
     async def maybe_prune(self, *, force: bool = False) -> dict | None:
         """Apply the retention window, at most once every six hours."""
