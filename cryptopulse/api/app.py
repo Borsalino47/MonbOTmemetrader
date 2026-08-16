@@ -519,6 +519,45 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
 
     if FRONTEND_DIST.is_dir():
         app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
+        if (FRONTEND_DIST / "icons").is_dir():
+            app.mount("/icons", StaticFiles(directory=FRONTEND_DIST / "icons"), name="icons")
+
+        # --- PWA -------------------------------------------------------- #
+        # These must be served before the SPA catch-all and with their real
+        # content types. A service worker delivered as text/html is silently
+        # rejected by the browser, and the app simply never becomes installable
+        # with no error anywhere to explain why.
+
+        @app.get("/manifest.webmanifest", include_in_schema=False)
+        async def manifest():
+            path = FRONTEND_DIST / "manifest.webmanifest"
+            if not path.is_file():
+                raise HTTPException(404, "manifest not built — run npm run build")
+            return FileResponse(path, media_type="application/manifest+json")
+
+        @app.get("/sw.js", include_in_schema=False)
+        async def service_worker():
+            path = FRONTEND_DIST / "sw.js"
+            if not path.is_file():
+                raise HTTPException(404, "service worker not built — run npm run build")
+            return FileResponse(
+                path,
+                media_type="application/javascript",
+                headers={
+                    # Lets a worker served from /sw.js control the whole origin.
+                    "Service-Worker-Allowed": "/",
+                    # The worker is the one file that must never be cached by the
+                    # browser: a stale copy would pin an old shell forever.
+                    "Cache-Control": "no-cache",
+                },
+            )
+
+        @app.get("/robots.txt", include_in_schema=False)
+        async def robots():
+            path = FRONTEND_DIST / "robots.txt"
+            if not path.is_file():
+                raise HTTPException(404, "not built")
+            return FileResponse(path, media_type="text/plain")
 
         @app.get("/", include_in_schema=False)
         async def index():

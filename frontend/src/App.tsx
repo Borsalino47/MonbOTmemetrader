@@ -6,6 +6,7 @@ import { AssetCards } from './components/AssetCards';
 import { HomeView } from './components/HomeView';
 import { HorizonsView } from './components/HorizonsView';
 import { HunterView } from './components/HunterView';
+import { InstallPrompt } from './components/InstallPrompt';
 import { PerformanceView } from './components/PerformanceView';
 import { ScannerTable } from './components/ScannerTable';
 import { TopOpportunities } from './components/TopOpportunities';
@@ -285,6 +286,8 @@ export default function App() {
           <span>La bougie la plus récente a {age(dataAge)}. Ces valeurs ne sont pas en direct.</span>
         </div>
       )}
+
+      <InstallPrompt />
 
       <main className="main">
         {error && <div className="error-box">Error: {error}</div>}

@@ -670,3 +670,31 @@ tbody td.sym { font-weight: 600; text-align: left; }
 .dual-v.accent { color: var(--accent); }
 .dual-v small { font-size: 10px; color: var(--text-faint); }
 .dual-q { font-size: 9.5px; color: var(--text-faint); line-height: 1.3; }
+
+/* ── Installation (PWA) ──────────────────────────────────────────────────
+   Shown only when the browser has confirmed the app is installable, and never
+   again after a dismissal. A prompt that returns every visit is how a useful
+   offer becomes something people learn to ignore. */
+
+.install-bar {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 11px 14px;
+  background: rgba(0, 212, 255, 0.08);
+  border-bottom: 1px solid rgba(0, 212, 255, 0.28);
+}
+.install-text { display: flex; flex-direction: column; gap: 2px; flex: 1 1 190px; min-width: 0; }
+.install-text strong { font-size: 13px; color: var(--accent); font-weight: 650; }
+.install-text span { font-size: 11px; color: var(--text-dim); line-height: 1.4; }
+.install-actions { display: flex; align-items: center; gap: 6px; }
+.install-dismiss {
+  background: none; border: none; color: var(--text-faint);
+  font-size: 20px; line-height: 1; cursor: pointer; padding: 2px 8px;
+}
+.install-dismiss:hover { color: var(--text); }
+
+/* Standalone: no browser chrome above us, so the sticky header needs to clear
+   the status bar itself. */
+@media (display-mode: standalone) {
+  .topbar { padding-top: calc(8px + env(safe-area-inset-top, 0px)); }
+  .banner { padding-left: max(14px, env(safe-area-inset-left, 0px)); }
+}

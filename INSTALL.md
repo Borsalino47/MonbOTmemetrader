@@ -81,13 +81,35 @@ cd MonbOTmemetrader && ./start.sh
 L'installation prend quelques minutes la première fois (le téléphone compile
 `numpy`). Les fois suivantes, le démarrage est immédiat.
 
-### Voir le tableau de bord sur le téléphone
+### Installer l'application sur l'écran d'accueil
+
+Une seule commande fait tout — dépendances, icônes, interface, démarrage :
 
 ```bash
-./start.sh serve
+./android-start.sh
 ```
 
-Puis ouvrez votre navigateur sur **http://localhost:8000**.
+Puis, dans **Chrome** sur le téléphone :
+
+1. ouvrez **http://127.0.0.1:8000**
+2. menu **⋮** → **« Installer l'application »**
+
+Une icône **CRYPTO PULSE** apparaît sur votre écran d'accueil. En la touchant,
+l'application s'ouvre en plein écran, sans barre d'adresse — comme une vraie
+application Android.
+
+> **Pourquoi 127.0.0.1 et pas l'adresse Wi-Fi du téléphone ?** L'installation
+> exige un « contexte sécurisé ». La norme considère `127.0.0.1` comme sécurisé
+> au même titre que HTTPS, ce qui permet d'installer sans certificat. Depuis un
+> autre appareil du réseau (192.168.x.x), la page s'affiche mais ne peut pas
+> s'installer — l'application vous le dira elle-même.
+
+Pour essayer sans vrai flux de données : `./android-start.sh demo`.
+
+L'application garde en mémoire son interface pour s'ouvrir instantanément, mais
+**jamais les prix** : ceux-ci sont toujours redemandés au serveur. Un prix affiché
+est soit à jour, soit signalé comme ancien — jamais un vieux chiffre présenté
+comme neuf.
 
 ---
 

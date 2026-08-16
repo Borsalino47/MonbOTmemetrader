@@ -1,5 +1,6 @@
 import { age, num, pct, scoreColor, signClass } from '../format';
 import type { AlertItem, Health, ScoreRow } from '../types';
+import { InstallStatus } from './InstallPrompt';
 import { VerdictBadge } from './VerdictBadge';
 
 interface Props {
@@ -152,6 +153,7 @@ export function HomeView({
           Les deux dernières attendent leur moteur. Elles sont affichées grisées plutôt
           que masquées : rien n'est oublié, et rien n'est simulé en attendant.
         </p>
+        <InstallStatus />
       </section>
     </div>
   );
