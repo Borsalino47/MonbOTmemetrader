@@ -166,6 +166,46 @@ class AlertSettings(BaseSettings):
     android_min_level: str = "HIGH"
 
 
+class TradeSettings(BaseSettings):
+    """Thresholds for the decision engine. Every one is a stated hypothesis.
+
+    None of these were fitted. They are a starting point chosen from trading
+    reasoning, and they are settings rather than constants precisely because the
+    journal is meant to replace them with measured values later. Changing any of
+    them changes the engine's weights fingerprint, so past decisions are never
+    reinterpreted under new rules.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="CP_TRADE_", env_file=".env", extra="ignore")
+
+    # --- what it takes to say ACHETER --------------------------------------- #
+    buy_min_opportunity: float = 75.0
+    buy_min_explosion: float = 80.0
+    buy_min_discovery: float = 70.0
+    buy_min_confidence: float = 85.0
+    buy_min_safety: float = 80.0
+    buy_max_pump_maturity: float = 40.0
+    buy_min_liquidity: str = "ACCEPTABLE"
+    # A setup that has not triggered is a WATCH, never a BUY.
+    buy_requires_triggered_setup: bool = True
+
+    # --- what it takes to say SURVEILLER rather than NE PAS ACHETER ---------- #
+    watch_min_opportunity: float = 55.0
+    watch_min_confidence: float = 50.0
+
+    # --- anti-noise ---------------------------------------------------------- #
+    # Consecutive cycles a decision must repeat before it takes effect. Applies
+    # to the decisions that cost something to act on; WATCH and HOLD are free.
+    confirmations_required: int = 2
+    # After a decision changes, how long before it may change again. Bypassed by
+    # a broken invalidation or a hard safety veto — see trading/hysteresis.py.
+    min_seconds_between_changes: int = 300
+
+    # --- position watcher ----------------------------------------------------- #
+    position_watch_interval_seconds: int = 15
+    max_tracked_positions: int = 20
+
+
 class DatabaseSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="CP_DB_", env_file=".env", extra="ignore")
 
@@ -196,6 +236,7 @@ class CryptoPulseSettings(BaseSettings):
     risk: RiskSettings = Field(default_factory=RiskSettings)
     alerts: AlertSettings = Field(default_factory=AlertSettings)
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
+    trade: TradeSettings = Field(default_factory=TradeSettings)
 
     @field_validator("cors_origins", mode="before")
     @classmethod
