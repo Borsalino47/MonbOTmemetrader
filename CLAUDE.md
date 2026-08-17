@@ -80,8 +80,10 @@ that justifies it.
 | Robinhood token discovery (`hunter/robinhood_discovery.py`) | **TESTED** | 25 tests. Age buckets, address identity, NULL never 0. Run end to end against a stubbed indexer only |
 | **GoPlus client (`providers/goplus.py`)** | **IMPLEMENTED — NOT LIVE VERIFIED** | Contract read from GoPlus's own Swagger SDK (`goplus` 0.2.5). Host refused by this sandbox |
 | `ROBINHOOD_SAFETY_V1` + RUG_RISK (`risk/robinhood_safety.py`) | **TESTED** | 37 tests. Tri-state flags, veto zeroes the score, unknown never safe. Weights are a hypothesis |
+| **DexScreener client (`providers/dexscreener.py`)** | **IMPLEMENTED — NOT LIVE VERIFIED** | Contract cross-checked vs `dexscreener` 1.3. Host refused by this sandbox |
+| Source cross-check (`hunter/robinhood_detail.py`) | **TESTED** | 16 tests. Two sources side by side, disagreement surfaced and never averaged |
 
-**Test suite: 738 tests, all passing.** Run `pytest -q`.
+**Test suite: 754 tests, all passing.** Run `pytest -q`.
 
 ---
 
@@ -242,7 +244,7 @@ frontend/                Vite + React 18 + TypeScript (strict), mobile-first
   HomeView               The five-second view: can I trust it, and what moved
   AssetCards             The scanner as cards; the table is wide-screen only
   bottom-nav             Thumb-reachable navigation, phones only
-tests/                   738 tests
+tests/                   754 tests
 pine/                    TradingView companion scripts
 ```
 
@@ -687,7 +689,26 @@ Break these and the product is lying to its user.
     token looked dangerous and a captured one looked clean. `_percent()` is the
     only place the conversion happens.
 
-75. **One repository, mounted at the same path on both sides.** The bind is
+75. **Two sources are reported side by side and never merged.** GeckoTerminal
+    and DexScreener index the same pools from the same chain, so a price they
+    disagree about is a price nobody should act on — the same reasoning that
+    makes `doctor` cross-check the ticker against the klines. An average of two
+    prices 40 % apart describes neither and destroys the only signal that
+    mattered. `FieldComparison` keeps both values and has no merged field, so
+    no caller can quietly pick one.
+
+76. **Agreement is a statement about our data, not about the token.** Two
+    indexers agreeing does not make a token safe, and a token only one of them
+    lists is not suspicious — it is thinly indexed, which is ordinary twenty
+    minutes after minting. AGREE / DISAGREE / SINGLE_SOURCE / NO_DATA are four
+    different sentences and render differently.
+
+77. **Drift is symmetric between the two sources.** Which one is the reference
+    is not a question this project is entitled to answer, so the difference is
+    divided by the larger magnitude rather than by either source's value —
+    otherwise the reported drift would depend on an arbitrary choice.
+
+78. **One repository, mounted at the same path on both sides.** The bind is
     `--bind "$ROOT:$ROOT"`, so `frontend/dist`, `.env` and
     `data/cryptopulse.db` are the same files from Termux and from Ubuntu — no
     copy step, and no way for two checkouts to drift while the user cannot tell

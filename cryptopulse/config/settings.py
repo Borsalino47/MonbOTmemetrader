@@ -113,6 +113,20 @@ class RobinhoodSettings(BaseSettings):
     # cannot be entered or exited, whatever its numbers look like.
     discovery_min_liquidity_usd: float = 1_000.0
 
+    # --- cross-check (DexScreener) ------------------------------------------- #
+    # A second, independent index of the same pools. Its purpose is not more
+    # data but disagreement: two sources differing about a price is the one
+    # thing neither can tell you on its own.
+    dexscreener_base_url: str = "https://api.dexscreener.com"
+    dexscreener_chain: str = "robinhood"
+    # Published limit on this endpoint is 300/min; we use a fraction of it.
+    dexscreener_calls_per_minute: int = 120
+    # How far the two sources may differ before the figure is flagged. Generous:
+    # they sample at slightly different moments and a real mapping error is off
+    # by orders of magnitude, not by a few percent.
+    crosscheck_max_price_drift_pct: float = 5.0
+    crosscheck_max_liquidity_drift_pct: float = 25.0
+
     # --- safety (GoPlus) ----------------------------------------------------- #
     goplus_base_url: str = "https://api.gopluslabs.io"
     goplus_calls_per_minute: int = 24

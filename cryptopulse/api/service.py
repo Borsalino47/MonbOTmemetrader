@@ -38,6 +38,7 @@ from cryptopulse.hunter.robinhood_discovery import (
 )
 from cryptopulse.outcomes.horizons import HORIZONS, HorizonReport, HorizonTracker
 from cryptopulse.outcomes.tracker import OutcomeTracker, ResolutionReport
+from cryptopulse.providers.dexscreener import DexScreenerClient
 from cryptopulse.providers.geckoterminal import GeckoTerminalClient
 from cryptopulse.providers.goplus import GoPlusClient
 from cryptopulse.providers.registry import is_synthetic
@@ -186,6 +187,7 @@ class ScannerService:
         # separately. A live chain with a down indexer is a real state.
         self._gecko: GeckoTerminalClient | None = None
         self._goplus: GoPlusClient | None = None
+        self._dexscreener: DexScreenerClient | None = None
         self.robinhood_discovery: RobinhoodDiscoveryReport | None = None
         self._discovery_task: asyncio.Task | None = None
         self._discovery_lock = asyncio.Lock()
@@ -336,6 +338,32 @@ class ScannerService:
             self._goplus = GoPlusClient(self.settings.robinhood, clock=SYSTEM_CLOCK)
         return self._goplus
 
+    def _get_dexscreener(self) -> DexScreenerClient:
+        if self._dexscreener is None:
+            self._dexscreener = DexScreenerClient(self.settings.robinhood, clock=SYSTEM_CLOCK)
+        return self._dexscreener
+
+    async def robinhood_token_detail(self, address: str):
+        """The full view of one token, cross-checked against a second source.
+
+        On demand only: the cross-check costs a request per token and matters
+        at the moment of a decision, not on every cycle for tokens nobody has
+        opened.
+        """
+        from cryptopulse.hunter.robinhood_detail import build_detail
+
+        report = self.robinhood_discovery
+        candidate = None
+        if report is not None:
+            candidate = next(
+                (c for c in report.candidates if c.address.lower() == address.lower()), None
+            )
+        if candidate is None:
+            return None
+        return await build_detail(
+            candidate, self._get_dexscreener(), self.settings.robinhood, clock=SYSTEM_CLOCK
+        )
+
     async def discover_robinhood_now(self) -> RobinhoodDiscoveryReport:
         """Search for new tokens. Never raises; a failure is a reported state.
 
@@ -425,6 +453,9 @@ class ScannerService:
         if self._goplus is not None:
             await self._goplus.close()
             self._goplus = None
+        if self._dexscreener is not None:
+            await self._dexscreener.close()
+            self._dexscreener = None
         log.info("service_stopped")
 
     async def _loop(self) -> None:

@@ -379,6 +379,24 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
         payload["state"] = "OK" if report.candidates else ("FAILED" if report.errors else "EMPTY")
         return payload
 
+    @app.get("/api/robinhood/token/{address}", tags=["providers"])
+    async def robinhood_token(address: str):
+        """One token, seen by both indexers, with their disagreements named.
+
+        404 rather than an empty shell when the token is not in the current
+        search: inventing a blank token page would be a fabrication.
+        """
+        detail = await get_service().robinhood_token_detail(address)
+        if detail is None:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "Ce contrat n'est pas dans la dernière recherche. "
+                    "Relancez une recherche, ou il est hors de la fenêtre d'âge."
+                ),
+            )
+        return detail.to_dict()
+
     @app.post("/api/robinhood/tokens/search", tags=["providers"])
     async def robinhood_search():
         """Run a search now and wait for it (the explicit refresh button)."""

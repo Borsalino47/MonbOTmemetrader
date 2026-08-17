@@ -882,3 +882,36 @@ export interface SafetyReport {
   engine_version: string;
   weights_fingerprint: string;
 }
+
+export type Agreement = 'AGREE' | 'DISAGREE' | 'SINGLE_SOURCE' | 'NO_DATA';
+
+export interface FieldComparison {
+  field: string;
+  label_fr: string;
+  /** Both values are always kept. There is deliberately no merged value: an
+   *  average of two prices 40 % apart describes neither. */
+  geckoterminal: number | null;
+  dexscreener: number | null;
+  agreement: Agreement;
+  drift_pct: number | null;
+}
+
+export interface CrossCheck {
+  agreement: Agreement;
+  emoji: string;
+  label_fr: string;
+  comparisons: FieldComparison[];
+  disagreements: FieldComparison[];
+  caveats: string[];
+  sources_seen: string[];
+}
+
+export interface TokenDetail extends RobinhoodToken {
+  pools: {
+    geckoterminal: Record<string, unknown>[];
+    dexscreener: Record<string, unknown>[];
+  };
+  crosscheck: CrossCheck | null;
+  errors: string[];
+  requests: number;
+}

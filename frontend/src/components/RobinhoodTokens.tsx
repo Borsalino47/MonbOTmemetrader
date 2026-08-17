@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
+import { TokenCrossCheck } from './TokenCrossCheck';
 import type { RobinhoodToken, RobinhoodTokensResponse, SafetyReport } from '../types';
 
 /** New tokens on Robinhood Chain, newest first, filterable by age.
@@ -120,6 +121,7 @@ export function RobinhoodTokens() {
 
 function TokenRow({ t }: { t: RobinhoodToken }) {
   const [open, setOpen] = useState(false);
+  const [crossOpen, setCrossOpen] = useState(false);
   const s = t.safety;
   return (
     <div className={`rh-token ${t.hard_veto ? 'vetoed' : ''}`}>
@@ -174,6 +176,15 @@ function TokenRow({ t }: { t: RobinhoodToken }) {
         <Cell k="Achats/ventes" v={fmtNum(t.buy_sell_ratio_h1, 2)} />
         <Cell k="Accélération" v={fmtNum(t.volume_acceleration, 2, '×')} />
       </div>
+
+      {/* The cross-check costs a request, so it is opened deliberately rather
+          than fetched for every row on every refresh. */}
+      <button className="rh-cross-toggle" onClick={() => setCrossOpen(!crossOpen)}>
+        {crossOpen ? 'Masquer le recoupement' : 'Recouper avec une 2ᵉ source'}
+      </button>
+      {crossOpen && (
+        <TokenCrossCheck address={t.contract_address} onClose={() => setCrossOpen(false)} />
+      )}
     </div>
   );
 }
