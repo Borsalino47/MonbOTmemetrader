@@ -20,6 +20,8 @@ from cryptopulse.database.models import (
     AlertRecord,
     PositionEventRecord,
     PositionRecord,
+    RobinhoodHorizonRecord,
+    RobinhoodSignalRecord,
     ScanRunRecord,
     ScorePointRecord,
     SignalHorizonRecord,
@@ -1522,4 +1524,218 @@ def _position_event_to_dict(r: PositionEventRecord) -> dict:
         "explosion_score": r.explosion_score,
         "reasons": r.reasons,
         "risks": r.risks,
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Robinhood journal — decisions, and what the price did afterwards
+# --------------------------------------------------------------------------- #
+#
+# A separate journal from `signals` because the two universes never share a row
+# (spec §4). Pooling them would make it impossible to answer "does the
+# Robinhood engine work?" separately from "does the Binance engine work?", and
+# that separation is the only reason either question is answerable at all.
+
+
+def save_robinhood_signals(rows: list[dict]) -> int:
+    """Append decisions. Duplicates are skipped, never updated.
+
+    A decision is a historical fact about a moment. Rewriting one under a later
+    engine version would silently re-explain a past decision in words nobody
+    ever read (invariant 13, and the same rule `save_signals` follows).
+    """
+    if not rows:
+        return 0
+    written = 0
+    with get_session() as session:
+        for row in rows:
+            address = str(row["contract_address"]).lower()
+            exists = session.execute(
+                select(RobinhoodSignalRecord.id).where(
+                    RobinhoodSignalRecord.contract_address == address,
+                    RobinhoodSignalRecord.timestamp_ms == int(row["timestamp_ms"]),
+                    RobinhoodSignalRecord.engine_version == row["engine_version"],
+                )
+            ).first()
+            if exists:
+                continue
+            session.add(
+                RobinhoodSignalRecord(
+                    contract_address=address,
+                    symbol=_clip(row.get("symbol"), 40),
+                    chain_id=int(row.get("chain_id") or 4663),
+                    pool_address=_clip(row.get("pool_address"), 80),
+                    timestamp_ms=int(row["timestamp_ms"]),
+                    price_usd=row.get("price_usd"),
+                    liquidity_usd=row.get("liquidity_usd"),
+                    pool_age_seconds=row.get("pool_age_seconds"),
+                    early_score=row.get("early_score"),
+                    explosion_score=row.get("explosion_score"),
+                    maturity_score=row.get("maturity_score"),
+                    confidence_score=row.get("confidence_score"),
+                    safety_score=row.get("safety_score"),
+                    rug_risk=_clip(row.get("rug_risk"), 16),
+                    hard_veto=bool(row.get("hard_veto", False)),
+                    action=str(row["action"]).upper(),
+                    strength=_clip(row.get("strength"), 16),
+                    reasons=(row.get("reasons") or [])[:8],
+                    risks=(row.get("risks") or [])[:8],
+                    blocking=(row.get("blocking") or [])[:8],
+                    engine_version=row["engine_version"],
+                    weights_fingerprint=row.get("weights_fingerprint", ""),
+                    data_source=row.get("data_source") or "GECKOTERMINAL",
+                )
+            )
+            written += 1
+        session.commit()
+    return written
+
+
+def robinhood_signals_pending_horizons(ready_before_ms: int, limit: int = 300) -> list[dict]:
+    """Decisions old enough that at least one window may have closed.
+
+    Deliberately returns rows that already have *some* horizons: the 15m window
+    closes long before the 24h one, and a row is only finished when all four
+    exist.
+    """
+    with get_session() as session:
+        rows = (
+            session.execute(
+                select(RobinhoodSignalRecord)
+                .where(RobinhoodSignalRecord.timestamp_ms <= ready_before_ms)
+                .order_by(RobinhoodSignalRecord.timestamp_ms)
+                .limit(limit)
+            )
+            .scalars()
+            .all()
+        )
+        out = []
+        for r in rows:
+            done = {
+                h[0]
+                for h in session.execute(
+                    select(RobinhoodHorizonRecord.horizon).where(
+                        RobinhoodHorizonRecord.signal_id == r.id
+                    )
+                ).all()
+            }
+            out.append(
+                {
+                    "id": r.id,
+                    "contract_address": r.contract_address,
+                    "symbol": r.symbol,
+                    "pool_address": r.pool_address,
+                    "timestamp_ms": r.timestamp_ms,
+                    "price_usd": r.price_usd,
+                    "action": r.action,
+                    "recorded_horizons": sorted(done),
+                }
+            )
+        return out
+
+
+def save_robinhood_horizons(rows: list[dict]) -> int:
+    """Write elapsed windows. A window already recorded is never re-graded.
+
+    Invariant 10, applied here: re-grading under a different rule would
+    silently rewrite history, and the whole point of this table is that it
+    cannot be argued with afterwards.
+    """
+    if not rows:
+        return 0
+    written = 0
+    with get_session() as session:
+        for row in rows:
+            exists = session.execute(
+                select(RobinhoodHorizonRecord.id).where(
+                    RobinhoodHorizonRecord.signal_id == int(row["signal_id"]),
+                    RobinhoodHorizonRecord.horizon == row["horizon"],
+                )
+            ).first()
+            if exists:
+                continue
+            session.add(
+                RobinhoodHorizonRecord(
+                    signal_id=int(row["signal_id"]),
+                    contract_address=str(row["contract_address"]).lower(),
+                    horizon=row["horizon"],
+                    status=row["status"],
+                    entry_price=row.get("entry_price"),
+                    price_at_horizon=row.get("price_at_horizon"),
+                    change_pct=row.get("change_pct"),
+                    net_change_pct=row.get("net_change_pct"),
+                    max_gain_pct=row.get("max_gain_pct"),
+                    max_drawdown_pct=row.get("max_drawdown_pct"),
+                    success=row.get("success"),
+                    note=_clip(row.get("note"), 200),
+                )
+            )
+            written += 1
+        session.commit()
+    return written
+
+
+def robinhood_horizon_rows(limit: int = 5000) -> list[dict]:
+    """Every graded window, joined to the decision that produced it."""
+    with get_session() as session:
+        stmt = (
+            select(RobinhoodHorizonRecord, RobinhoodSignalRecord)
+            .join(RobinhoodSignalRecord, RobinhoodSignalRecord.id == RobinhoodHorizonRecord.signal_id)
+            .where(RobinhoodHorizonRecord.status == "RESOLVED")
+            .order_by(desc(RobinhoodHorizonRecord.id))
+            .limit(limit)
+        )
+        out = []
+        for horizon, signal in session.execute(stmt).all():
+            out.append(
+                {
+                    "signal_id": signal.id,
+                    "symbol": signal.symbol,
+                    "contract_address": signal.contract_address,
+                    "horizon": horizon.horizon,
+                    "action": signal.action,
+                    "strength": signal.strength,
+                    "early_score": signal.early_score,
+                    "explosion_score": signal.explosion_score,
+                    "rug_risk": signal.rug_risk,
+                    "hard_veto": signal.hard_veto,
+                    "pool_age_seconds": signal.pool_age_seconds,
+                    "change_pct": horizon.change_pct,
+                    "net_change_pct": horizon.net_change_pct,
+                    "max_gain_pct": horizon.max_gain_pct,
+                    "max_drawdown_pct": horizon.max_drawdown_pct,
+                    "success": horizon.success,
+                }
+            )
+        return out
+
+
+def robinhood_journal_counts() -> dict:
+    """Headline counts for the screen. Never a rate — that is `stats`' job."""
+    with get_session() as session:
+        total = session.execute(
+            select(func.count()).select_from(RobinhoodSignalRecord)
+        ).scalar_one()
+        graded = session.execute(
+            select(func.count()).select_from(RobinhoodHorizonRecord).where(
+                RobinhoodHorizonRecord.status == "RESOLVED"
+            )
+        ).scalar_one()
+        unresolvable = session.execute(
+            select(func.count()).select_from(RobinhoodHorizonRecord).where(
+                RobinhoodHorizonRecord.status == "UNRESOLVABLE"
+            )
+        ).scalar_one()
+        by_action = {
+            action: count
+            for action, count in session.execute(
+                select(RobinhoodSignalRecord.action, func.count())
+                .group_by(RobinhoodSignalRecord.action)
+            ).all()
+        }
+    return {
+        "decisions": int(total),
+        "graded_windows": int(graded),
+        "unresolvable_windows": int(unresolvable),
+        "by_action": by_action,
     }

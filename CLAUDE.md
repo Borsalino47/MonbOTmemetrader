@@ -89,9 +89,11 @@ that justifies it.
 | `ROBINHOOD_TRADE_DECISION_V1` (`trading/robinhood_decision.py`) | **TESTED** | 45 tests. Same six decisions and colours as Binance, own floors and own fingerprint. Security outranks every score |
 | Robinhood position health + exit risk (`trading/robinhood_health.py`, `robinhood_exit_risk.py`) | **TESTED** | 34 tests. Sellability and pool depth have no CEX analogue; a catastrophic reading caps the score |
 | Robinhood position watcher (`trading/robinhood_watcher.py`) | **TESTED** | Held tokens only. One indexer request per token, one batched safety request. States its cost |
+| Robinhood outcomes (`outcomes/robinhood_outcomes.py`) | **TESTED** | 24 tests. Resolves exactly from pool OHLCV, so a decision from last week is gradeable today |
+| Robinhood statistics (`outcomes/robinhood_stats.py`) | **TESTED** | `by_action` is the table that matters: 🟢 must beat 🟡 must beat ⚫. Every rate carries its `n` |
 | **French localisation (`cryptopulse/i18n/`, `frontend/src/i18n/fr.ts`)** | **TESTED** | 46 anti-English tests. 240 catalogue entries + 50 enum labels + 42 UI labels. Rendered at emission, no network, no model |
 
-**Test suite: 920 tests, all passing.** Run `pytest -q`.
+**Test suite: 944 tests, all passing.** Run `pytest -q`.
 
 ---
 
@@ -217,6 +219,8 @@ cryptopulse/
     robinhood_exit_risk.py Named signals. Two of them have no CEX analogue at all
     robinhood_watcher.py   Held tokens only. Discovery never looks at them again
   outcomes/
+    robinhood_outcomes.py  Grades Robinhood decisions from pool candles, exactly
+    robinhood_stats.py     Does 🟢 beat 🟡 beat ⚫? The only falsifying table here
     tracker.py           Grades emitted signals against the bars that followed
     horizons.py          What the price did 15m/1h/4h/24h later — path, not verdict
     stats.py             Win rate / expectancy by bucket, per-component edge,
@@ -262,7 +266,7 @@ frontend/                Vite + React 18 + TypeScript (strict), mobile-first
   HomeView               The five-second view: can I trust it, and what moved
   AssetCards             The scanner as cards; the table is wide-screen only
   bottom-nav             Thumb-reachable navigation, phones only
-tests/                   920 tests
+tests/                   944 tests
 pine/                    TradingView companion scripts
 ```
 
@@ -864,6 +868,32 @@ Break these and the product is lying to its user.
     The three baselines it records — depth, rug level, early score — are what
     the health engine measures *change* against, and without them a pool that
     halved is indistinguishable from one that was always small.
+
+97. **A Robinhood window is resolved from candles, never by looking again
+    later.** The obvious implementation — note the price now, read it again in
+    fifteen minutes — is wrong: a window observed three minutes late is not the
+    window the engine made a claim about, and the error is silent and always in
+    the direction of whenever the loop happened to run. GeckoTerminal's pool
+    OHLCV with a five-minute aggregate makes the window exact *and* resolvable
+    retroactively, which is what lets a decision from last Tuesday be graded
+    today.
+
+98. **`by_action` is the table the Robinhood half exists to produce.** 🟢
+    ACHETER must beat 🟡 SURVEILLER, which must beat ⚫ NE PAS ACHETER. If that
+    ordering is absent, the floors in `RobinhoodSettings` are wrong — and no
+    other table here can show that. It is rendered first, ordered BUY / WATCH /
+    AVOID rather than alphabetically, so the comparison reads top to bottom.
+
+99. **The Robinhood journal is a separate table, not a column on `signals`.**
+    Pooling the two markets would produce a win rate that moves when either
+    engine changes and identifies neither. The columns differ too — there is no
+    ATR, no setup state and no liquidity rank on a token four minutes old.
+
+100. **The DEX cost model is deliberately pessimistic and says it is modelled.**
+    A swap pays the pool fee twice, gas twice, and slippage against a pool that
+    is often thin. 3 % is a placeholder, not a measurement, and
+    `RobinhoodCosts.describe()` says so — flattering it would make every rate
+    look better than anything achievable, which is the opposite of the point.
 
 ---
 

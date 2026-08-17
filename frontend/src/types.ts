@@ -1020,3 +1020,46 @@ export interface DataConfidenceRH {
   missing: string[];
   version: string;
 }
+
+
+/** One row of one Robinhood performance table. A rate never travels without
+ *  the count it came from (invariant 12). */
+export interface RobinhoodBucket {
+  bucket: string;
+  horizon: string;
+  n: number;
+  success_rate: number | null;
+  insufficient_sample: boolean;
+  median_change_pct: number | null;
+  mean_change_pct: number | null;
+  best_pct: number | null;
+  worst_pct: number | null;
+  median_max_gain_pct: number | null;
+  median_max_drawdown_pct: number | null;
+}
+
+export interface RobinhoodPerformanceResponse {
+  counts: {
+    decisions: number;
+    graded_windows: number;
+    unresolvable_windows: number;
+    by_action: Record<string, number>;
+  };
+  costs: { round_trip_pct: number; note: string };
+  last_run: Record<string, unknown> | null;
+  performance: {
+    market: string;
+    chain_id: number;
+    horizons: string[];
+    overall: RobinhoodBucket[];
+    by_action: RobinhoodBucket[];
+    by_early_band: RobinhoodBucket[];
+    by_explosion_band: RobinhoodBucket[];
+    by_rug_risk: RobinhoodBucket[];
+    by_age_bucket: RobinhoodBucket[];
+    explosion_claim_horizon: string;
+    return_basis: string;
+    min_sample: number;
+    notes: string[];
+  };
+}

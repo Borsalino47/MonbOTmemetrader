@@ -192,6 +192,8 @@ class ScannerService:
         # Built on first use, like the other Robinhood clients: a user who never
         # opens the Robinhood tab must not pay for it at startup (spec §41-42).
         self._robinhood_watcher = None
+        self._robinhood_tracker = None
+        self.last_robinhood_horizon_run: dict | None = None
         self._discovery_task: asyncio.Task | None = None
         self._discovery_lock = asyncio.Lock()
 
@@ -382,7 +384,86 @@ class ScannerService:
             # the screen this engine exists to never show.
             await attach_safety(report, self._get_goplus(), self.settings.robinhood)
             self.robinhood_discovery = report
+            # Journalled after safety and the decision exist, never before: a
+            # row written earlier would record an opinion taken on less
+            # evidence than the screen showed beside it (invariant 91).
+            await self._journal_robinhood(report)
             return report
+
+    async def _journal_robinhood(self, report) -> int:
+        """Append this cycle's decisions. A failure costs the journal, not the scan."""
+        rows = []
+        for c in report.candidates:
+            if c.decision is None:
+                # Nobody has decided yet. Recording it as ⚫ would turn "not
+                # looked at" into "refused" (invariant 90).
+                continue
+            pool = c.primary_pool
+            rows.append(
+                {
+                    "contract_address": c.address,
+                    "symbol": c.symbol,
+                    "pool_address": pool.pool_address if pool else None,
+                    "timestamp_ms": c.decision.timestamp_ms,
+                    "price_usd": c.price_usd,
+                    "liquidity_usd": c.liquidity_usd,
+                    "pool_age_seconds": c.pool_age_seconds,
+                    "early_score": c.early.score if c.early else None,
+                    "explosion_score": c.explosion.score if c.explosion else None,
+                    "maturity_score": c.maturity.score if c.maturity else None,
+                    "confidence_score": c.confidence.score if c.confidence else None,
+                    "safety_score": c.safety.score if c.safety else None,
+                    "rug_risk": c.safety.rug_risk.value if c.safety else None,
+                    "hard_veto": c.safety.hard_veto if c.safety else True,
+                    "action": c.decision.action.value,
+                    "strength": c.decision.strength.value if c.decision.strength else None,
+                    "reasons": c.decision.reasons,
+                    "risks": c.decision.risks,
+                    "blocking": c.decision.blocking,
+                    "engine_version": c.decision.engine_version,
+                    "weights_fingerprint": c.decision.weights_fingerprint,
+                }
+            )
+        if not rows:
+            return 0
+        try:
+            self.ensure_db()
+            return await asyncio.to_thread(repo.save_robinhood_signals, rows)
+        except Exception as exc:
+            # A journal failure must never cost the search itself, for the same
+            # reason a webhook failure costs a notification and not a scan.
+            log.warning("robinhood_journal_failed", error=type(exc).__name__)
+            return 0
+
+    async def track_robinhood_horizons(self, limit: int = 300) -> dict:
+        """Grade every Robinhood decision whose window has elapsed.
+
+        Costs one candle request per token that has something to grade, and
+        says so. A row with nothing elapsed costs nothing at all.
+        """
+
+        self.ensure_db()
+        now_ms = SYSTEM_CLOCK.now_ms()
+        tracker = self._get_robinhood_tracker()
+        pending = await asyncio.to_thread(
+            repo.robinhood_signals_pending_horizons, tracker.ready_before_ms(now_ms), limit
+        )
+        results, report = await tracker.track(pending, now_ms=now_ms)
+        written = await asyncio.to_thread(
+            repo.save_robinhood_horizons, [r.to_row() for r in results]
+        )
+        payload = report.to_dict()
+        payload["written"] = written
+        payload["examined"] = len(pending)
+        self.last_robinhood_horizon_run = payload
+        return payload
+
+    def _get_robinhood_tracker(self):
+        from cryptopulse.outcomes.robinhood_outcomes import RobinhoodHorizonTracker
+
+        if self._robinhood_tracker is None:
+            self._robinhood_tracker = RobinhoodHorizonTracker(self._get_gecko())
+        return self._robinhood_tracker
 
     async def watch_robinhood_positions(self):
         """One pass over the held Robinhood tokens. Never raises.

@@ -22,6 +22,7 @@ from cryptopulse.config.settings import get_settings
 from cryptopulse.core.clock import SYSTEM_CLOCK
 from cryptopulse.core.logging import configure_logging, get_logger
 from cryptopulse.database import repo
+from cryptopulse.outcomes.robinhood_stats import build_robinhood_performance
 from cryptopulse.providers.robinhood import ROBINHOOD_CHAIN_ID
 from cryptopulse.scoring.discovery import DISCOVERY_ENGINE_VERSION
 from cryptopulse.scoring.discovery import WEIGHTS as DISCOVERY_WEIGHTS
@@ -503,6 +504,33 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
         """
         report = await get_service().watch_robinhood_positions()
         return report.to_dict()
+
+    @app.get("/api/robinhood/performance", tags=["providers"])
+    async def robinhood_performance(
+        use_net: bool = Query(True, description="Net of the modelled round-trip cost"),
+        limit: int = Query(5000, ge=1, le=20000),
+    ):
+        """What the price actually did after each Robinhood decision.
+
+        The only thing in the Robinhood half that can show an engine to be
+        wrong. Every rate carries its `n`, and buckets below the sample floor
+        are flagged rather than hidden — on a chain this young, insufficient is
+        the ordinary case.
+        """
+        service = get_service()
+        service.ensure_db()
+        rows = await asyncio.to_thread(repo.robinhood_horizon_rows, limit)
+        return {
+            "counts": await asyncio.to_thread(repo.robinhood_journal_counts),
+            "costs": service._get_robinhood_tracker().costs.describe(),
+            "last_run": service.last_robinhood_horizon_run,
+            "performance": build_robinhood_performance(rows, use_net=use_net),
+        }
+
+    @app.post("/api/robinhood/horizons/track", tags=["providers"])
+    async def robinhood_track(limit: int = Query(300, ge=1, le=2000)):
+        """Grade every Robinhood decision whose window has elapsed."""
+        return await get_service().track_robinhood_horizons(limit=limit)
 
     @app.get("/api/config", tags=["status"])
     async def config():

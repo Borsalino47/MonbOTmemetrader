@@ -439,6 +439,100 @@ class PositionRecord(Base):
     )
 
 
+class RobinhoodSignalRecord(Base):
+    """One decision the Robinhood engine took about one token, as it was taken.
+
+    A separate table from `signals` on purpose, and not a `scanner` column on
+    that one. The two universes never share a row (spec §4): the columns差 are
+    different (there is no ATR, no setup state, no liquidity rank here), the
+    engines and fingerprints are different, and pooling them would make it
+    impossible to ever answer "does the Robinhood engine work?" separately from
+    "does the Binance engine work?".
+
+    Immutable. A duplicate (address, timestamp, engine_version) is skipped
+    rather than updated: a decision is a historical fact about a moment.
+    """
+
+    __tablename__ = "robinhood_signals"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    contract_address: Mapped[str] = mapped_column(String(80), index=True)
+    symbol: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    chain_id: Mapped[int] = mapped_column(Integer, default=4663)
+    # The pool the price came from. Needed to resolve the outcome later: the
+    # candle endpoint is keyed on the pool, not on the token.
+    pool_address: Mapped[str | None] = mapped_column(String(80), nullable=True)
+
+    timestamp_ms: Mapped[int] = mapped_column(
+        Integer().with_variant(Integer, "sqlite"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    price_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    liquidity_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pool_age_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # The four readings, never blended (invariant 37).
+    early_score: Mapped[float | None] = mapped_column(Float, nullable=True, index=True)
+    explosion_score: Mapped[float | None] = mapped_column(Float, nullable=True, index=True)
+    maturity_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    confidence_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    safety_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rug_risk: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
+    hard_veto: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+
+    # The instruction, and how far past the floors it was.
+    action: Mapped[str] = mapped_column(String(8), index=True)
+    strength: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    reasons: Mapped[list] = mapped_column(JSON, default=list)
+    risks: Mapped[list] = mapped_column(JSON, default=list)
+    blocking: Mapped[list] = mapped_column(JSON, default=list)
+
+    engine_version: Mapped[str] = mapped_column(String(40), index=True)
+    weights_fingerprint: Mapped[str] = mapped_column(String(16))
+    data_source: Mapped[str] = mapped_column(String(32), default="GECKOTERMINAL")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "contract_address", "timestamp_ms", "engine_version",
+            name="uq_rh_signal_addr_ts_engine",
+        ),
+        Index("ix_rh_signals_action_time", "action", "timestamp_ms"),
+    )
+
+
+class RobinhoodHorizonRecord(Base):
+    """What the price did 15m / 1h / 4h / 24h after a Robinhood decision.
+
+    One row per (signal, horizon), written only once the window has fully
+    elapsed (invariant 14). A pending window is absent, never stored at the
+    current price — reporting "not yet" as a result is the failure this whole
+    table exists to avoid.
+    """
+
+    __tablename__ = "robinhood_horizons"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    signal_id: Mapped[int] = mapped_column(Integer, index=True)
+    contract_address: Mapped[str] = mapped_column(String(80), index=True)
+    horizon: Mapped[str] = mapped_column(String(8), index=True)
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    status: Mapped[str] = mapped_column(String(16))  # RESOLVED / UNRESOLVABLE
+    entry_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    price_at_horizon: Mapped[float | None] = mapped_column(Float, nullable=True)
+    change_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    net_change_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_gain_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_drawdown_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    success: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    note: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("signal_id", "horizon", name="uq_rh_horizon_signal_window"),
+    )
+
+
 class PositionEventRecord(Base):
     """Every decision change on a position, in order.
 

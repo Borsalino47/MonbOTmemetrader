@@ -381,6 +381,74 @@ class GeckoTerminalClient:
             f"/networks/{self.network}/tokens/{token_address}/pools", page
         )
 
+    async def pool_ohlcv(
+        self,
+        pool_address: str,
+        *,
+        timeframe: str = "minute",
+        aggregate: int = 5,
+        before_timestamp: int | None = None,
+        limit: int = 200,
+    ) -> list[tuple[int, float, float, float, float, float]]:
+        """Candles for one pool, oldest first, as (open_time_ms, o, h, l, c, v).
+
+        This is what makes a Robinhood claim checkable. Without it, "what did
+        the price do fifteen minutes after that decision?" could only be
+        answered by looking at exactly the right moment and recording whatever
+        was on screen — and a window observed three minutes late is not the
+        window the engine made a claim about.
+
+        Contract read from `geckoterminal-api` 0.9.0: timeframe is one of
+        day / hour / minute, aggregate is 1 for day, 1|4|12 for hour and
+        1|5|15 for minute, and the payload is a list of
+        `[timestamp_seconds, open, high, low, close, volume]`. The host is
+        refused by this build environment, so this is a second opinion about
+        the shape, not a verification of the live API.
+        """
+        if timeframe not in ("day", "hour", "minute"):
+            raise ValueError(f"timeframe {timeframe!r} inconnu (day / hour / minute)")
+        params: dict = {
+            "aggregate": aggregate,
+            "limit": min(int(limit), 1000),
+            "currency": "usd",
+            # The token whose price the candles describe. `base` is the pool's
+            # base side, which is not necessarily the token we care about —
+            # callers that need the quote side pass it through the pool.
+            "token": "base",
+        }
+        if before_timestamp is not None:
+            params["before_timestamp"] = int(before_timestamp)
+
+        raw = await self.http.get_json(
+            f"/networks/{self.network}/pools/{pool_address}/ohlcv/{timeframe}",
+            params=params,
+        )
+        if not isinstance(raw, dict):
+            raise SourceUnavailable(f"{self.name}: non-object OHLCV response")
+        attributes = ((raw.get("data") or {}).get("attributes") or {})
+        rows = attributes.get("ohlcv_list")
+        if not isinstance(rows, list):
+            raise DataUnavailable(
+                f"{self.name}: ohlcv_list absent", detail={"pool": pool_address}
+            )
+
+        out: list[tuple[int, float, float, float, float, float]] = []
+        for row in rows:
+            if not isinstance(row, list) or len(row) < 6:
+                continue
+            try:
+                ts, o, h, low, c, v = row[:6]
+                out.append(
+                    (int(ts) * 1000, float(o), float(h), float(low), float(c), float(v))
+                )
+            except (TypeError, ValueError):
+                # A malformed row is skipped rather than zero-filled: a candle
+                # that could not be parsed is not a candle at price zero.
+                continue
+        # The API returns newest first; every consumer here reads chronologically.
+        out.sort(key=lambda r: r[0])
+        return out
+
     async def list_networks(self) -> list[str]:
         """Network ids the indexer knows. Used by the doctor to prove that
         `robinhood` is one of them rather than assuming it."""

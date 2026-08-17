@@ -1,3 +1,4 @@
+import { RobinhoodPerformance } from './RobinhoodPerformance';
 import { RobinhoodTokens } from './RobinhoodTokens';
 import type { RobinhoodStatus } from '../types';
 
@@ -77,6 +78,11 @@ export function RobinhoodView({
       </div>
 
       <RobinhoodTokens />
+
+      {/* The measurement, under the search that produced the decisions. It is
+          the only thing here that can show an engine to be wrong, so it sits
+          on the same screen rather than behind a tab nobody opens. */}
+      <RobinhoodPerformance />
 
       <div className="panel rh-pending">
         <h3>Pas encore disponible</h3>
