@@ -545,3 +545,134 @@ export interface ValidationsResponse {
   decisions: Decision[];
   note: string;
 }
+
+/** The six decisions. Internal English; the screen shows the French label. */
+export type TradeAction = 'BUY' | 'HOLD' | 'WATCH' | 'REDUCE' | 'SELL' | 'AVOID';
+
+export interface DecisionCheck {
+  name: string;
+  passed: boolean;
+  value: number | null;
+  threshold: number | null;
+  unavailable: boolean;
+  why: string;
+}
+
+/** One recommendation. `emoji`, `label_fr` and `tone` travel together — a
+ *  decision is never rendered as a colour alone. */
+export interface TradeDecision {
+  symbol: string;
+  action: TradeAction;
+  emoji: string;
+  label_fr: string;
+  label_en: string;
+  tone: string;
+  strength: 'STANDARD' | 'STRONG' | 'VERY_STRONG' | null;
+  strength_fr: string | null;
+  timestamp_ms: number;
+  price: number;
+  reasons: string[];
+  risks: string[];
+  /** Prices, or null when the structure could not produce one. Never invented. */
+  trigger_price: number | null;
+  invalidation_price: number | null;
+  checks: DecisionCheck[];
+  blocking: string[];
+  is_actionable: boolean;
+  engine_version: string;
+  weights_fingerprint: string;
+  disclaimer: string;
+  /** What the engine said before the noise gate, when they differ. */
+  proposed?: TradeAction;
+}
+
+export interface Position {
+  id: number;
+  symbol: string;
+  chain: string;
+  signal_id: number | null;
+  status: 'OPEN' | 'CLOSED';
+  opened_at: string | null;
+  opened_ms: number;
+  entry_price: number;
+  actual_entry_price: number | null;
+  /** Which price the returns come from. Screen prices and fills are different
+   *  numbers and must never be read as the same one. */
+  pnl_basis: 'actual_fill' | 'observed_price';
+  amount_invested: number | null;
+  quantity: number | null;
+  trigger_price: number | null;
+  invalidation_price: number | null;
+  entry_opportunity: number | null;
+  entry_explosion: number | null;
+  entry_safety: number | null;
+  entry_confidence: number | null;
+  entry_maturity: number | null;
+  entry_state: string | null;
+  entry_regime: string | null;
+  entry_reasons: string[];
+  last_price: number | null;
+  peak_price: number | null;
+  trough_price: number | null;
+  pnl_pct: number | null;
+  drawdown_from_peak_pct: number | null;
+  mfe_pct: number | null;
+  mae_pct: number | null;
+  health_score: number | null;
+  current_decision: TradeAction | null;
+  decision_changed_ms: number | null;
+  closed_at: string | null;
+  exit_price: number | null;
+  actual_exit_price: number | null;
+  realised_pnl_pct: number | null;
+  close_reason: string | null;
+  synthetic: boolean;
+}
+
+export interface TradeSignal {
+  id: number;
+  symbol: string;
+  action: 'BUY' | 'SELL';
+  strength: string | null;
+  emitted_at: string | null;
+  timestamp_ms: number;
+  price: number;
+  /** null = not answered yet. Never rendered as a "no". */
+  taken: boolean | null;
+  position_id: number | null;
+  opportunity_score: number | null;
+  explosion_score: number | null;
+  safety_score: number | null;
+  data_confidence: number | null;
+  pump_maturity: number | null;
+  trigger_price: number | null;
+  invalidation_price: number | null;
+  reasons: string[];
+  risks: string[];
+  synthetic: boolean;
+}
+
+export interface DecisionsResponse {
+  entries: TradeDecision[];
+  positions: Position[];
+  awaiting_answer: TradeSignal[];
+  counts: Record<TradeAction, number>;
+  data_mode: 'LIVE' | 'DEMO';
+  engine: { version: string; weights_fingerprint: string };
+  disclaimer: string;
+}
+
+export interface PositionEvent {
+  id: number;
+  position_id: number;
+  symbol: string;
+  at: string | null;
+  at_ms: number;
+  decision: TradeAction;
+  previous_decision: TradeAction | null;
+  price: number;
+  pnl_pct: number | null;
+  health_score: number | null;
+  reasons: string[];
+  risks: string[];
+}

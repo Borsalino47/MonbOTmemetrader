@@ -397,3 +397,19 @@ def test_escalation_is_measured_toward_the_exit():
     assert is_escalation(TradeAction.REDUCE, TradeAction.SELL) is True
     assert is_escalation(TradeAction.SELL, TradeAction.HOLD) is False
     assert is_escalation(None, TradeAction.SELL) is False
+
+
+def test_the_peak_and_trough_start_at_the_price_the_returns_use(db):
+    """Found by running it. Seeding them from the observed price while computing
+    the returns from the fill made "perte max" render as +75.79% — a maximum
+    loss that was a gain. Both must start at the same basis so MFE and MAE mean
+    what their names say."""
+    position = _position(entry_price=2.1692, actual_entry_price=1.2340)
+
+    assert position["peak_price"] == 1.2340
+    assert position["trough_price"] == 1.2340
+    assert position["mfe_pct"] == 0.0
+    assert position["mae_pct"] == 0.0
+
+    fell = repo.update_position(position["id"], price=1.10, now_ms=NOW_MS + MINUTE)
+    assert fell["mae_pct"] < 0, "a maximum loss is never positive"

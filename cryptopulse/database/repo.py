@@ -1201,6 +1201,11 @@ def open_position(payload: dict) -> dict:
     """
     with get_session() as session:
         entry = float(payload["entry_price"])
+        # Seeded from the same price the returns are computed against, not from
+        # the observed one. Found by running it: with a fill of 1.23 against an
+        # observed 2.17, the trough started above the basis and "perte max"
+        # rendered as +75.79% — a maximum loss that was a gain.
+        basis = float(payload.get("actual_entry_price") or entry)
         row = PositionRecord(
             symbol=str(payload["symbol"]).upper(),
             chain=payload.get("chain") or "CEX",
@@ -1225,8 +1230,8 @@ def open_position(payload: dict) -> dict:
             entry_reasons=(payload.get("entry_reasons") or [])[:8],
             last_price=entry,
             last_seen_ms=int(payload["opened_ms"]),
-            peak_price=entry,
-            trough_price=entry,
+            peak_price=basis,
+            trough_price=basis,
             mfe_pct=0.0,
             mae_pct=0.0,
             data_source=payload.get("data_source") or "unknown",

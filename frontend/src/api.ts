@@ -1,6 +1,7 @@
 import type {
   AlertItem, AssetDetail, DeepScanResponse, Health, HorizonResponse, HuntResponse,
-  PerformanceResponse, PumpResponse, ScanResponse, Validation, ValidationsResponse,
+  DecisionsResponse, PerformanceResponse, Position, PositionEvent, PumpResponse,
+  ScanResponse, TradeSignal, Validation, ValidationsResponse,
 } from './types';
 
 const BASE = '/api';
@@ -26,6 +27,21 @@ async function get<T>(path: string, params?: Record<string, string | number | bo
   return resp.json() as Promise<T>;
 }
 
+/** POST with a JSON body, surfacing the API's own message on failure.
+ *  A refused action must say why: silence would look like a bug. */
+async function post<T>(path: string, body: Record<string, unknown>): Promise<T> {
+  const resp = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.detail ?? `${path} failed: ${resp.status}`);
+  }
+  return resp.json();
+}
+
 export const api = {
   health: () => get<Health>('/health'),
   scan: (params?: Record<string, string | number | boolean>) => get<ScanResponse>('/scan', params),
@@ -39,6 +55,20 @@ export const api = {
   hunt: (limit = 40) => get<HuntResponse>('/hunt', { limit }),
   pumps: (symbol: string, bars = 1000) => get<PumpResponse>(`/pumps/${symbol}`, { bars }),
   validations: (limit = 100) => get<ValidationsResponse>('/validations', { limit }),
+
+  decisions: () => get<DecisionsResponse>('/decisions'),
+  positions: (status = 'OPEN') =>
+    get<{ positions: Position[]; watcher: Record<string, unknown> }>('/positions', { status }),
+  positionEvents: (id: number) =>
+    get<{ position: Position; events: PositionEvent[] }>(`/positions/${id}/events`),
+  tradeSignals: (limit = 100) => get<{ signals: TradeSignal[] }>('/trade-signals', { limit }),
+
+  openPosition: (body: Record<string, unknown>) => post<Position>('/positions/open', body),
+  closePosition: (id: number, body: Record<string, unknown>) =>
+    post<Position>(`/positions/${id}/close`, body),
+  answerSignal: (id: number, taken: boolean) =>
+    post<TradeSignal>(`/trade-signals/${id}/answer`, { taken }),
+  watchPositions: () => post<Record<string, unknown>>('/positions/watch', {}),
   currentValidations: () =>
     get<{ current: Record<string, Validation> }>('/validations/current'),
   validate: async (body: Record<string, unknown>): Promise<Validation> => {

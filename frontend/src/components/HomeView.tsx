@@ -1,5 +1,6 @@
 import { age, num, pct, scoreColor, signClass } from '../format';
-import type { AlertItem, Health, ScoreRow } from '../types';
+import type { AlertItem, DecisionsResponse, Health, ScoreRow } from '../types';
+import { DecisionsNow } from './DecisionsNow';
 import { InstallStatus } from './InstallPrompt';
 import { VerdictBadge } from './VerdictBadge';
 
@@ -14,6 +15,9 @@ interface Props {
   onSelect: (symbol: string) => void;
   scanning: boolean;
   onScan: () => void;
+  /** Null while the decisions endpoint has not answered. The rest of the
+   *  screen stays usable in that case rather than blanking. */
+  decisions: DecisionsResponse | null;
 }
 
 /** The five-second view: is anything happening, and can I trust it?
@@ -26,7 +30,7 @@ interface Props {
  * hidden. Hiding them would suggest they were forgotten; faking them with an
  * empty list would suggest the search ran and found nothing. */
 export function HomeView({
-  rows, alerts, health, journalAgeSeconds, onOpenTab, onSelect, scanning, onScan,
+  rows, alerts, health, journalAgeSeconds, onOpenTab, onSelect, scanning, onScan, decisions,
 }: Props) {
   const top = rows
     .filter((r) => !r.safety.hard_veto && !r.liquidity.veto && r.data_confidence.score >= 50)
@@ -81,6 +85,10 @@ export function HomeView({
           <Count n={risky} label="à éviter" tone={risky ? 'bad' : 'muted'} />
         </div>
       </section>
+
+      {/* What to do, before what is interesting. A decision beats a ranking
+          when the reader has five seconds. */}
+      <DecisionsNow data={decisions} onSelect={onSelect} onOpenTab={onOpenTab} />
 
       {/* The product's actual answer: best setups, not biggest movers. */}
       <section className="home-block">
@@ -155,9 +163,9 @@ export function HomeView({
             onClick={() => (top.length ? onSelect(top[0].symbol) : onOpenTab('scanner'))}
           />
           <Tile
-            label="Mes décisions"
-            hint="ce que j'ai validé ou rejeté"
-            onClick={() => onOpenTab('decisions')}
+            label="Mes positions"
+            hint="ce que je détiens, et mes choix"
+            onClick={() => onOpenTab('me')}
           />
         </div>
         <InstallStatus />

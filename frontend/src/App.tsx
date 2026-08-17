@@ -6,15 +6,15 @@ import { AssetCards } from './components/AssetCards';
 import { HomeView } from './components/HomeView';
 import { HorizonsView } from './components/HorizonsView';
 import { HunterView } from './components/HunterView';
-import { ValidationsView } from './components/ValidationsView';
+import { MeView } from './components/MeView';
 import { InstallPrompt } from './components/InstallPrompt';
 import { PerformanceView } from './components/PerformanceView';
 import { ScannerTable } from './components/ScannerTable';
 import { TopOpportunities } from './components/TopOpportunities';
 import { age, clock } from './format';
-import type { AlertItem, Health, ScanResponse, ScoreRow } from './types';
+import type { AlertItem, DecisionsResponse, Health, ScanResponse, ScoreRow } from './types';
 
-type Tab = 'home' | 'scanner' | 'hunter' | 'decisions' | 'alerts' | 'verification' | 'performance';
+type Tab = 'home' | 'scanner' | 'hunter' | 'me' | 'alerts' | 'verification' | 'performance';
 
 /** Simple hides the measured columns; expert shows the same row with more of it.
  *  Persisted because it is a preference about the person, not about the session. */
@@ -50,6 +50,7 @@ export default function App() {
   // immediately after a restart so the dashboard is never blank, but they are
   // never presented as live.
   const [scanMeta, setScanMeta] = useState<ScanResponse['meta'] | null>(null);
+  const [decisions, setDecisions] = useState<DecisionsResponse | null>(null);
 
   // Filters
   const [minScore, setMinScore] = useState(0);
@@ -72,7 +73,9 @@ export default function App() {
       if (!mounted.current) return;
       setHealth(h);
 
-      const [scan, al] = await Promise.allSettled([api.scan({ limit: 300 }), api.alerts(50)]);
+      const [scan, al, dec] = await Promise.allSettled([
+        api.scan({ limit: 300 }), api.alerts(50), api.decisions(),
+      ]);
 
       if (!mounted.current) return;
       if (scan.status === 'fulfilled') {
@@ -87,6 +90,10 @@ export default function App() {
         setError(String(scan.reason?.message ?? scan.reason));
       }
       if (al.status === 'fulfilled') setAlerts(al.value.alerts);
+      // Decisions are allowed to fail on their own: the scanner is still
+      // useful without them, and a blank decision section is better than a
+      // blank page.
+      if (dec.status === 'fulfilled') setDecisions(dec.value);
     } catch (e) {
       if (mounted.current) setError(String((e as Error).message ?? e));
     }
@@ -160,8 +167,8 @@ export default function App() {
           <button className={tab === 'home' ? 'active' : ''} onClick={() => setTab('home')}>Accueil</button>
           <button className={tab === 'scanner' ? 'active' : ''} onClick={() => setTab('scanner')}>Scanner</button>
           <button className={tab === 'hunter' ? 'active' : ''} onClick={() => setTab('hunter')}>Recherche</button>
-          <button className={tab === 'decisions' ? 'active' : ''} onClick={() => setTab('decisions')}>
-            Mes décisions
+          <button className={tab === 'me' ? 'active' : ''} onClick={() => setTab('me')}>
+            Mes positions
           </button>
           <button className={tab === 'alerts' ? 'active' : ''} onClick={() => setTab('alerts')}>
             Alerts{alerts.length > 0 ? ` (${alerts.length})` : ''}
@@ -306,6 +313,7 @@ export default function App() {
             onSelect={setSelected}
             scanning={scanning}
             onScan={runScan}
+            decisions={decisions}
           />
         )}
 
@@ -411,7 +419,7 @@ export default function App() {
 
         {tab === 'hunter' && <HunterView onSelect={setSelected} />}
 
-        {tab === 'decisions' && <ValidationsView onSelect={setSelected} />}
+        {tab === 'me' && <MeView onSelect={setSelected} />}
 
         {tab === 'verification' && <HorizonsView />}
 
@@ -432,7 +440,7 @@ export default function App() {
         <BottomTab id="home" label="Accueil" current={tab} onPick={setTab} />
         <BottomTab id="scanner" label="Scanner" current={tab} onPick={setTab} />
         <BottomTab id="hunter" label="Recherche" current={tab} onPick={setTab} />
-        <BottomTab id="decisions" label="Choix" current={tab} onPick={setTab} />
+        <BottomTab id="me" label="Moi" current={tab} onPick={setTab} />
         <BottomTab id="alerts" label="Alertes" current={tab} onPick={setTab} badge={alerts.length} />
         <BottomTab id="verification" label="Vérif." current={tab} onPick={setTab} />
         <BottomTab id="performance" label="Perf." current={tab} onPick={setTab} />
