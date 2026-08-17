@@ -1528,3 +1528,18 @@ tbody td.sym { font-weight: 600; text-align: left; }
 .rh-dc { display: inline-flex; align-items: center; gap: 4px; }
 .rh-dc strong { color: var(--text); }
 .rh-dc.BUY strong { color: var(--up); }
+
+/* --- which universe a position lives in ---------------------------------- */
+.pos-chain {
+  margin-left: auto;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.pos-chain.ROBINHOOD { color: var(--accent); }
+.pos-chain-line {
+  margin: 2px 0 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+}

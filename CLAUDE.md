@@ -87,9 +87,11 @@ that justifies it.
 | `ROBINHOOD_EXPLOSION_15M_V1` (`scoring/robinhood_explosion.py`) | **TESTED** | 15 tests. Horizon in the fingerprint; a selling burst never scores as upside |
 
 | `ROBINHOOD_TRADE_DECISION_V1` (`trading/robinhood_decision.py`) | **TESTED** | 45 tests. Same six decisions and colours as Binance, own floors and own fingerprint. Security outranks every score |
+| Robinhood position health + exit risk (`trading/robinhood_health.py`, `robinhood_exit_risk.py`) | **TESTED** | 34 tests. Sellability and pool depth have no CEX analogue; a catastrophic reading caps the score |
+| Robinhood position watcher (`trading/robinhood_watcher.py`) | **TESTED** | Held tokens only. One indexer request per token, one batched safety request. States its cost |
 | **French localisation (`cryptopulse/i18n/`, `frontend/src/i18n/fr.ts`)** | **TESTED** | 46 anti-English tests. 240 catalogue entries + 50 enum labels + 42 UI labels. Rendered at emission, no network, no model |
 
-**Test suite: 886 tests, all passing.** Run `pytest -q`.
+**Test suite: 920 tests, all passing.** Run `pytest -q`.
 
 ---
 
@@ -211,6 +213,9 @@ cryptopulse/
     watcher.py           Open positions only, 15s, states its request cost
     stats.py             Engine quality vs user results, deliberately kept apart
     robinhood_decision.py  ROBINHOOD_TRADE_DECISION_V1 — same six words, other evidence
+    robinhood_health.py    Sellability + pool depth. A catastrophe caps, never deducts
+    robinhood_exit_risk.py Named signals. Two of them have no CEX analogue at all
+    robinhood_watcher.py   Held tokens only. Discovery never looks at them again
   outcomes/
     tracker.py           Grades emitted signals against the bars that followed
     horizons.py          What the price did 15m/1h/4h/24h later — path, not verdict
@@ -257,7 +262,7 @@ frontend/                Vite + React 18 + TypeScript (strict), mobile-first
   HomeView               The five-second view: can I trust it, and what moved
   AssetCards             The scanner as cards; the table is wide-screen only
   bottom-nav             Thumb-reachable navigation, phones only
-tests/                   886 tests
+tests/                   920 tests
 pine/                    TradingView companion scripts
 ```
 
@@ -822,6 +827,43 @@ Break these and the product is lying to its user.
     order and in that function. A decision produced before the veto existed
     would have been taken on less evidence than the screen shows beside it —
     the same reasoning that already put explosion after safety.
+
+92. **A catastrophic health reading caps the score instead of costing it
+    points.** Found by writing the invariant-49 test and watching it fail: a
+    position up 300 % whose pool had lost 90 % of its depth scored 73.5 and
+    rendered SAINE, because liquidity is only 25 of the 100 points and
+    everything else was perfect. A withdrawn pool is not a quarter of a
+    problem — it is the reason a DEX position goes to zero. `caps_at` applies
+    the same rule the explosion gate and the safety veto already follow
+    (invariants 40, 72); the lowest cap wins and caps are never averaged.
+
+93. **The discovery search never looks at a token you already hold.**
+    `new_pools` returns recently created pools, so a position opened two days
+    ago fell out of that window long ago. The watcher reads the held addresses
+    directly through `/tokens/{address}/pools`, which is a different endpoint
+    for a different question — and the reason the watcher cannot be folded into
+    the search.
+
+94. **The watcher's cost is one request per held token, and it says so.**
+    GeckoTerminal has no token-to-pools batch: `/pools/multi/` takes *pool*
+    addresses. Claiming "two requests whatever you hold" — as this module's
+    docstring first did — would have been a figure the connector cannot
+    deliver. GoPlus genuinely is batched, which is why safety is the cheap
+    half. `CP_ROBINHOOD_MAX_TRACKED_POSITIONS` bounds the total.
+
+95. **A token the indexer stopped listing is reported, never sold.** The pool
+    vanishing from the index is a fact about our data, not about the token.
+    Verified by running it: the watcher returned `pool absent de l'indexeur ce
+    cycle` and left the decision untouched. Inventing a SELL from a failed
+    lookup is the worst false alarm this loop could produce.
+
+96. **A Robinhood opening is routed by its chain, never by symbol lookup.**
+    `_merge_robinhood_context` fills the entry from the discovery candidate;
+    passing a contract address through the Binance path would find nothing and
+    would stamp the position with a Binance provider name and market regime.
+    The three baselines it records — depth, rug level, early score — are what
+    the health engine measures *change* against, and without them a pool that
+    halved is indistinguishable from one that was always small.
 
 ---
 

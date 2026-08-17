@@ -22,6 +22,7 @@ from cryptopulse.config.settings import get_settings
 from cryptopulse.core.clock import SYSTEM_CLOCK
 from cryptopulse.core.logging import configure_logging, get_logger
 from cryptopulse.database import repo
+from cryptopulse.providers.robinhood import ROBINHOOD_CHAIN_ID
 from cryptopulse.scoring.discovery import DISCOVERY_ENGINE_VERSION
 from cryptopulse.scoring.discovery import WEIGHTS as DISCOVERY_WEIGHTS
 
@@ -160,6 +161,54 @@ def _merge_position_context(payload: dict, result, signal: dict | None, service)
         payload["entry_regime"] = service.scanner.regime.trend.value
     payload["data_source"] = service.scanner.provider.name
     payload["synthetic"] = service.status()["data_mode"] == "DEMO"
+    return payload
+
+
+def _merge_robinhood_context(payload: dict, service) -> dict:
+    """Fill a Robinhood opening from the candidate the user was looking at.
+
+    Kept apart from `_merge_position_context` because the two universes never
+    share a datum (spec §4): looking a contract address up in the Binance scan
+    would find nothing, and falling back to the Binance regime or provider name
+    would stamp a Robinhood position with a Binance provenance.
+
+    The three Robinhood baselines matter more than they look. The health engine
+    measures *change since entry* — depth, rug level, early score — so without
+    them recorded here the comparison cannot be made at all later, and a pool
+    that halved would be indistinguishable from one that was always small.
+    """
+    address = payload.get("contract_address")
+    report = service.robinhood_discovery
+    candidate = None
+    if address and report is not None:
+        candidate = next(
+            (c for c in report.candidates if c.address.lower() == address.lower()), None
+        )
+
+    if candidate is not None:
+        defaults = {
+            "symbol": candidate.symbol,
+            "entry_price": candidate.price_usd,
+            "entry_early": candidate.early.score if candidate.early else None,
+            "entry_explosion": candidate.explosion.score if candidate.explosion else None,
+            "entry_safety": candidate.safety.score if candidate.safety else None,
+            "entry_confidence": candidate.confidence.score if candidate.confidence else None,
+            "entry_maturity": candidate.maturity.score if candidate.maturity else None,
+            "entry_liquidity_usd": candidate.liquidity_usd,
+            "entry_rug_risk": candidate.safety.rug_risk.value if candidate.safety else None,
+            "entry_reasons": (candidate.early.why[:8] if candidate.early else []),
+        }
+        for key, value in defaults.items():
+            if payload.get(key) is None:
+                payload[key] = value
+
+    payload["opened_ms"] = SYSTEM_CLOCK.now_ms()
+    payload["chain"] = "ROBINHOOD"
+    payload["chain_id"] = ROBINHOOD_CHAIN_ID
+    payload["data_source"] = "GECKOTERMINAL"
+    # A Robinhood position is never synthetic: there is no fixture chain. If one
+    # is ever added it must set this itself rather than inherit a false here.
+    payload["synthetic"] = False
     return payload
 
 
@@ -443,6 +492,17 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
         payload = report.to_dict()
         payload["state"] = "OK" if report.candidates else ("FAILED" if report.errors else "EMPTY")
         return payload
+
+    @app.post("/api/robinhood/positions/watch", tags=["providers"])
+    async def robinhood_watch_positions():
+        """Re-read the held Robinhood tokens now.
+
+        Costs one indexer request per held token plus one batched safety
+        request; the report states what it actually spent. It records and
+        recommends — it never opens or closes anything.
+        """
+        report = await get_service().watch_robinhood_positions()
+        return report.to_dict()
 
     @app.get("/api/config", tags=["status"])
     async def config():
@@ -1032,6 +1092,27 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
         service = get_service()
         service.ensure_db()
         payload = body.model_dump()
+
+        # Two universes, two ways of describing an entry. Routing on the chain
+        # rather than guessing keeps a contract address from being looked up in
+        # the Binance scan, where it could only ever be absent.
+        if (body.chain or "").upper() == "ROBINHOOD" or body.contract_address:
+            payload = _merge_robinhood_context(payload, service)
+            if payload.get("entry_price") is None:
+                raise HTTPException(
+                    400,
+                    "aucun prix connu pour ce contrat — indiquez `entry_price`, ou "
+                    "relancez une recherche pour qu'il soit dans le dernier résultat",
+                )
+            try:
+                position = await asyncio.to_thread(repo.open_position, payload)
+            except Exception as exc:
+                log.error("open_position_failed", error=type(exc).__name__)
+                raise HTTPException(
+                    503, f"la position n'a pas pu être enregistrée ({type(exc).__name__})"
+                ) from exc
+            service._get_robinhood_watcher().forget(position["symbol"])
+            return position
 
         result = service.find(body.symbol)
         signal = None

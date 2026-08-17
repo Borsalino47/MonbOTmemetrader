@@ -391,6 +391,15 @@ class PositionRecord(Base):
     entry_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     entry_maturity: Mapped[float | None] = mapped_column(Float, nullable=True)
     entry_rvol: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # --- Robinhood entry context ---------------------------------------------- #
+    # Additive and nullable, so an existing journal migrates without losing a
+    # row (spec §45). A Binance position leaves these null; a Robinhood one
+    # needs them because its health engine measures *change since entry*, and
+    # without the baseline the comparison cannot be made at all.
+    entry_early: Mapped[float | None] = mapped_column(Float, nullable=True)
+    entry_liquidity_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    entry_rug_risk: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    chain_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     entry_state: Mapped[str | None] = mapped_column(String(16), nullable=True)
     entry_regime: Mapped[str | None] = mapped_column(String(24), nullable=True)
     entry_reasons: Mapped[list] = mapped_column(JSON, default=list)

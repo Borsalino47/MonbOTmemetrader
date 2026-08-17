@@ -364,6 +364,23 @@ class GeckoTerminalClient:
     async def trending_pools(self, page: int = 1) -> list[PoolSnapshot]:
         return await self._pools(f"/networks/{self.network}/trending_pools", page)
 
+    async def token_pools(self, token_address: str, page: int = 1) -> list[PoolSnapshot]:
+        """Every pool this indexer knows for one token.
+
+        This is how a *held* token is re-read: `new_pools` only ever returns
+        recently created ones, so a position opened two days ago has long since
+        fallen out of the only listing the discovery search looks at.
+
+        Deliberately one request per token. The reference client exposes
+        `/pools/multi/{addresses}`, which takes *pool* addresses rather than
+        token addresses, and no token->pools batch endpoint exists — claiming
+        one request for ten tokens would be a cost this connector cannot
+        actually deliver.
+        """
+        return await self._pools(
+            f"/networks/{self.network}/tokens/{token_address}/pools", page
+        )
+
     async def list_networks(self) -> list[str]:
         """Network ids the indexer knows. Used by the doctor to prove that
         `robinhood` is one of them rather than assuming it."""

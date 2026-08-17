@@ -189,6 +189,9 @@ class ScannerService:
         self._goplus: GoPlusClient | None = None
         self._dexscreener: DexScreenerClient | None = None
         self.robinhood_discovery: RobinhoodDiscoveryReport | None = None
+        # Built on first use, like the other Robinhood clients: a user who never
+        # opens the Robinhood tab must not pay for it at startup (spec §41-42).
+        self._robinhood_watcher = None
         self._discovery_task: asyncio.Task | None = None
         self._discovery_lock = asyncio.Lock()
 
@@ -381,6 +384,28 @@ class ScannerService:
             self.robinhood_discovery = report
             return report
 
+    async def watch_robinhood_positions(self):
+        """One pass over the held Robinhood tokens. Never raises.
+
+        Deliberately *not* part of the discovery search. Discovery reads the
+        chain's newest pools, and a token bought two days ago fell out of that
+        window long ago — the search that found it will never look at it again.
+        """
+        watcher = self._get_robinhood_watcher()
+        return await watcher.run_once()
+
+    def _get_robinhood_watcher(self):
+        from cryptopulse.trading.robinhood_watcher import RobinhoodPositionWatcher
+
+        if self._robinhood_watcher is None:
+            self._robinhood_watcher = RobinhoodPositionWatcher(
+                self.settings.robinhood,
+                self._get_gecko(),
+                self._get_goplus(),
+                clock=SYSTEM_CLOCK,
+            )
+        return self._robinhood_watcher
+
     def ensure_robinhood_discovery(self) -> None:
         """Kick a first search in the background, once, on demand.
 
@@ -415,6 +440,12 @@ class ScannerService:
             "live_verified": self.robinhood_chain.verified,
             "market_data_available": market_data,
             "discovery": discovery.to_dict() if discovery is not None else None,
+            # Null until someone holds something on this chain — an empty
+            # watcher is not a failed one, and rendering it as a state would
+            # make an ordinary "nothing held" look like a broken loop.
+            "position_watcher": (
+                self._robinhood_watcher.status() if self._robinhood_watcher else None
+            ),
             "sources": [
                 {
                     "id": "RPC",

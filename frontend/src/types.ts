@@ -589,7 +589,16 @@ export interface TradeDecision {
 export interface Position {
   id: number;
   symbol: string;
+  /** CEX or ROBINHOOD. The two universes are never blended (spec §4), so this
+   *  is what tells a position which engines judged it. */
   chain: string;
+  chain_id: number | null;
+  contract_address: string | null;
+  /** Robinhood baselines. Null on a Binance position; on a Robinhood one they
+   *  are what its health engine measures change against. */
+  entry_early: number | null;
+  entry_liquidity_usd: number | null;
+  entry_rug_risk: string | null;
   signal_id: number | null;
   status: 'OPEN' | 'CLOSED';
   opened_at: string | null;

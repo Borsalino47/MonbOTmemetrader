@@ -171,6 +171,13 @@ class RobinhoodSettings(BaseSettings):
     # is what decides whether MEDIUM is tolerable for a purchase.
     buy_max_rug_risk: str = "LOW"
 
+    # --- position watcher (Robinhood) ---------------------------------------- #
+    # Bounded because the pool lookup is one request per held token: the indexer
+    # has no token->pools batch endpoint, so an unbounded list would turn a long
+    # portfolio into a rate-limit ban.
+    max_tracked_positions: int = 20
+    position_watch_interval_seconds: int = 30
+
     # SURVEILLER, for tokens that are not buys but are worth a second look.
     watch_min_early: float = 55.0
     watch_min_confidence: float = 40.0

@@ -297,6 +297,80 @@ class RobinhoodTradeDecisionEngine:
         decision.risks = [c.why for c in failed][:4] or _token_risks(candidate)[:4]
         return decision
 
+    # -------------------------------------------------------------- holding #
+
+    def decide_position(self, position, candidate, health, exit_risk, *, now_ms, current_price=None):
+        """What to do about a token already held: 🔵 / 🟡 / 🟠 / 🔴.
+
+        ACHETER is deliberately not among the answers. Recommending a purchase
+        of something already owned is a different instruction — adding to a
+        position — which this product does not model and must not appear to.
+
+        The rules are ordered by how much argument they need. A broken
+        invalidation needs none: it was agreed before the position existed and
+        it ends the thesis whatever the flow is doing (invariant 51).
+        """
+        price = current_price if current_price is not None else candidate.price_usd
+        decision = RobinhoodTradeDecision(
+            address=candidate.address,
+            symbol=candidate.symbol,
+            action=TradeAction.HOLD,
+            strength=None,
+            timestamp_ms=now_ms,
+            price_usd=price,
+            weights_fingerprint=self.weights_fingerprint,
+        )
+        decision.risks = exit_risk.messages(6)
+
+        # 1. The terms of the trade. Nothing outranks this, by design.
+        if exit_risk.invalidation_broken:
+            decision.action = TradeAction.SELL
+            decision.blocking = [
+                "SETUP INVALIDÉ — la raison initiale de l'achat n'est plus valide"
+            ]
+            return decision
+
+        critical = exit_risk.critical
+        if critical:
+            decision.action = TradeAction.SELL
+            decision.blocking = [s.message for s in critical]
+            return decision
+
+        # 2. An unknown health is not a bad one (invariant 50). On a chain whose
+        #    indexers are young, a failed request is ordinary, and telling
+        #    someone to sell because of one is the worst false alarm here.
+        score = health.score
+        if score is None:
+            decision.action = TradeAction.WATCH
+            decision.reasons = [
+                "santé de la position non calculable — trop de données manquantes ce cycle"
+            ]
+            decision.risks = decision.risks or ["données insuffisantes pour juger"]
+            return decision
+
+        # 3. Weight of evidence, counted by severity rather than summed.
+        major = len(exit_risk.major)
+        minor = len(exit_risk.minor)
+
+        if score < 30.0 or major >= 3:
+            decision.action = TradeAction.SELL
+            decision.blocking = [s.message for s in exit_risk.major[:4]]
+            return decision
+
+        if score < 50.0 or major >= 2:
+            decision.action = TradeAction.REDUCE
+            decision.reasons = health.reasons()[:2]
+            return decision
+
+        if score < 70.0 or major >= 1 or minor >= 3:
+            decision.action = TradeAction.WATCH
+            decision.reasons = health.reasons()[:3]
+            return decision
+
+        decision.action = TradeAction.HOLD
+        decision.reasons = health.reasons()[:4]
+        return decision
+
     # --------------------------------------------------------------- checks #
 
     def _hard_vetoes(self, candidate, cross_check) -> list[str]:

@@ -252,7 +252,23 @@ function PositionCard({
         <button className="pos-sym" onClick={() => onSelect(position.symbol)}>
           {position.symbol}
         </button>
+        {/* Which universe this position lives in. Not decoration: the two are
+            never blended, and a FRONG on Robinhood Chain and a FRONG on a
+            centralised venue would otherwise look like the same holding. */}
+        <span className={`pos-chain ${position.chain}`}>
+          {position.chain === 'ROBINHOOD' ? '🟣 ROBINHOOD CHAIN' : '🟡 BINANCE'}
+        </span>
       </div>
+
+      {/* The liquidity baseline, shown only where it exists. On a DEX a pool
+          that halved since entry is the fact that matters most, and it has no
+          equivalent on a listed pair. */}
+      {position.chain === 'ROBINHOOD' && position.entry_liquidity_usd != null && (
+        <div className="pos-chain-line">
+          Liquidité à l'achat {num(position.entry_liquidity_usd, 0)}&#8239;$
+          {position.entry_rug_risk ? ` · rug risk à l'achat ${position.entry_rug_risk}` : ''}
+        </div>
+      )}
 
       <div className="pos-grid">
         <Cell k="Entrée" v={price(position.actual_entry_price ?? position.entry_price)} />

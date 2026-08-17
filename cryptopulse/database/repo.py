@@ -1227,6 +1227,13 @@ def open_position(payload: dict) -> dict:
             entry_confidence=payload.get("entry_confidence"),
             entry_maturity=payload.get("entry_maturity"),
             entry_rvol=payload.get("entry_rvol"),
+            # Robinhood entry context. Null on a Binance position; on a
+            # Robinhood one they are the baseline its health engine measures
+            # *change* against, and without them the comparison cannot be made.
+            entry_early=payload.get("entry_early"),
+            entry_liquidity_usd=payload.get("entry_liquidity_usd"),
+            entry_rug_risk=_clip(payload.get("entry_rug_risk"), 16),
+            chain_id=payload.get("chain_id"),
             entry_state=payload.get("entry_state"),
             entry_regime=payload.get("entry_regime"),
             entry_reasons=(payload.get("entry_reasons") or [])[:8],
@@ -1470,6 +1477,10 @@ def _position_to_dict(r: PositionRecord) -> dict:
         "entry_confidence": r.entry_confidence,
         "entry_maturity": r.entry_maturity,
         "entry_rvol": r.entry_rvol,
+        "entry_early": r.entry_early,
+        "entry_liquidity_usd": r.entry_liquidity_usd,
+        "entry_rug_risk": r.entry_rug_risk,
+        "chain_id": r.chain_id,
         "entry_state": r.entry_state,
         "entry_regime": r.entry_regime,
         "entry_reasons": r.entry_reasons,
