@@ -74,8 +74,10 @@ that justifies it.
 | Feed verification (`providers/verify.py`) | **TESTED** | One definition of LIVE VERIFIED, shared by `doctor` and the service |
 | Schema migration (`database/migrate.py`) | **TESTED** | Additive columns only; refuses destructive changes |
 | Hybrid Android scripts (`scripts/android_env.sh`) | **TESTED — NOT DEVICE VERIFIED** | 32 tests incl. a fake `proot-distro` recording argv. Termux build / PRoot backend split. Never run on Android |
+| **Robinhood Chain RPC (`providers/robinhood.py`)** | **IMPLEMENTED — NOT LIVE VERIFIED** | 17 tests vs mocked JSON-RPC. Chain id 4663. Host refused by this sandbox (403, same as Binance was); `doctor-robinhood` is the check |
+| Robinhood Chain doctor (`providers/robinhood_verify.py`) | **TESTED** | 🟢 VERIFIED / 🟡 PARTIAL / 🔴 FAILED — core vs liveness split. Independent of Binance by construction |
 
-**Test suite: 644 tests, all passing.** Run `pytest -q`.
+**Test suite: 661 tests, all passing.** Run `pytest -q`.
 
 ---
 
@@ -236,7 +238,7 @@ frontend/                Vite + React 18 + TypeScript (strict), mobile-first
   HomeView               The five-second view: can I trust it, and what moved
   AssetCards             The scanner as cards; the table is wide-screen only
   bottom-nav             Thumb-reachable navigation, phones only
-tests/                   644 tests
+tests/                   661 tests
 pine/                    TradingView companion scripts
 ```
 

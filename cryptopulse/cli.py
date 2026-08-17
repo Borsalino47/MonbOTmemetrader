@@ -304,8 +304,8 @@ async def _diagnose_egress(host: str) -> list[str]:
         out += [
             "",
             "  A sandbox egress gateway refused this host — the request never",
-            "  reached the exchange. This is an environment setting, not a fault",
-            "  in the connector and not a problem with Binance.",
+            "  reached the provider. This is an environment setting, not a fault",
+            "  in the connector and not a problem with the venue or chain.",
             "",
             "  If you are on Claude Code on the web: open claude.ai/code, click the",
             "  cloud icon above the message box, hover your environment and open its",
@@ -643,6 +643,41 @@ def cmd_db_path(args) -> int:
     return 0
 
 
+async def cmd_doctor_robinhood(args) -> int:
+    """The Robinhood Chain doctor — §59: runnable on the phone, prints its proof.
+
+    Entirely independent of the Binance doctor: a green Binance says nothing
+    about this chain, and the two never share a check or a verdict.
+    """
+    from cryptopulse.providers.robinhood import ROBINHOOD_CHAIN_ID, RobinhoodRpc
+    from cryptopulse.providers.robinhood_verify import verify_robinhood_chain
+
+    settings = get_settings()
+    rpc = RobinhoodRpc(settings.robinhood)
+    print(
+        f"\nCRYPTO PULSE AI — Robinhood Chain doctor"
+        f"\nendpoint: {rpc.endpoint_host}  chaîne attendue: {ROBINHOOD_CHAIN_ID}\n" + "-" * 68
+    )
+
+    result = await verify_robinhood_chain(rpc, timeout_seconds=30.0)
+    for check in result.checks:
+        flag = "PASS" if check.ok else "FAIL"
+        core = " (bloquant)" if check.core and not check.ok else ""
+        print(f"  [{flag}] {check.name}{core}" + (f" — {check.detail}" if check.detail else ""))
+
+    print("-" * 68)
+    print(f"{result.emoji} {result.label_fr} — {result.passed}/{len(result.checks)} en {result.duration_ms} ms")
+    if result.error:
+        print(f"   raison : {result.error}")
+    if result.state.value == "FAILED":
+        host = rpc.endpoint_host
+        for line in await _diagnose_egress(host):
+            print(line)
+    print()
+    await rpc.close()
+    return 0 if result.verified else 1
+
+
 async def cmd_notify(args) -> int:
     """Send a real notification, so the round trip can be confirmed on the phone.
 
@@ -725,6 +760,11 @@ def main(argv: list[str] | None = None) -> int:
     p_doc = sub.add_parser("doctor", help="verify the configured provider against its live API")
     _add_provider_flag(p_doc)
 
+    sub.add_parser(
+        "doctor-robinhood",
+        help="verify Robinhood Chain (RPC, chain id 4663, block progression) — independent of Binance",
+    )
+
     p_scan = sub.add_parser("scan", help="run one scan and print the ranking")
     p_scan.add_argument("--limit", type=int, default=30)
     p_scan.add_argument("--json", action="store_true")
@@ -766,6 +806,7 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_db_path(args)
     handler = {
         "doctor": cmd_doctor,
+        "doctor-robinhood": cmd_doctor_robinhood,
         "scan": cmd_scan,
         "backtest": cmd_backtest,
         "resolve": cmd_resolve,

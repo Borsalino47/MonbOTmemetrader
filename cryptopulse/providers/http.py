@@ -136,6 +136,26 @@ class HttpClient:
         await self._client.aclose()
 
     async def get_json(self, path: str, params: dict | None = None, *, weight: int = 1) -> object:
+        return await self._request_json("GET", path, params=params, weight=weight)
+
+    async def post_json(self, path: str, json_body: object, *, weight: int = 1) -> object:
+        """POST with the same limiter, breaker and retry policy as GET.
+
+        Exists for JSON-RPC (Robinhood Chain): every call is a POST to one path,
+        and giving it a separate code path would mean a separate, unexercised
+        retry policy.
+        """
+        return await self._request_json("POST", path, json_body=json_body, weight=weight)
+
+    async def _request_json(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict | None = None,
+        json_body: object | None = None,
+        weight: int = 1,
+    ) -> object:
         if self.breaker.is_open:
             raise CircuitOpen(
                 f"{self.name}: circuit open, retrying in {self.breaker.seconds_until_retry():.0f}s",
@@ -150,7 +170,7 @@ class HttpClient:
             started = time.perf_counter()
             try:
                 async with self._sem:
-                    resp = await self._client.get(url, params=params)
+                    resp = await self._client.request(method, url, params=params, json=json_body)
                 self.last_latency_ms = (time.perf_counter() - started) * 1000
 
                 if resp.status_code in (429, 418):

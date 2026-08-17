@@ -55,6 +55,45 @@ class ProviderSettings(BaseSettings):
     circuit_reset_seconds: float = 60.0
 
 
+class RobinhoodSettings(BaseSettings):
+    """Robinhood Chain (the EVM L2, chain id 4663) — a separate market universe.
+
+    Deliberately its own section rather than more fields on ProviderSettings:
+    the two universes must never share a knob by accident, and every value here
+    is meaningless to Binance. The RPC URL is a setting because the official
+    public endpoint is rate-limited and documented as not-for-production; a
+    user moving to Alchemy/QuickNode/dRPC changes one line of .env, never code.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="CP_ROBINHOOD_", env_file=".env", extra="ignore")
+
+    # Official public RPC. Rate-limited; fine for the doctor and light polling.
+    rpc_url: str = "https://rpc.mainnet.chain.robinhood.com"
+    # Optional second endpoint (Alchemy, QuickNode, dRPC, ...). Failover only —
+    # never a silent primary, so a misconfigured URL is noticed.
+    rpc_fallback_url: str | None = None
+
+    # Conservative: the public endpoint's exact budget is not published, so we
+    # stay far below any plausible limit. ~5 req/s average.
+    rpc_weight_per_minute: int = 300
+    request_timeout_seconds: float = 10.0
+    max_retries: int = 2
+    retry_base_delay_seconds: float = 0.5
+
+    # Optional known contract for the doctor's eth_getCode check ("si
+    # disponible" in the spec). No address is hardcoded here because none could
+    # be verified from the build environment; set one once confirmed on the
+    # explorer and the doctor starts checking it.
+    known_contract_address: str | None = None
+
+    # How far a "latest" block timestamp may lag the local clock before the
+    # chain view is considered incoherent. Generous: covers clock skew without
+    # masking a stalled RPC serving hours-old state.
+    max_block_lag_seconds: float = 120.0
+    # A block from the future beyond this margin means a broken clock somewhere.
+    max_block_future_seconds: float = 30.0
+
+
 class ScannerSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="CP_SCAN_", env_file=".env", extra="ignore")
 
@@ -231,6 +270,7 @@ class CryptoPulseSettings(BaseSettings):
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"])
 
     providers: ProviderSettings = Field(default_factory=ProviderSettings)
+    robinhood: RobinhoodSettings = Field(default_factory=RobinhoodSettings)
     scanner: ScannerSettings = Field(default_factory=ScannerSettings)
     scoring: ScoringSettings = Field(default_factory=ScoringSettings)
     risk: RiskSettings = Field(default_factory=RiskSettings)
