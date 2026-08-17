@@ -290,6 +290,70 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
         """Re-run the feed check on demand. Four requests; never blocks a scan."""
         return (await get_service().verify_feed_now()).to_dict()
 
+    # ------------------------------------------------------------- providers #
+    # The multi-market surface (spec §47). One namespace, never a second copy
+    # of the API: the market is a parameter, not a fork.
+
+    @app.get("/api/providers", tags=["providers"])
+    async def providers():
+        """Both market universes and where each one stands. The UI switch reads
+        this; it never infers a state from a provider name it recognises."""
+        service = get_service()
+        status = service.status()
+        return {
+            "providers": [
+                {
+                    "id": "BINANCE_SPOT",
+                    "label": "BINANCE",
+                    "emoji": "🟡",
+                    "kind": "cex",
+                    "state": service.feed.state.value,
+                    "state_emoji": service.feed.emoji,
+                    "state_label_fr": service.feed.label_fr,
+                    "live_verified": service.live_verified,
+                    "data_mode": status["data_mode"],
+                    "market_data_available": True,
+                },
+                {
+                    "id": "ROBINHOOD_CHAIN",
+                    "label": "ROBINHOOD",
+                    "emoji": "🟣",
+                    "kind": "onchain",
+                    "chain_id": service.robinhood_status()["chain_id"],
+                    "state": service.robinhood_chain.state.value,
+                    "state_emoji": service.robinhood_chain.emoji,
+                    "state_label_fr": service.robinhood_chain.label_fr,
+                    "live_verified": service.robinhood_chain.verified,
+                    "market_data_available": False,
+                },
+            ],
+        }
+
+    @app.get("/api/provider/binance/status", tags=["providers"])
+    async def binance_status():
+        service = get_service()
+        return {
+            "provider": "BINANCE_SPOT",
+            "verification": service.feed.to_dict(),
+            "live_verified": service.live_verified,
+        }
+
+    @app.get("/api/provider/robinhood/status", tags=["providers"])
+    async def robinhood_status():
+        """Chain status, PENDING-first. The first call after a switch answers
+        instantly and kicks the doctor in the background — the ROBINHOOD tab
+        must appear as fast as the BINANCE one (spec §41)."""
+        service = get_service()
+        service.ensure_robinhood_verification()
+        return service.robinhood_status()
+
+    @app.post("/api/provider/robinhood/verify", tags=["providers"])
+    async def robinhood_verify():
+        """Run the chain doctor now and wait for its verdict (the retry button)."""
+        service = get_service()
+        await service.verify_robinhood_now()
+        return service.robinhood_status()
+
     @app.get("/api/config", tags=["status"])
     async def config():
         s = get_settings()

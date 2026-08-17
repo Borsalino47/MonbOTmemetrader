@@ -1207,3 +1207,90 @@ tbody td.sym { font-weight: 600; text-align: left; }
 @media (prefers-reduced-motion: reduce) {
   .feed-badge.PENDING .feed-emoji { animation: none; }
 }
+
+/* ------------------------------------------------------ market switch ---- *
+ * The primary navigation: which universe the screen is about. Deliberately
+ * the largest control in the header — bigger than the tabs, because it
+ * changes more. Binance yellow and Robinhood purple never share a hue with
+ * each other or with a decision colour. */
+
+:root {
+  --market-binance: #f0b90b;   /* Binance yellow */
+  --market-robinhood: #a855f7; /* Robinhood purple */
+}
+
+.market-switch {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  order: -1;                   /* above the tabs, whatever the source order */
+  margin-bottom: 4px;
+}
+
+.market-btn {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 9px 10px;
+  border-radius: 11px;
+  border: 1.5px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: border-color .12s, background .12s, color .12s;
+  min-height: 48px;            /* thumb target */
+}
+
+.market-top { display: flex; align-items: center; gap: 7px; }
+.market-emoji { font-size: 15px; line-height: 1; }
+.market-label { font-size: 13px; font-weight: 700; letter-spacing: .04em; }
+/* The state is always spelled out: colour alone fails in sunlight and for
+   anyone who cannot separate these hues. */
+.market-state { font-size: 10px; color: var(--text-faint); letter-spacing: .02em; }
+
+.market-btn.active { color: var(--text); background: var(--bg-panel-2); }
+.market-btn.active.BINANCE_SPOT {
+  border-color: var(--market-binance);
+  box-shadow: inset 0 0 0 1px rgba(240, 185, 11, .25);
+}
+.market-btn.active.ROBINHOOD_CHAIN {
+  border-color: var(--market-robinhood);
+  box-shadow: inset 0 0 0 1px rgba(168, 85, 247, .25);
+}
+.market-btn.active .market-state { color: var(--text-dim); }
+
+/* ---------------------------------------------------- robinhood view ---- */
+
+.rh-head { border-left: 3px solid var(--market-robinhood); }
+.rh-title { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.rh-title h3 { margin: 0; }
+.rh-chain {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.rh-checks { margin-top: 10px; }
+
+.rh-pending { opacity: .92; }
+.rh-pending h3 { color: var(--text-dim); font-size: 13px; letter-spacing: .03em; }
+.rh-explain { font-size: 12px; color: var(--text-dim); line-height: 1.5; margin: 6px 0 12px; }
+
+.rh-roadmap { list-style: none; padding: 0; margin: 0 0 12px; }
+.rh-roadmap li {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  margin-bottom: 5px;
+  border-radius: 9px;
+  border: 1px dashed var(--border);
+  background: var(--bg-panel-2);
+  font-size: 12px;
+  /* Dimmed and dashed on purpose: these are sections that do not exist yet.
+     Drawn solid with empty contents they would read as "nothing happening". */
+  color: var(--text-faint);
+}
+.rh-icon { font-size: 14px; opacity: .55; }
+.small { font-size: 11px; }

@@ -34,6 +34,17 @@ from cryptopulse.hunter.discovery import PrescanReport, SnapshotMemory, prescan
 from cryptopulse.outcomes.horizons import HORIZONS, HorizonReport, HorizonTracker
 from cryptopulse.outcomes.tracker import OutcomeTracker, ResolutionReport
 from cryptopulse.providers.registry import is_synthetic
+from cryptopulse.providers.robinhood import (
+    ROBINHOOD_CHAIN_ID,
+    ROBINHOOD_NETWORK,
+    ROBINHOOD_PROVIDER_ID,
+    RobinhoodRpc,
+)
+from cryptopulse.providers.robinhood_verify import (
+    ChainState,
+    ChainVerification,
+    verify_robinhood_chain,
+)
 from cryptopulse.providers.verify import FeedState, FeedVerification, verify_feed
 from cryptopulse.scanner.base import ScanReport
 from cryptopulse.scanner.cex import CexScanner
@@ -138,6 +149,14 @@ class ScannerService:
         self.last_deep_scan: DeepScanReport | None = None
         self._deep_lock = asyncio.Lock()
 
+        # The Robinhood universe, entirely lazy (spec §41/§42): no RPC client is
+        # built, no request leaves, no task runs until the user switches to that
+        # market or asks for its status. Startup cost of this block: zero.
+        self._robinhood_rpc: RobinhoodRpc | None = None
+        self.robinhood_chain = ChainVerification(state=ChainState.PENDING, provider="ROBINHOOD-CHAIN-RPC")
+        self._robinhood_task: asyncio.Task | None = None
+        self._robinhood_lock = asyncio.Lock()
+
     # -- lifecycle ----------------------------------------------------------- #
 
     def ensure_db(self) -> None:
@@ -232,8 +251,71 @@ class ScannerService:
         """
         return self.feed.state is FeedState.VERIFIED
 
+    # -- Robinhood Chain (lazy universe) -------------------------------------- #
+
+    def _get_robinhood_rpc(self) -> RobinhoodRpc:
+        if self._robinhood_rpc is None:
+            self._robinhood_rpc = RobinhoodRpc(self.settings.robinhood)
+        return self._robinhood_rpc
+
+    async def verify_robinhood_now(self) -> ChainVerification:
+        """Run the chain doctor. Never raises; a failure is a reported state.
+
+        Entirely independent of the Binance feed: different module, different
+        object, and a green Binance changes nothing here (spec §6).
+        """
+        async with self._robinhood_lock:
+            try:
+                self.robinhood_chain = await verify_robinhood_chain(
+                    self._get_robinhood_rpc(),
+                    timeout_seconds=self.settings.robinhood.request_timeout_seconds * 3,
+                )
+            except Exception as exc:
+                self.robinhood_chain = ChainVerification(
+                    state=ChainState.FAILED,
+                    provider="ROBINHOOD-CHAIN-RPC",
+                    error=f"{type(exc).__name__}",
+                )
+                log.error("robinhood_verification_failed", error=type(exc).__name__)
+            return self.robinhood_chain
+
+    def ensure_robinhood_verification(self) -> None:
+        """Kick the doctor in the background if it has never produced a verdict.
+
+        Called from the status endpoint, so the first switch to the ROBINHOOD
+        tab returns PENDING instantly and the badge resolves a moment later —
+        the same never-block-the-screen contract the Binance check follows.
+        """
+        if self.robinhood_chain.state is not ChainState.PENDING:
+            return
+        if self._robinhood_task is None or self._robinhood_task.done():
+            self._robinhood_task = asyncio.create_task(
+                self.verify_robinhood_now(), name="robinhood-chain-verify"
+            )
+
+    def robinhood_status(self) -> dict:
+        """The ROBINHOOD market's status. Honest about what does not exist yet.
+
+        `market_data_available` is False until the discovery/price phases land;
+        the UI renders NON DISPONIBLE from this flag rather than empty lists
+        that would read as a quiet market (spec §56).
+        """
+        return {
+            "provider": ROBINHOOD_PROVIDER_ID,
+            "network": ROBINHOOD_NETWORK,
+            "chain_id": ROBINHOOD_CHAIN_ID,
+            "verification": self.robinhood_chain.to_dict(),
+            "live_verified": self.robinhood_chain.verified,
+            "market_data_available": False,
+            "note": (
+                "La chaîne est vérifiable ; les données de marché (nouveaux tokens, "
+                "prix, liquidité) arrivent aux phases suivantes et sont NON DISPONIBLES "
+                "d'ici là."
+            ),
+        }
+
     async def stop(self) -> None:
-        for attr in ("_task", "_watch_task", "_boot_task"):
+        for attr in ("_task", "_watch_task", "_boot_task", "_robinhood_task"):
             task = getattr(self, attr)
             if task is not None:
                 task.cancel()
@@ -241,6 +323,9 @@ class ScannerService:
                     await task
                 setattr(self, attr, None)
         await self.scanner.close()
+        if self._robinhood_rpc is not None:
+            await self._robinhood_rpc.close()
+            self._robinhood_rpc = None
         log.info("service_stopped")
 
     async def _loop(self) -> None:

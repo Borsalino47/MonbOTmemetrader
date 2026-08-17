@@ -9,12 +9,15 @@ import { HunterView } from './components/HunterView';
 import { FeedBadge } from './components/FeedBadge';
 import { MeView } from './components/MeView';
 import { InstallPrompt } from './components/InstallPrompt';
+import { MarketSwitch } from './components/MarketSwitch';
+import { RobinhoodView } from './components/RobinhoodView';
 import { PerformanceView } from './components/PerformanceView';
 import { ScannerTable } from './components/ScannerTable';
 import { TopOpportunities } from './components/TopOpportunities';
 import { age, clock } from './format';
 import type {
-  AlertItem, DecisionsResponse, FeedVerification, Health, ScanResponse, ScoreRow,
+  AlertItem, DecisionsResponse, FeedVerification, Health, MarketId, ProviderSummary,
+  RobinhoodStatus, ScanResponse, ScoreRow,
 } from './types';
 
 type Tab = 'home' | 'scanner' | 'hunter' | 'me' | 'alerts' | 'verification' | 'performance';
@@ -24,6 +27,9 @@ type Tab = 'home' | 'scanner' | 'hunter' | 'me' | 'alerts' | 'verification' | 'p
 type Mode = 'simple' | 'expert';
 
 const MODE_KEY = 'cryptopulse.mode';
+/** The chosen market survives a close (spec §3): reopening on ROBINHOOD is the
+ *  whole point of remembering it. */
+const MARKET_KEY = 'cryptopulse.market';
 
 function loadMode(): Mode {
   try {
@@ -33,11 +39,28 @@ function loadMode(): Mode {
   }
 }
 
+function loadMarket(): MarketId {
+  try {
+    return localStorage.getItem(MARKET_KEY) === 'ROBINHOOD_CHAIN'
+      ? 'ROBINHOOD_CHAIN' : 'BINANCE_SPOT';
+  } catch {
+    return 'BINANCE_SPOT';
+  }
+}
+
 const REFRESH_MS = 15_000;
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('home');
   const [mode, setMode] = useState<Mode>(loadMode);
+  const [market, setMarket] = useState<MarketId>(loadMarket);
+  const [providers, setProviders] = useState<ProviderSummary[]>([]);
+  const [robinhood, setRobinhood] = useState<RobinhoodStatus | null>(null);
+  const [verifyingChain, setVerifyingChain] = useState(false);
+
+  useEffect(() => {
+    try { localStorage.setItem(MARKET_KEY, market); } catch { /* storage unavailable */ }
+  }, [market]);
 
   useEffect(() => {
     try { localStorage.setItem(MODE_KEY, mode); } catch { /* storage unavailable */ }
@@ -132,6 +155,52 @@ export default function App() {
     return () => { cancelled = true; if (timer) window.clearTimeout(timer); };
   }, []);
 
+  // The provider list is cheap (in-memory server state) and drives the switch's
+  // two state badges. Polled with the normal refresh, never blocking it.
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const p = await api.providers();
+        if (!cancelled) setProviders(p.providers);
+      } catch { /* the switch keeps its previous states */ }
+    };
+    void tick();
+    const t = setInterval(tick, REFRESH_MS);
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
+
+  // Lazy, exactly as the backend is (spec §42): nothing Robinhood is requested
+  // until the user is actually looking at that market. The first call answers
+  // PENDING immediately and the badge resolves a moment later, so switching
+  // never waits on the network.
+  useEffect(() => {
+    if (market !== 'ROBINHOOD_CHAIN') return;
+    let cancelled = false;
+    let timer: number | undefined;
+    const tick = async () => {
+      try {
+        const s = await api.robinhoodStatus();
+        if (cancelled) return;
+        setRobinhood(s);
+        if (s.verification.state === 'PENDING') timer = window.setTimeout(tick, 700);
+      } catch {
+        if (!cancelled) timer = window.setTimeout(tick, 2000);
+      }
+    };
+    void tick();
+    return () => { cancelled = true; if (timer) window.clearTimeout(timer); };
+  }, [market]);
+
+  async function retryChainVerification() {
+    setVerifyingChain(true);
+    try {
+      setRobinhood(await api.verifyRobinhood());
+    } catch { /* the badge keeps its previous state */ } finally {
+      setVerifyingChain(false);
+    }
+  }
+
   async function retryVerification() {
     setVerifying(true);
     try {
@@ -190,6 +259,23 @@ export default function App() {
   // Server-decided, and it follows the rows on screen: a restored synthetic
   // snapshot stays DEMO even when a real feed is what the next scan will use.
   const isDemo = scanMeta ? scanMeta.data_mode === 'DEMO' : health?.data_mode === 'DEMO';
+
+  // The switch and the chain badge are two renderings of one state, and they
+  // must never disagree (invariant 61, found again here: the 15s provider poll
+  // still showed 🟡 "vérification…" while the badge below already said 🔴).
+  // The dedicated Robinhood poll is the fresher source, so it overrides.
+  const switchProviders = useMemo(() => {
+    if (!robinhood) return providers;
+    return providers.map((p) => (p.id === 'ROBINHOOD_CHAIN'
+      ? {
+        ...p,
+        state: robinhood.verification.state,
+        state_emoji: robinhood.verification.emoji,
+        state_label_fr: robinhood.verification.label_fr,
+        live_verified: robinhood.live_verified,
+      }
+      : p));
+  }, [providers, robinhood]);
   const fromJournal = scanMeta?.source === 'journal';
 
   return (
@@ -200,6 +286,12 @@ export default function App() {
           <span className="ver">{health?.engine_version ?? '—'}</span>
         </div>
 
+        {/* The market switch is the primary navigation between the two
+            universes, so it sits above the tabs and is the biggest control
+            in the header (spec §48). */}
+        <MarketSwitch market={market} onChange={setMarket} providers={switchProviders} />
+
+        {market === 'BINANCE_SPOT' && (
         <nav className="nav">
           <button className={tab === 'home' ? 'active' : ''} onClick={() => setTab('home')}>Accueil</button>
           <button className={tab === 'scanner' ? 'active' : ''} onClick={() => setTab('scanner')}>Scanner</button>
@@ -217,9 +309,11 @@ export default function App() {
             Performance
           </button>
         </nav>
+        )}
 
         {/* Phones get one line, not ten stats: the same facts, in the space a
             phone actually has. The full strip returns on a wide screen. */}
+        {market === 'BINANCE_SPOT' && (
         <div className="status-compact">
           <span className={`dot ${isDemo || providerDown ? 'bad' : 'ok'}`} />
           {/* LIVE means "not generated data". It does not mean the feed has been
@@ -243,7 +337,9 @@ export default function App() {
             {scanning ? '…' : 'Scan'}
           </button>
         </div>
+        )}
 
+        {market === 'BINANCE_SPOT' && (
         <div className="status-strip">
           <div className="stat">
             <span className="k">API</span>
@@ -302,13 +398,14 @@ export default function App() {
             {scanning ? 'Scanning…' : 'Scan now'}
           </button>
         </div>
+        )}
       </header>
 
       {/* The home screen opens with its own trust line, in the same amber, saying
           exactly this. Repeating it immediately below is noise on a phone. The
           warning is never absent: HomeView renders that line unconditionally,
           and every other tab still gets the full banner. */}
-      {isDemo && tab !== 'home' && (
+      {market === 'BINANCE_SPOT' && isDemo && tab !== 'home' && (
         <div className="banner synthetic">
           <strong>DÉMO</strong>
           <span className="banner-short">Chiffres générés — aucun ne vient d'un marché.</span>
@@ -320,7 +417,7 @@ export default function App() {
         </div>
       )}
 
-      {fromJournal && tab !== 'home' && (
+      {market === 'BINANCE_SPOT' && fromJournal && tab !== 'home' && (
         <div className="banner journal">
           <strong>ENREGISTRÉ</strong>
           <span className="banner-short">
@@ -334,7 +431,7 @@ export default function App() {
         </div>
       )}
 
-      {isStale && (
+      {market === 'BINANCE_SPOT' && isStale && (
         <div className="banner stale">
           <strong>PÉRIMÉ</strong>
           <span>La bougie la plus récente a {age(dataAge)}. Ces valeurs ne sont pas en direct.</span>
@@ -344,6 +441,18 @@ export default function App() {
       <InstallPrompt />
 
       <main className="main">
+        {/* ROBINHOOD owns the whole screen when selected: this is a different
+            universe, not a filter over the same rows. Nothing Binance —
+            including its feed badge — is rendered underneath, because two
+            markets' states side by side is precisely the confusion §4 forbids. */}
+        {market === 'ROBINHOOD_CHAIN' ? (
+          <RobinhoodView
+            status={robinhood}
+            onRetry={retryChainVerification}
+            busy={verifyingChain}
+          />
+        ) : (
+        <>
         {/* Above everything: whether what follows can be trusted as live is
             the first question, and it changes while the user is looking. */}
         {feed && (
@@ -473,6 +582,8 @@ export default function App() {
         {tab === 'verification' && <HorizonsView />}
 
         {tab === 'performance' && <PerformanceView />}
+        </>
+        )}
 
         <div className="disclaimer">
           <strong>Opportunity Score is a 0–100 ranking, not a probability.</strong>{' '}
@@ -485,6 +596,7 @@ export default function App() {
 
       {/* Thumb-reachable navigation. Shown only on narrow screens, where the
           top bar is out of reach of a hand holding the phone. */}
+      {market === 'BINANCE_SPOT' && (
       <nav className="bottom-nav">
         <BottomTab id="home" label="Accueil" current={tab} onPick={setTab} />
         <BottomTab id="scanner" label="Scanner" current={tab} onPick={setTab} />
@@ -494,6 +606,7 @@ export default function App() {
         <BottomTab id="verification" label="Vérif." current={tab} onPick={setTab} />
         <BottomTab id="performance" label="Perf." current={tab} onPick={setTab} />
       </nav>
+      )}
 
       {selected && <AssetDrawer symbol={selected} onClose={() => setSelected(null)} />}
     </div>

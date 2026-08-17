@@ -745,3 +745,63 @@ export interface StartupResponse {
   feed_verification: FeedVerification;
   live_verified: boolean;
 }
+
+// --------------------------------------------------------------------- markets
+// Two universes, never blended (spec §4). The market a row belongs to is part
+// of its identity, so it travels with every payload rather than being inferred
+// from a symbol that might exist on both.
+
+export type MarketId = 'BINANCE_SPOT' | 'ROBINHOOD_CHAIN';
+
+/** Chain verification has four states, not three: PARTIAL is reachable-and-
+ *  right-chain but not live-proven, and it licenses nothing. */
+export type ChainState = 'PENDING' | 'VERIFIED' | 'PARTIAL' | 'FAILED';
+
+export interface ProviderSummary {
+  id: MarketId;
+  label: string;
+  emoji: string;
+  kind: 'cex' | 'onchain';
+  chain_id?: number;
+  state: string;
+  state_emoji: string;
+  state_label_fr: string;
+  live_verified: boolean;
+  data_mode?: string;
+  market_data_available: boolean;
+}
+
+export interface ProvidersResponse {
+  providers: ProviderSummary[];
+}
+
+export interface ChainVerification {
+  state: ChainState;
+  emoji: string;
+  label_fr: string;
+  provider: string;
+  endpoint_host: string;
+  chain_id: number | null;
+  latest_block: number | null;
+  latency_ms: number | null;
+  verified: boolean;
+  passed: number;
+  total: number;
+  checks: { name: string; ok: boolean; detail: string; core: boolean }[];
+  duration_ms: number;
+  checked_at_ms: number | null;
+  error: string | null;
+  note: string;
+}
+
+export interface RobinhoodStatus {
+  provider: MarketId;
+  network: string;
+  chain_id: number;
+  verification: ChainVerification;
+  live_verified: boolean;
+  /** False until a real source is integrated. The UI renders NON DISPONIBLE
+   *  from this rather than an empty list, which would read as a quiet market. */
+  market_data_available: boolean;
+  note: string;
+}
