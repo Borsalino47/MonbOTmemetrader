@@ -113,6 +113,25 @@ class RobinhoodSettings(BaseSettings):
     # cannot be entered or exited, whatever its numbers look like.
     discovery_min_liquidity_usd: float = 1_000.0
 
+    # --- safety (GoPlus) ----------------------------------------------------- #
+    goplus_base_url: str = "https://api.gopluslabs.io"
+    goplus_calls_per_minute: int = 24
+    # One request covers many tokens, which is what makes safety affordable on
+    # every discovery rather than on a hand-picked few.
+    goplus_batch_size: int = 30
+    # Below this share of the security checks, the analysis is too thin to
+    # authorise anything. It does not make a token bad — it makes it unknown,
+    # and unknown never becomes a BUY (spec §53).
+    safety_min_coverage: float = 0.5
+    # Taxes above these are treated as hostile rather than merely expensive.
+    safety_max_buy_tax: float = 10.0
+    safety_max_sell_tax: float = 10.0
+    # Concentration at which a single exit moves the price more than the market.
+    safety_max_top10_percent: float = 60.0
+    safety_max_creator_percent: float = 20.0
+    # Below this share of LP locked or burned, the floor can be removed.
+    safety_min_lp_locked_percent: float = 50.0
+
 
 class ScannerSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="CP_SCAN_", env_file=".env", extra="ignore")

@@ -829,6 +829,11 @@ export interface RobinhoodToken {
   volume_acceleration: number | null;
   pool_count: number;
   dex: string | null;
+  /** Null only if the safety pass never ran; the API always attaches a report,
+   *  including an "unanalysed" one. */
+  safety: SafetyReport | null;
+  /** True whenever a purchase is forbidden — including "not analysed". */
+  hard_veto: boolean;
 }
 
 export interface RobinhoodTokensResponse {
@@ -838,10 +843,42 @@ export interface RobinhoodTokensResponse {
   pools_seen?: number;
   pages_read?: number;
   requests?: number;
-  filtered?: { illiquid: number; too_old: number; unknown_age: number };
+  safety_requests?: number;
+  safety_analysed?: number;
+  vetoed?: number;
+  filtered?: { illiquid: number; too_old: number; unknown_age: number; not_a_discovery: number };
   errors?: string[];
   took_ms?: number;
   at_ms?: number | null;
   coverage_note?: string;
   note?: string;
+}
+
+export type RugRisk = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | 'UNKNOWN';
+
+export interface SafetyFinding {
+  code: string;
+  severity: 'CRITICAL' | 'MAJOR' | 'MINOR' | 'UNKNOWN';
+  label_fr: string;
+  detail: string;
+  blocking: boolean;
+}
+
+export interface SafetyReport {
+  address: string;
+  /** null when the analysis is too thin or absent — never 0, which would sort
+   *  an unexamined token next to a proven honeypot. */
+  score: number | null;
+  score_label: string;
+  rug_risk: RugRisk;
+  rug_emoji: string;
+  rug_label_fr: string;
+  hard_veto: boolean;
+  blocking: SafetyFinding[];
+  findings: SafetyFinding[];
+  counts: Record<string, number>;
+  coverage: number;
+  analysed: boolean;
+  engine_version: string;
+  weights_fingerprint: string;
 }

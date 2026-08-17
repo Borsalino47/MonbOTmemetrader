@@ -33,7 +33,9 @@ from cryptopulse.config.settings import RobinhoodSettings
 from cryptopulse.core.clock import SYSTEM_CLOCK, Clock
 from cryptopulse.core.logging import get_logger
 from cryptopulse.providers.geckoterminal import GeckoTerminalClient, PoolSnapshot
+from cryptopulse.providers.goplus import GoPlusClient
 from cryptopulse.providers.robinhood import ROBINHOOD_CHAIN_ID, ROBINHOOD_PROVIDER_ID
+from cryptopulse.risk.robinhood_safety import SafetyReport, assess_safety, unanalysed
 
 log = get_logger("hunter.robinhood")
 
@@ -80,6 +82,9 @@ class TokenCandidate:
     liquidity_is_partial: bool = False
     fdv_usd: float | None = None
     market_cap_usd: float | None = None
+    # None until the safety pass has run for this token. Absent is not clean:
+    # the UI renders "non analysé" and no BUY can be authorised (spec §53).
+    safety: SafetyReport | None = None
 
     @property
     def primary_pool(self) -> PoolSnapshot | None:
@@ -167,6 +172,10 @@ class TokenCandidate:
             "pool_count": len(self.pools),
             "primary_pool": pool.to_dict() if pool else None,
             "dex": pool.dex if pool else None,
+            # Safety travels with the token, never as a separate lookup the UI
+            # could forget to make.
+            "safety": self.safety.to_dict() if self.safety else None,
+            "hard_veto": self.safety.hard_veto if self.safety else True,
         }
 
 
@@ -182,6 +191,8 @@ class RobinhoodDiscoveryReport:
     filtered_too_old: int = 0
     filtered_unknown_age: int = 0
     filtered_not_a_discovery: int = 0
+    safety_requests: int = 0
+    safety_analysed: int = 0
     errors: list[str] = field(default_factory=list)
     took_ms: int = 0
     at_ms: int | None = None
@@ -206,6 +217,9 @@ class RobinhoodDiscoveryReport:
             "pools_seen": self.pools_seen,
             "pages_read": self.pages_read,
             "requests": self.requests,
+            "safety_requests": self.safety_requests,
+            "safety_analysed": self.safety_analysed,
+            "vetoed": sum(1 for c in self.candidates if c.safety and c.safety.hard_veto),
             "filtered": {
                 "illiquid": self.filtered_illiquid,
                 "too_old": self.filtered_too_old,
@@ -305,6 +319,57 @@ async def discover_new_tokens(
         requests=report.requests, ms=report.took_ms,
     )
     return report
+
+
+async def attach_safety(
+    report: RobinhoodDiscoveryReport,
+    goplus: GoPlusClient,
+    settings: RobinhoodSettings,
+    *,
+    chain_id: int = ROBINHOOD_CHAIN_ID,
+    limit: int | None = None,
+) -> None:
+    """Fill in each candidate's safety verdict, in batches. Never raises.
+
+    Batched because a per-token request would spend a whole minute's budget on
+    one cycle. Every token the source said nothing about gets an `unanalysed`
+    report rather than being left as None — a token with no safety object and a
+    token with a clean one must never be the same shape downstream.
+    """
+    if not report.candidates:
+        return
+    targets = report.candidates if limit is None else report.candidates[:limit]
+    addresses = [c.address for c in targets]
+    batch_size = max(1, settings.goplus_batch_size)
+
+    found: dict[str, object] = {}
+    for start in range(0, len(addresses), batch_size):
+        chunk = addresses[start : start + batch_size]
+        try:
+            report.safety_requests += 1
+            found.update(await goplus.token_security(chunk, chain_id=chain_id))
+        except Exception as exc:
+            report.errors.append(f"safety: {type(exc).__name__}")
+            log.warning("robinhood_safety_batch_failed", error=type(exc).__name__, n=len(chunk))
+            # Keep going: the tokens in later batches can still be analysed, and
+            # the ones in this batch fall through to `unanalysed` below.
+
+    for candidate in targets:
+        sec = found.get(candidate.address.lower())
+        if sec is None:
+            candidate.safety = unanalysed(
+                candidate.address, settings, reason="aucune donnée de sécurité pour ce contrat"
+            )
+            continue
+        candidate.safety = assess_safety(sec, settings)
+        report.safety_analysed += 1
+
+    log.info(
+        "robinhood_safety",
+        analysed=report.safety_analysed,
+        requests=report.safety_requests,
+        vetoed=sum(1 for c in targets if c.safety and c.safety.hard_veto),
+    )
 
 
 def _finalise(candidate: TokenCandidate, *, now_ms: int) -> None:

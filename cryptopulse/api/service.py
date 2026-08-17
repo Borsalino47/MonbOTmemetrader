@@ -33,11 +33,13 @@ from cryptopulse.hunter.deep import DeepScanner, DeepScanReport
 from cryptopulse.hunter.discovery import PrescanReport, SnapshotMemory, prescan
 from cryptopulse.hunter.robinhood_discovery import (
     RobinhoodDiscoveryReport,
+    attach_safety,
     discover_new_tokens,
 )
 from cryptopulse.outcomes.horizons import HORIZONS, HorizonReport, HorizonTracker
 from cryptopulse.outcomes.tracker import OutcomeTracker, ResolutionReport
 from cryptopulse.providers.geckoterminal import GeckoTerminalClient
+from cryptopulse.providers.goplus import GoPlusClient
 from cryptopulse.providers.registry import is_synthetic
 from cryptopulse.providers.robinhood import (
     ROBINHOOD_CHAIN_ID,
@@ -183,6 +185,7 @@ class ScannerService:
         # sources that fail separately, so they are verified and reported
         # separately. A live chain with a down indexer is a real state.
         self._gecko: GeckoTerminalClient | None = None
+        self._goplus: GoPlusClient | None = None
         self.robinhood_discovery: RobinhoodDiscoveryReport | None = None
         self._discovery_task: asyncio.Task | None = None
         self._discovery_lock = asyncio.Lock()
@@ -328,6 +331,11 @@ class ScannerService:
             self._gecko = GeckoTerminalClient(self.settings.robinhood, clock=SYSTEM_CLOCK)
         return self._gecko
 
+    def _get_goplus(self) -> GoPlusClient:
+        if self._goplus is None:
+            self._goplus = GoPlusClient(self.settings.robinhood, clock=SYSTEM_CLOCK)
+        return self._goplus
+
     async def discover_robinhood_now(self) -> RobinhoodDiscoveryReport:
         """Search for new tokens. Never raises; a failure is a reported state.
 
@@ -338,6 +346,10 @@ class ScannerService:
             report = await discover_new_tokens(
                 self._get_gecko(), self.settings.robinhood, clock=SYSTEM_CLOCK
             )
+            # Safety is part of discovery, not an optional extra step a caller
+            # could skip: a list of fresh tokens with no rug analysis is exactly
+            # the screen this engine exists to never show.
+            await attach_safety(report, self._get_goplus(), self.settings.robinhood)
             self.robinhood_discovery = report
             return report
 
@@ -410,6 +422,9 @@ class ScannerService:
         if self._gecko is not None:
             await self._gecko.close()
             self._gecko = None
+        if self._goplus is not None:
+            await self._goplus.close()
+            self._goplus = None
         log.info("service_stopped")
 
     async def _loop(self) -> None:

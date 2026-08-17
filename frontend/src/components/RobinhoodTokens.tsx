@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
-import type { RobinhoodToken, RobinhoodTokensResponse } from '../types';
+import type { RobinhoodToken, RobinhoodTokensResponse, SafetyReport } from '../types';
 
 /** New tokens on Robinhood Chain, newest first, filterable by age.
  *
- * Every figure here is either what the indexer returned or an em dash. There is
- * no score on this screen and no BUY: discovery answers "what appeared and when",
- * and mixing a verdict in would make it impossible to tell later whether a bad
- * call came from the search or from the scoring. */
+ * Every figure is either what the source returned or an em dash. There is no
+ * opportunity score here and no BUY — discovery answers "what appeared and
+ * when", and the scores are separate engines in later phases.
+ *
+ * Safety is the exception, and it sits *above* the market figures on purpose:
+ * a token that cannot be sold has no interesting volume, and putting the
+ * numbers first would invite reading them first. */
 export function RobinhoodTokens() {
   const [data, setData] = useState<RobinhoodTokensResponse | null>(null);
   const [bucket, setBucket] = useState<string>('');
@@ -116,12 +119,42 @@ export function RobinhoodTokens() {
 }
 
 function TokenRow({ t }: { t: RobinhoodToken }) {
+  const [open, setOpen] = useState(false);
+  const s = t.safety;
   return (
-    <div className="rh-token">
+    <div className={`rh-token ${t.hard_veto ? 'vetoed' : ''}`}>
       <div className="rh-token-head">
         <span className="rh-sym">{t.symbol ?? '—'}</span>
         <span className="rh-age">{fmtAge(t.pool_age_seconds)}</span>
       </div>
+
+      {/* Safety comes before any market figure. A token that cannot be sold has
+          no interesting volume, and putting the numbers first would invite
+          reading them first. Icon + text + colour, never colour alone. */}
+      {s && (
+        <button className={`rh-risk ${s.rug_risk}`} onClick={() => setOpen(!open)}>
+          <span aria-hidden="true">{s.rug_emoji}</span>
+          <span className="rh-risk-label">{s.rug_label_fr}</span>
+          <span className="rh-risk-score">Sécurité {s.score_label}</span>
+          <span className="rh-risk-more">{open ? '▲' : '▼'}</span>
+        </button>
+      )}
+
+      {s && t.hard_veto && (
+        <div className="rh-veto">
+          <strong>⚫ NE PAS ACHETER</strong>
+          {/* No fallback text here on purpose: the engine guarantees a veto
+              always carries at least one blocking finding, so inventing a
+              reason would only ever paper over a bug. */}
+          <ul>
+            {s.blocking.map((f) => (
+              <li key={f.code}>{f.label_fr}{f.detail ? ` — ${f.detail}` : ''}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {s && open && <SafetyDetail s={s} />}
       <div className="rh-addr" title={t.contract_address}>
         {short(t.contract_address)}
         {t.dex ? <span className="rh-dex">{t.dex}</span> : null}
@@ -141,6 +174,32 @@ function TokenRow({ t }: { t: RobinhoodToken }) {
         <Cell k="Achats/ventes" v={fmtNum(t.buy_sell_ratio_h1, 2)} />
         <Cell k="Accélération" v={fmtNum(t.volume_acceleration, 2, '×')} />
       </div>
+    </div>
+  );
+}
+
+function SafetyDetail({ s }: { s: SafetyReport }) {
+  return (
+    <div className="rh-safety-detail">
+      <div className="rh-safety-counts">
+        {(['CRITICAL', 'MAJOR', 'MINOR', 'UNKNOWN'] as const).map((k) => (
+          <span key={k} className={`rh-count ${k}`}>{k} {s.counts[k] ?? 0}</span>
+        ))}
+      </div>
+      {s.findings.length === 0 && <p className="muted small">Aucun signal négatif détecté.</p>}
+      {s.findings.map((f) => (
+        <div className="rh-finding" key={f.code}>
+          <span className={`rh-sev ${f.severity}`}>{f.severity}</span>
+          <span className="rh-finding-label">
+            {f.label_fr}{f.detail ? <span className="muted"> — {f.detail}</span> : null}
+          </span>
+        </div>
+      ))}
+      <p className="feed-note">
+        {s.engine_version} · empreinte {s.weights_fingerprint} ·
+        {' '}couverture {(s.coverage * 100).toFixed(0)} % des contrôles.
+        {' '}Les pondérations sont une hypothèse, jamais une probabilité.
+      </p>
     </div>
   );
 }

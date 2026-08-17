@@ -77,9 +77,11 @@ that justifies it.
 | **Robinhood Chain RPC (`providers/robinhood.py`)** | **IMPLEMENTED — NOT LIVE VERIFIED** | 17 tests vs mocked JSON-RPC. Chain id 4663. Host refused by this sandbox (403, same as Binance was); `doctor-robinhood` is the check |
 | Robinhood Chain doctor (`providers/robinhood_verify.py`) | **TESTED** | 🟢 VERIFIED / 🟡 PARTIAL / 🔴 FAILED — core vs liveness split. Independent of Binance by construction |
 | **GeckoTerminal client (`providers/geckoterminal.py`)** | **IMPLEMENTED — NOT LIVE VERIFIED** | Contract cross-checked vs `geckoterminal-api` 0.9.0 + published docs. Host refused by this sandbox |
-| Robinhood token discovery (`hunter/robinhood_discovery.py`) | **TESTED** | 20 tests. Age buckets, address identity, NULL never 0. Run end to end against a stubbed indexer only |
+| Robinhood token discovery (`hunter/robinhood_discovery.py`) | **TESTED** | 25 tests. Age buckets, address identity, NULL never 0. Run end to end against a stubbed indexer only |
+| **GoPlus client (`providers/goplus.py`)** | **IMPLEMENTED — NOT LIVE VERIFIED** | Contract read from GoPlus's own Swagger SDK (`goplus` 0.2.5). Host refused by this sandbox |
+| `ROBINHOOD_SAFETY_V1` + RUG_RISK (`risk/robinhood_safety.py`) | **TESTED** | 37 tests. Tri-state flags, veto zeroes the score, unknown never safe. Weights are a hypothesis |
 
-**Test suite: 696 tests, all passing.** Run `pytest -q`.
+**Test suite: 738 tests, all passing.** Run `pytest -q`.
 
 ---
 
@@ -240,7 +242,7 @@ frontend/                Vite + React 18 + TypeScript (strict), mobile-first
   HomeView               The five-second view: can I trust it, and what moved
   AssetCards             The scanner as cards; the table is wide-screen only
   bottom-nav             Thumb-reachable navigation, phones only
-tests/                   696 tests
+tests/                   738 tests
 pine/                    TradingView companion scripts
 ```
 
@@ -655,7 +657,37 @@ Break these and the product is lying to its user.
     nothing is a fact about the chain, while one that failed is a fact about our
     connection. Collapsing them would let an outage look like a calm market.
 
-71. **One repository, mounted at the same path on both sides.** The bind is
+71. **A missing security check is never a passing one.** GoPlus omits checks it
+    could not run rather than returning a negative, so every flag is tri-state
+    and `None` propagates to the screen. Reading an absent `is_honeypot` as "not
+    a honeypot" would turn "we did not look" into "it is safe" — on a token
+    minted four minutes ago, the most expensive mistake this system could make.
+    Below `safety_min_coverage` the verdict is UNKNOWN, which forbids a BUY
+    without claiming the token is bad; those are different sentences and the UI
+    renders them differently.
+
+72. **A safety veto zeroes the score rather than reducing it.** Found by running
+    the scorer: a proven honeypot came out at 70/100 because only the
+    sellability group was lost, and 70 reads as "fine" at a glance. Same rule as
+    the explosion engine's hard gate (invariant 40), and for the same reason — a
+    merely reduced score still outranks a sound token in a sorted list.
+
+73. **Every veto carries its own reason.** Found by running the UI: a token
+    vetoed for HIGH rug risk had an empty `blocking` list, so the screen fell
+    back to "Sécurité non analysée" on a token that had been fully analysed. The
+    engine now guarantees at least one blocking finding whenever `hard_veto` is
+    true, and the UI has no fallback text — inventing a reason would only ever
+    paper over a bug.
+
+74. **A share is normalised to percent exactly once, at parse time.** GoPlus
+    returns fractions (`"0.92"` means 92 %). Comparing those against thresholds
+    expressed in percent broke both directions at once: fully burned liquidity
+    read as 0.92 and was flagged "non verrouillée", while ten holders at 9 %
+    each summed to 0.9 and never tripped a 60 % concentration limit. A clean
+    token looked dangerous and a captured one looked clean. `_percent()` is the
+    only place the conversion happens.
+
+75. **One repository, mounted at the same path on both sides.** The bind is
     `--bind "$ROOT:$ROOT"`, so `frontend/dist`, `.env` and
     `data/cryptopulse.db` are the same files from Termux and from Ubuntu — no
     copy step, and no way for two checkouts to drift while the user cannot tell

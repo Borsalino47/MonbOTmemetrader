@@ -439,3 +439,118 @@ async def test_a_pool_between_two_quote_assets_is_not_a_discovery():
     assert report.filtered_not_a_discovery == 1
     assert "WETH" not in [c.symbol for c in report.candidates]
     await client.close()
+
+
+# --------------------------------------------------------------------------- #
+# Safety attached to discovery
+# --------------------------------------------------------------------------- #
+
+
+class FakeGoPlus:
+    """Records what it was asked, returns what it was told to."""
+
+    def __init__(self, answers: dict, fail: bool = False):
+        self.answers = answers
+        self.fail = fail
+        self.calls: list[list[str]] = []
+
+    async def token_security(self, addresses, *, chain_id):
+        from cryptopulse.providers.goplus import parse_token_security
+
+        self.calls.append(list(addresses))
+        if self.fail:
+            raise RuntimeError("goplus down")
+        return {
+            a.lower(): parse_token_security(a.lower(), self.answers[a.lower()])
+            for a in addresses
+            if a.lower() in self.answers
+        }
+
+
+CLEAN = {
+    "is_honeypot": "0", "cannot_sell_all": "0", "cannot_buy": "0",
+    "buy_tax": "0", "sell_tax": "0", "is_mintable": "0",
+    "owner_change_balance": "0", "can_take_back_ownership": "0",
+    "hidden_owner": "0", "selfdestruct": "0", "is_proxy": "0",
+    "is_blacklisted": "0", "transfer_pausable": "0", "is_open_source": "1",
+    "slippage_modifiable": "0", "owner_percent": "0", "creator_percent": "0.01",
+    "holder_count": "900", "lp_holder_count": "2",
+    "holders": [{"address": "0xa", "percent": "0.04", "is_locked": "0", "is_contract": "0"}],
+    "lp_holders": [{"address": "0x000000000000000000000000000000000000dead",
+                    "percent": "0.95", "is_locked": "0", "is_contract": "0"}],
+}
+
+
+async def _discovered(**over):
+    payload = envelope(
+        [pool_entry(address="0xa", base_id="robinhood_" + XYZ, quote_id="robinhood_" + WETH),
+         pool_entry(address="0xb", base_id="robinhood_" + FOO, quote_id="robinhood_" + WETH)],
+        STD_INCLUDED,
+    )
+    client = _client(one_page(payload), discovery_pages=1, **over)
+    report = await discover_new_tokens(client, client.settings, clock=FrozenClock(FIXED_NOW_MS))
+    await client.close()
+    return report, RobinhoodSettings(**over)
+
+
+async def test_safety_is_attached_to_every_candidate():
+    from cryptopulse.hunter.robinhood_discovery import attach_safety
+
+    report, settings = await _discovered()
+    gp = FakeGoPlus({XYZ.lower(): CLEAN, FOO.lower(): {**CLEAN, "is_honeypot": "1"}})
+    await attach_safety(report, gp, settings)
+
+    by_symbol = {c.symbol: c for c in report.candidates}
+    assert by_symbol["XYZ"].safety.hard_veto is False
+    assert by_symbol["FOO"].safety.hard_veto is True
+    assert report.safety_analysed == 2
+
+
+async def test_a_token_the_security_source_ignores_is_vetoed_not_cleared():
+    """The most dangerous default in this whole phase: no answer becoming a
+    pass. A brand-new contract is exactly what GoPlus has not analysed yet."""
+    from cryptopulse.hunter.robinhood_discovery import attach_safety
+
+    report, settings = await _discovered()
+    gp = FakeGoPlus({XYZ.lower(): CLEAN})   # nothing for FOO
+    await attach_safety(report, gp, settings)
+
+    foo = next(c for c in report.candidates if c.symbol == "FOO")
+    assert foo.safety is not None, "a missing verdict must still be a verdict object"
+    assert foo.safety.analysed is False
+    assert foo.safety.score is None
+    assert foo.safety.hard_veto is True
+
+
+async def test_a_failing_security_source_vetoes_rather_than_clears():
+    from cryptopulse.hunter.robinhood_discovery import attach_safety
+
+    report, settings = await _discovered()
+    await attach_safety(report, FakeGoPlus({}, fail=True), settings)
+    assert all(c.safety.hard_veto for c in report.candidates)
+    assert report.errors
+
+
+async def test_safety_is_batched_and_states_its_request_cost():
+    """One request per batch, not per token: a 30-per-minute budget cannot
+    survive a per-token loop, and a search that quietly spent it would be
+    discovered as a ban rather than as a number."""
+    from cryptopulse.hunter.robinhood_discovery import attach_safety
+
+    report, settings = await _discovered(goplus_batch_size=30)
+    gp = FakeGoPlus({XYZ.lower(): CLEAN, FOO.lower(): CLEAN})
+    await attach_safety(report, gp, settings)
+    assert len(gp.calls) == 1
+    assert report.safety_requests == 1
+    assert report.to_dict()["safety_requests"] == 1
+
+
+async def test_the_row_carries_its_veto_for_the_ui():
+    from cryptopulse.hunter.robinhood_discovery import attach_safety
+
+    report, settings = await _discovered()
+    await attach_safety(report, FakeGoPlus({XYZ.lower(): {**CLEAN, "is_honeypot": "1"}}), settings)
+    rows = {r["symbol"]: r for r in report.to_dict()["tokens"]}
+    assert rows["XYZ"]["hard_veto"] is True
+    assert rows["XYZ"]["safety"]["rug_risk"] == "CRITICAL"
+    assert report.to_dict()["vetoed"] == 2   # FOO had no data, so it is vetoed too

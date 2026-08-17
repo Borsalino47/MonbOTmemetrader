@@ -1346,3 +1346,51 @@ tbody td.sym { font-weight: 600; text-align: left; }
 @media (max-width: 380px) {
   .rh-token-grid { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* ---------------------------------------------------- robinhood safety --- */
+
+.rh-token.vetoed { border-color: rgba(255, 92, 92, .35); }
+
+.rh-risk {
+  display: flex; align-items: center; gap: 7px; width: 100%;
+  margin: 2px 0 8px; padding: 6px 9px;
+  border-radius: 8px; border: 1px solid var(--border);
+  background: var(--bg-panel); color: var(--text-dim);
+  font-size: 11px; cursor: pointer; text-align: left;
+}
+.rh-risk-label { font-weight: 650; letter-spacing: .02em; }
+.rh-risk-score { margin-left: auto; font-variant-numeric: tabular-nums; }
+.rh-risk-more { color: var(--text-faint); }
+.rh-risk.LOW      { border-color: rgba(38,217,127,.35);  color: var(--up); }
+.rh-risk.MEDIUM   { border-color: rgba(255,176,32,.35);  color: var(--warn); }
+.rh-risk.HIGH     { border-color: rgba(255,140,32,.45);  color: #ff8c20; }
+.rh-risk.CRITICAL { border-color: rgba(255,92,92,.45);   color: var(--down); }
+/* UNKNOWN never borrows LOW's green: "nothing found" and "nothing checked"
+   are different sentences and must not look alike. */
+.rh-risk.UNKNOWN  { border-color: var(--border-strong);  color: var(--text-dim); }
+
+.rh-veto {
+  border: 1px solid rgba(255,92,92,.4); background: rgba(255,92,92,.07);
+  border-radius: 8px; padding: 7px 10px; margin-bottom: 8px;
+}
+.rh-veto strong { font-size: 11.5px; color: var(--down); letter-spacing: .03em; }
+.rh-veto ul { margin: 4px 0 0; padding-left: 16px; }
+.rh-veto li { font-size: 11px; color: var(--text-dim); line-height: 1.45; }
+
+.rh-safety-detail { margin: 2px 0 9px; }
+.rh-safety-counts { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 7px; }
+.rh-count {
+  font-size: 9.5px; padding: 2px 6px; border-radius: 999px;
+  border: 1px solid var(--border); color: var(--text-faint);
+}
+.rh-count.CRITICAL { color: var(--down); border-color: rgba(255,92,92,.35); }
+.rh-count.MAJOR    { color: var(--warn); border-color: rgba(255,176,32,.35); }
+
+.rh-finding { display: flex; gap: 7px; align-items: baseline; padding: 3px 0; }
+.rh-sev {
+  font-size: 8.5px; letter-spacing: .04em; flex: 0 0 auto;
+  min-width: 54px; color: var(--text-faint);
+}
+.rh-sev.CRITICAL { color: var(--down); }
+.rh-sev.MAJOR    { color: var(--warn); }
+.rh-finding-label { font-size: 11px; line-height: 1.4; }
