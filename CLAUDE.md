@@ -92,9 +92,10 @@ that justifies it.
 | Robinhood outcomes (`outcomes/robinhood_outcomes.py`) | **TESTED** | 24 tests. Resolves exactly from pool OHLCV, so a decision from last week is gradeable today |
 | Robinhood statistics (`outcomes/robinhood_stats.py`) | **TESTED** | `by_action` is the table that matters: 🟢 must beat 🟡 must beat ⚫. Every rate carries its `n` |
 | Robinhood notifications (`alerts/robinhood_notify.py`) | **TESTED — NOT DEVICE VERIFIED** | 30 tests against a stand-in binary. 🟢 once per token, 🔴/🟠 never rate-limited |
+| Robinhood retention + migration | **TESTED** | 12 tests. Never prunes a decision still owing a window; new tables land on an old database |
 | **French localisation (`cryptopulse/i18n/`, `frontend/src/i18n/fr.ts`)** | **TESTED** | 46 anti-English tests. 240 catalogue entries + 50 enum labels + 42 UI labels. Rendered at emission, no network, no model |
 
-**Test suite: 998 tests, all passing.** Run `pytest -q`.
+**Test suite: 1010 tests, all passing.** Run `pytest -q`.
 
 ---
 
@@ -268,7 +269,7 @@ frontend/                Vite + React 18 + TypeScript (strict), mobile-first
   HomeView               The five-second view: can I trust it, and what moved
   AssetCards             The scanner as cards; the table is wide-screen only
   bottom-nav             Thumb-reachable navigation, phones only
-tests/                   998 tests
+tests/                   1010 tests
 pine/                    TradingView companion scripts
 ```
 
@@ -919,6 +920,17 @@ Break these and the product is lying to its user.
     parametrized tests now walk all twelve Robinhood modules for a decimal
     point and for a plain space before `%`.
 
+104. **Retention treats the Robinhood journal exactly like the Binance one.** A
+    decision is droppable only once all four of its windows exist. The rows
+    still owing an answer are precisely the ones about to become evidence, and
+    losing them would look like a quiet chain rather than a bug (invariant 19).
+
+105. **The Robinhood half costs nothing until someone opens it.** No client, no
+    watcher and no tracker is built in `__init__`; each has a `_get_*` built on
+    first use. Measured across three cold launches after every Robinhood phase
+    landed: 1328 ms to first HTTP, with zero Robinhood, GeckoTerminal, GoPlus
+    or DexScreener lines in the boot log (spec §41-42).
+
 ---
 
 ## 6. Design decisions and why
@@ -1082,8 +1094,14 @@ pytest tests/test_no_lookahead.py -v    # the ones that matter most
 
 ## 9. Next steps, in order
 
-1. **Run `doctor` in an environment with egress.** Fix any field-mapping
-   mismatch it reports. Only then is anything else worth doing.
+1. **Run `doctor` and `doctor-robinhood` in an environment with egress.** Fix
+   any field-mapping mismatch they report. Only then is anything else worth
+   doing. Five connectors are now IMPLEMENTED — NOT LIVE VERIFIED for the same
+   single reason (this sandbox refuses their hosts): Binance, Kraken, the
+   Robinhood Chain RPC, GeckoTerminal, GoPlus and DexScreener. Each contract
+   was cross-checked against the vendor's own published client read from PyPI,
+   which proves the connector and that client agree — not that the live API
+   matches either.
 2. **Let it run and accumulate signals.** The journal is the point; nothing can
    be validated without a few thousand real rows.
 3. ~~Build the outcome tracker.~~ **Done.** `outcomes/tracker.py` grades signals

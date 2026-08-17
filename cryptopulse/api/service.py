@@ -558,6 +558,7 @@ class ScannerService:
         list that would read as a quiet chain.
         """
         discovery = self.robinhood_discovery
+        rh = self.settings.robinhood
         # A search that ran and returned rows is the only thing that makes
         # market data "available". Not a configured URL, not a live chain.
         market_data = bool(discovery is not None and discovery.candidates)
@@ -589,6 +590,28 @@ class ScannerService:
                     "state": _discovery_state(discovery),
                 },
             ],
+            # What the whole Robinhood half costs, on one screen. Stated rather
+            # than estimated: a budget nobody can see is a rate-limit ban
+            # waiting to be discovered as an outage (invariant 28).
+            "request_budget": {
+                "geckoterminal_per_minute": rh.geckoterminal_calls_per_minute,
+                "goplus_per_minute": rh.goplus_calls_per_minute,
+                "discovery_per_cycle": (
+                    (discovery.requests + discovery.safety_requests)
+                    if discovery is not None
+                    else None
+                ),
+                "watcher_per_cycle": (
+                    self._robinhood_watcher.last_report.requests_used
+                    if self._robinhood_watcher and self._robinhood_watcher.last_report
+                    else None
+                ),
+                "note": (
+                    "La recherche coûte une requête par page plus une par lot de "
+                    "trente pour la sécurité. La surveillance coûte une requête par "
+                    "token détenu : l'indexeur n'offre pas de lot token → pools."
+                ),
+            },
             "note": (
                 "La chaîne et l'indexeur sont deux sources distinctes : l'une peut "
                 "répondre pendant que l'autre est en panne, et chacune a son propre état."

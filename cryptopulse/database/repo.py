@@ -767,11 +767,42 @@ def prune(retention_days: int, *, operational_days: int | None = None) -> dict:
             ).rowcount
             session.execute(delete(SignalRecord).where(SignalRecord.id.in_(doomed)))
 
+        # The Robinhood journal follows exactly the same rule (invariant 19): a
+        # decision is only droppable once all four of its windows exist. A row
+        # still owing one is the row about to become evidence, and losing it
+        # would look like a quiet chain rather than a bug.
+        settled_rh = (
+            select(RobinhoodHorizonRecord.signal_id)
+            .group_by(RobinhoodHorizonRecord.signal_id)
+            .having(func.count(RobinhoodHorizonRecord.id) >= wanted_horizons)
+        )
+        rh_doomed = [
+            row[0]
+            for row in session.execute(
+                select(RobinhoodSignalRecord.id).where(
+                    RobinhoodSignalRecord.timestamp_ms < signal_cutoff,
+                    RobinhoodSignalRecord.id.in_(settled_rh),
+                )
+            ).all()
+        ]
+        rh_horizons = 0
+        if rh_doomed:
+            rh_horizons = session.execute(
+                delete(RobinhoodHorizonRecord).where(
+                    RobinhoodHorizonRecord.signal_id.in_(rh_doomed)
+                )
+            ).rowcount
+            session.execute(
+                delete(RobinhoodSignalRecord).where(RobinhoodSignalRecord.id.in_(rh_doomed))
+            )
+
         session.commit()
 
     removed = {
         "signals": len(doomed),
         "signal_horizons": horizons,
+        "robinhood_signals": len(rh_doomed),
+        "robinhood_horizons": rh_horizons,
         "score_points": score_points,
         "scan_runs": scan_runs,
         "alerts": alerts,
