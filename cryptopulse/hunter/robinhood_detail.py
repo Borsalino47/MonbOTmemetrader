@@ -107,7 +107,7 @@ class CrossCheck:
         out: list[str] = []
         for c in self.disagreements:
             out.append(
-                f"{c.label_fr} : {c.drift_pct:.0f} % d'écart entre les deux sources"
+                f"{c.label_fr} : {c.drift_pct:.0f}\u202f% d'écart entre les deux sources"
                 if c.drift_pct is not None
                 else f"{c.label_fr} : sources en désaccord"
             )

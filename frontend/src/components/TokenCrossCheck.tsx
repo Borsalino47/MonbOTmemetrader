@@ -1,4 +1,4 @@
-import { num } from '../format';
+import { num, price } from '../format';
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import type { TokenDetail } from '../types';
@@ -93,7 +93,8 @@ function fmt(v: number | null): string {
   // Significant digits rather than fixed decimals below 1. Found by running
   // it: a 32 % price disagreement rendered as "0.03 | 0.05", which reads as a
   // rounding artefact — the table would have been hiding the exact thing it
-  // exists to show.
-  if (v !== 0 && Math.abs(v) < 1) return v.toPrecision(3);
+  // exists to show. `price()` applies the same rule and the French comma;
+  // `toPrecision` wrote an English decimal point.
+  if (v !== 0 && Math.abs(v) < 1) return price(v);
   return num(v, 2);
 }

@@ -297,13 +297,16 @@ def test_no_component_renders_a_number_with_an_ascii_decimal_point():
     for path in FRONTEND.rglob("*.tsx"):
         source = path.read_text(encoding="utf-8")
         for line_no, line in enumerate(source.splitlines(), start=1):
-            if ".toFixed(" not in line:
+            # `toPrecision` was the hole this test had: it writes `0.000420`
+            # on a French screen and was invisible to a `toFixed`-only sweep.
+            if ".toFixed(" not in line and ".toPrecision(" not in line:
                 continue
             if "vectorEffect" in line or "`${i === 0 ? 'M' : 'L'}" in line:
                 continue  # an SVG path, not a number on screen
             offenders.append(f"{path.name}:{line_no}")
     assert not offenders, (
-        "toFixed contourne le formatage français, utilisez num/pct/price/mult "
+        "toFixed/toPrecision contournent le formatage français, utilisez "
+        "num/pct/price/mult/compact "
         f"depuis format.ts : {offenders}"
     )
 

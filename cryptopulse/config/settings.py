@@ -146,6 +146,35 @@ class RobinhoodSettings(BaseSettings):
     # Below this share of LP locked or burned, the floor can be removed.
     safety_min_lp_locked_percent: float = 50.0
 
+    # --- trade decision (ROBINHOOD_TRADE_DECISION_V1) ------------------------ #
+    # Deliberately its own set rather than reusing the Binance floors: the
+    # inputs are different objects measuring different things, and a token
+    # minted twenty minutes ago is not judged on the same evidence as a
+    # large-cap in a retest. Every one of these goes into the engine's weights
+    # fingerprint, so a decision taken today is never reread under new floors.
+    #
+    # Higher than the Binance equivalents on purpose. A new token on a DEX has
+    # a worse downside than a listed pair — the exit can disappear — so the bar
+    # for spending money on one is set above, not level with, the CEX bar.
+    buy_min_early: float = 75.0
+    buy_min_explosion: float = 80.0
+    buy_min_confidence: float = 70.0
+    buy_min_safety: float = 85.0
+    buy_max_maturity: float = 40.0
+    # An absolute floor in dollars, not a rank: on a DEX the question is
+    # whether a position can be closed at all, and that is a depth in dollars.
+    buy_min_liquidity_usd: float = 25_000.0
+    # Under this, a pool is not thin — it is a trap. Treated as a hard veto
+    # rather than a failed floor, same rule as liquidity DANGEROUS on Binance.
+    danger_liquidity_usd: float = 2_000.0
+    # HIGH, CRITICAL and UNKNOWN already veto inside ROBINHOOD_SAFETY_V1. This
+    # is what decides whether MEDIUM is tolerable for a purchase.
+    buy_max_rug_risk: str = "LOW"
+
+    # SURVEILLER, for tokens that are not buys but are worth a second look.
+    watch_min_early: float = 55.0
+    watch_min_confidence: float = 40.0
+
 
 class ScannerSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="CP_SCAN_", env_file=".env", extra="ignore")

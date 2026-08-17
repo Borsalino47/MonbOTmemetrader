@@ -1,6 +1,7 @@
-import { num } from '../format';
+import { age, compact, num, price } from '../format';
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
+import { DECISION_LABELS, DecisionBadge } from './DecisionBadge';
 import { TokenCrossCheck } from './TokenCrossCheck';
 import type { RobinhoodToken, RobinhoodTokensResponse, SafetyReport } from '../types';
 
@@ -16,7 +17,7 @@ import type { RobinhoodToken, RobinhoodTokensResponse, SafetyReport } from '../t
 export function RobinhoodTokens() {
   const [data, setData] = useState<RobinhoodTokensResponse | null>(null);
   const [bucket, setBucket] = useState<string>('');
-  const [sort, setSort] = useState<'age' | 'early'>('age');
+  const [sort, setSort] = useState<'age' | 'early' | 'decision'>('age');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -79,7 +80,29 @@ export function RobinhoodTokens() {
         <button className={sort === 'early' ? 'active' : ''} onClick={() => setSort('early')}>
           🔥 Meilleurs setups
         </button>
+        <button className={sort === 'decision' ? 'active' : ''} onClick={() => setSort('decision')}>
+          🟢 À acheter
+        </button>
       </div>
+
+      {/* What the engine actually asked for, counted. UNDECIDED is shown apart
+          from ⚫ : « personne n'a regardé » et « nous refusons » ne sont pas la
+          même phrase. */}
+      {data?.decisions && (
+        <div className="rh-decision-counts">
+          {(['BUY', 'WATCH', 'AVOID'] as const).map((a) => (
+            <span key={a} className={`rh-dc ${a}`}>
+              {DECISION_LABELS[a].emoji} {DECISION_LABELS[a].fr}
+              <strong>{data.decisions?.[a] ?? 0}</strong>
+            </span>
+          ))}
+          {(data.decisions.UNDECIDED ?? 0) > 0 && (
+            <span className="rh-dc UNDECIDED">
+              · non décidés<strong>{data.decisions.UNDECIDED}</strong>
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="rh-buckets">
         <button className={bucket === '' ? 'active' : ''} onClick={() => setBucket('')}>
@@ -155,17 +178,28 @@ function TokenRow({ t }: { t: RobinhoodToken }) {
         </button>
       )}
 
-      {s && t.hard_veto && (
-        <div className="rh-veto">
-          <strong>⚫ NE PAS ACHETER</strong>
-          {/* No fallback text here on purpose: the engine guarantees a veto
-              always carries at least one blocking finding, so inventing a
-              reason would only ever paper over a bug. */}
-          <ul>
-            {s.blocking.map((f) => (
-              <li key={f.code}>{f.label_fr}{f.detail ? ` — ${f.detail}` : ''}</li>
-            ))}
-          </ul>
+      {/* The instruction, and directly beneath it every reason it rests on.
+          The blocking list comes from the *decision*, not from safety alone:
+          a purchase can also be refused for a pool too thin to exit, a vetoed
+          explosion, or two sources that disagree, and a ⚫ whose reason is
+          invisible is indistinguishable from a bug (invariant 73). */}
+      {t.decision && (
+        <div className={`rh-decision ${t.decision.action}`}>
+          <DecisionBadge
+            action={t.decision.action}
+            size="md"
+            strength={t.decision.strength_fr}
+          />
+          {t.decision.blocking.length > 0 && (
+            <ul className="rh-decision-blocking">
+              {t.decision.blocking.map((b, i) => <li key={i}>{b}</li>)}
+            </ul>
+          )}
+          {t.decision.action === 'BUY' && t.decision.reasons.length > 0 && (
+            <ul className="rh-decision-why">
+              {t.decision.reasons.map((r, i) => <li key={i}>{r}</li>)}
+            </ul>
+          )}
         </div>
       )}
 
@@ -326,18 +360,20 @@ function Cell({ k, v, note }: { k: string; v: string; note?: string }) {
    the single rule this whole screen exists to respect. */
 
 function fmtAge(s: number | null): string {
-  if (s === null) return '—';
-  if (s < 60) return `${Math.round(s)} s`;
-  if (s < 3600) return `${Math.round(s / 60)} min`;
-  return `${num(s / 3600, 1)} h`;
+  return age(s);
 }
 
+/** Dollars, delegating the digits to the shared formatters.
+ *
+ * The tiny-price branch used `toPrecision(3)`, which writes `0.000420` — found
+ * by running the search, where a French screen showed an English decimal on
+ * every meme-coin price. `price()` already picks the significance a venue
+ * quotes at and applies the comma. */
 function fmtUsd(v: number | null, digits = 0): string {
-  if (v === null) return '—';
-  if (v !== 0 && Math.abs(v) < 0.01) return `$${v.toPrecision(3)}`;
-  if (v >= 1_000_000) return `${num(v / 1_000_000, 1)} M $`;
-  if (v >= 1_000) return `${num(v / 1_000, 1)} k $`;
-  return `${num(v, digits)} $`;
+  if (v === null) return '\u2014';
+  if (v !== 0 && Math.abs(v) < 0.01) return `${price(v)}\u202f$`;
+  if (Math.abs(v) >= 1_000) return `${compact(v)}\u202f$`;
+  return `${num(v, digits)}\u202f$`;
 }
 
 function fmtNum(v: number | null, digits = 0, suffix = ''): string {

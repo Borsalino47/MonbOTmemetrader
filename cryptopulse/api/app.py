@@ -193,6 +193,24 @@ def _merge_validation_context(payload: dict, result) -> dict:
     return payload
 
 
+# Best instruction first. UNDECIDED sorts below ⚫ deliberately: "we refused"
+# is a stronger statement than "we have not looked", and the list is read from
+# the top.
+_DECISION_RANK = {"BUY": 4, "WATCH": 3, "HOLD": 2, "REDUCE": 1, "SELL": 1, "AVOID": 0}
+_STRENGTH_RANK = {"VERY_STRONG": 3, "STRONG": 2, "STANDARD": 1}
+
+
+def _decision_rank(token: dict) -> tuple[int, int, float]:
+    decision = token.get("decision")
+    if not decision:
+        return (-1, 0, 0.0)
+    return (
+        _DECISION_RANK.get(decision["action"], 0),
+        _STRENGTH_RANK.get(decision.get("strength") or "", 0),
+        (token.get("early") or {}).get("score", 0.0),
+    )
+
+
 def service_now_ms() -> int:
     return SYSTEM_CLOCK.now_ms()
 
@@ -388,6 +406,13 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
                 reverse=True,
             )
             payload["sorted_by"] = "early"
+        elif sort == "decision":
+            # What has the engine actually asked for? Ranks by the instruction
+            # first and by how far past the floors second, so the rows that
+            # want an action sit together at the top instead of being spread
+            # through a list ordered by a score nobody acts on directly.
+            payload["tokens"].sort(key=_decision_rank, reverse=True)
+            payload["sorted_by"] = "decision"
         else:
             payload["sorted_by"] = "age"
         payload["state"] = "OK" if report.candidates else ("FAILED" if report.errors else "EMPTY")

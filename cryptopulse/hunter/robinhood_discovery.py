@@ -47,6 +47,11 @@ from cryptopulse.scoring.robinhood_early import (
     score_early,
 )
 from cryptopulse.scoring.robinhood_explosion import RobinhoodExplosion, score_explosion
+from cryptopulse.trading.decision import TradeAction
+from cryptopulse.trading.robinhood_decision import (
+    RobinhoodTradeDecision,
+    RobinhoodTradeDecisionEngine,
+)
 
 log = get_logger("hunter.robinhood")
 
@@ -104,6 +109,10 @@ class TokenCandidate:
     # Filled after safety, because a veto zeroes it — scoring it first and
     # zeroing later would leave a window where the two disagreed.
     explosion: RobinhoodExplosion | None = None
+    # The instruction, computed last of all: it reads every object above, so a
+    # decision that existed before them would have been taken on less evidence
+    # than the screen shows beside it.
+    decision: RobinhoodTradeDecision | None = None
 
     @property
     def primary_pool(self) -> PoolSnapshot | None:
@@ -200,6 +209,9 @@ class TokenCandidate:
             "explosion": self.explosion.to_dict() if self.explosion else None,
             "maturity": self.maturity.to_dict() if self.maturity else None,
             "confidence": self.confidence.to_dict() if self.confidence else None,
+            # The instruction, kept separate from the three readings it rests
+            # on so the screen can show the reasoning beside the answer.
+            "decision": self.decision.to_dict() if self.decision else None,
         }
 
 
@@ -217,6 +229,9 @@ class RobinhoodDiscoveryReport:
     filtered_not_a_discovery: int = 0
     safety_requests: int = 0
     safety_analysed: int = 0
+    # The decision engine's fingerprint, so a stored report can never be reread
+    # under floors it was not produced with (invariant 13).
+    decision_fingerprint: str = ""
     errors: list[str] = field(default_factory=list)
     took_ms: int = 0
     at_ms: int | None = None
@@ -227,6 +242,22 @@ class RobinhoodDiscoveryReport:
             b = c.age_bucket
             if b:
                 counts[b] += 1
+        return counts
+
+    def decision_counts(self) -> dict[str, int]:
+        """How many of each decision, including the ones nobody has decided.
+
+        `undecided` is its own key rather than folded into ⚫: a token the
+        engine has not looked at and a token it refused are different facts,
+        and the first is ordinary before the safety pass has run.
+        """
+        counts = {action.value: 0 for action in TradeAction}
+        counts["UNDECIDED"] = 0
+        for c in self.candidates:
+            if c.decision is None:
+                counts["UNDECIDED"] += 1
+            else:
+                counts[c.decision.action.value] += 1
         return counts
 
     def to_dict(self) -> dict:
@@ -244,6 +275,10 @@ class RobinhoodDiscoveryReport:
             "safety_requests": self.safety_requests,
             "safety_analysed": self.safety_analysed,
             "vetoed": sum(1 for c in self.candidates if c.safety and c.safety.hard_veto),
+            # Counted rather than summed into a score: the screen needs to know
+            # how many rows ask for an action, not how "good" the batch was.
+            "decisions": self.decision_counts(),
+            "decision_fingerprint": self.decision_fingerprint,
             "filtered": {
                 "illiquid": self.filtered_illiquid,
                 "too_old": self.filtered_too_old,
@@ -399,11 +434,20 @@ async def attach_safety(
     for candidate in targets:
         candidate.explosion = score_explosion(candidate, settings)
 
+    # The decision comes last because it reads all four of the objects above.
+    # Costs no request: it is arithmetic over what this cycle already fetched.
+    engine = RobinhoodTradeDecisionEngine(settings)
+    now_ms = report.at_ms or SYSTEM_CLOCK.now_ms()
+    for candidate in targets:
+        candidate.decision = engine.decide_entry(candidate, now_ms=now_ms)
+    report.decision_fingerprint = engine.weights_fingerprint
+
     log.info(
         "robinhood_safety",
         analysed=report.safety_analysed,
         requests=report.safety_requests,
         vetoed=sum(1 for c in targets if c.safety and c.safety.hard_veto),
+        buys=sum(1 for c in targets if c.decision and c.decision.action is TradeAction.BUY),
     )
 
 

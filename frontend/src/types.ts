@@ -840,6 +840,33 @@ export interface RobinhoodToken {
   maturity: PumpMaturityRH | null;
   confidence: DataConfidenceRH | null;
   explosion: RobinhoodExplosionScore | null;
+  /** The instruction, computed last from all four readings above. Null until
+   *  the safety pass has run — undecided is not the same as refused. */
+  decision: RobinhoodTradeDecision | null;
+}
+
+/** Same six decisions and six colours as the Binance engine (spec §21), from
+ *  entirely different evidence. Deliberately its own type: it carries no
+ *  trigger or invalidation price, because a DEX token has no measured setup. */
+export interface RobinhoodTradeDecision {
+  address: string;
+  symbol: string | null;
+  action: TradeAction;
+  emoji: string;
+  label_fr: string;
+  tone: string;
+  strength: 'STANDARD' | 'STRONG' | 'VERY_STRONG' | null;
+  strength_fr: string | null;
+  timestamp_ms: number;
+  price_usd: number | null;
+  reasons: string[];
+  risks: string[];
+  checks: DecisionCheck[];
+  blocking: string[];
+  is_actionable: boolean;
+  engine_version: string;
+  weights_fingerprint: string;
+  disclaimer: string;
 }
 
 export interface RobinhoodExplosionScore {
@@ -873,7 +900,11 @@ export interface RobinhoodTokensResponse {
   at_ms?: number | null;
   coverage_note?: string;
   note?: string;
-  sorted_by?: 'age' | 'early';
+  sorted_by?: 'age' | 'early' | 'decision';
+  /** Counts per decision, plus UNDECIDED as its own key: a token nobody has
+   *  looked at and a token that was refused are different facts. */
+  decisions?: Record<string, number>;
+  decision_fingerprint?: string;
 }
 
 export type RugRisk = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | 'UNKNOWN';

@@ -1491,3 +1491,40 @@ tbody td.sym { font-weight: 600; text-align: left; }
 }
 .why-list li span[aria-hidden] { color: var(--up); flex: 0 0 auto; }
 .risk-list li span[aria-hidden] { color: var(--warn); flex: 0 0 auto; }
+
+/* --- Robinhood: the decision, at the top of every token card -------------- */
+/* The instruction sits above the market figures for the same reason safety
+   does: a token that must not be bought has no interesting volume, and putting
+   the numbers first invites reading them first. */
+.rh-decision {
+  margin: 8px 0 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border-left: 3px solid var(--border);
+  background: var(--panel-2);
+}
+.rh-decision.BUY    { border-left-color: var(--up); background: color-mix(in srgb, var(--up) 8%, var(--panel-2)); }
+.rh-decision.WATCH  { border-left-color: var(--warn); }
+.rh-decision.AVOID  { border-left-color: var(--text-faint); }
+
+.rh-decision-blocking, .rh-decision-why {
+  margin: 6px 0 0;
+  padding-left: 16px;
+  font-size: 11px;
+  line-height: 1.45;
+}
+.rh-decision-blocking { color: var(--down); }
+.rh-decision-why { color: var(--text-dim); }
+.rh-decision-blocking li, .rh-decision-why li { margin-bottom: 2px; }
+
+.rh-decision-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.rh-dc { display: inline-flex; align-items: center; gap: 4px; }
+.rh-dc strong { color: var(--text); }
+.rh-dc.BUY strong { color: var(--up); }

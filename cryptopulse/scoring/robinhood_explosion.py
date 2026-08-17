@@ -61,6 +61,7 @@ from dataclasses import dataclass, field
 
 from cryptopulse.config.settings import RobinhoodSettings
 from cryptopulse.core.logging import get_logger
+from cryptopulse.i18n import money
 
 log = get_logger("scoring.robinhood_explosion")
 
@@ -159,7 +160,7 @@ def score_explosion(candidate, settings: RobinhoodSettings) -> RobinhoodExplosio
     if liq is not None and liq < settings.discovery_min_liquidity_usd:
         result.vetoed = True
         result.veto_reason = (
-            f"liquidité de {liq:,.0f} $ — un mouvement de 10 % ici n'est pas une opportunité"
+            f"liquidité de {money(liq)} — un mouvement de 10\u202f% ici n'est pas une opportunité"
         )
         result.caveats.append(result.veto_reason)
         return result

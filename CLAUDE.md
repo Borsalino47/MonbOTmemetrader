@@ -86,9 +86,10 @@ that justifies it.
 | Robinhood maturity + data confidence | **TESTED** | Three separate readings of one snapshot, allowed to disagree (spec §52) |
 | `ROBINHOOD_EXPLOSION_15M_V1` (`scoring/robinhood_explosion.py`) | **TESTED** | 15 tests. Horizon in the fingerprint; a selling burst never scores as upside |
 
+| `ROBINHOOD_TRADE_DECISION_V1` (`trading/robinhood_decision.py`) | **TESTED** | 45 tests. Same six decisions and colours as Binance, own floors and own fingerprint. Security outranks every score |
 | **French localisation (`cryptopulse/i18n/`, `frontend/src/i18n/fr.ts`)** | **TESTED** | 46 anti-English tests. 240 catalogue entries + 50 enum labels + 42 UI labels. Rendered at emission, no network, no model |
 
-**Test suite: 841 tests, all passing.** Run `pytest -q`.
+**Test suite: 886 tests, all passing.** Run `pytest -q`.
 
 ---
 
@@ -209,6 +210,7 @@ cryptopulse/
     hysteresis.py        Confirmation + cooldown + escalation exemption
     watcher.py           Open positions only, 15s, states its request cost
     stats.py             Engine quality vs user results, deliberately kept apart
+    robinhood_decision.py  ROBINHOOD_TRADE_DECISION_V1 — same six words, other evidence
   outcomes/
     tracker.py           Grades emitted signals against the bars that followed
     horizons.py          What the price did 15m/1h/4h/24h later — path, not verdict
@@ -255,7 +257,7 @@ frontend/                Vite + React 18 + TypeScript (strict), mobile-first
   HomeView               The five-second view: can I trust it, and what moved
   AssetCards             The scanner as cards; the table is wide-screen only
   bottom-nav             Thumb-reachable navigation, phones only
-tests/                   841 tests
+tests/                   886 tests
 pine/                    TradingView companion scripts
 ```
 
@@ -786,6 +788,41 @@ Break these and the product is lying to its user.
     `momentum`) are stripped before matching, and so are `{placeholder}` names,
     which are parameters rather than words on screen.
 
+87. **Two markets, two decision engines, one vocabulary.** The six decisions,
+    the six colours and `PRESENTATION` are shared, because a user who learns
+    what 🟢 means on one screen must not relearn it on the other (spec §21).
+    Everything else is separate: the Robinhood engine reads flow instead of
+    candles, dollars of depth instead of a liquidity rank, and GoPlus instead
+    of a CEX safety score. One engine with a mode switch would mean a single
+    fingerprint covering both — and changing a Binance floor would silently
+    reinterpret a Robinhood decision taken last week.
+
+88. **On a DEX the liquidity floor is dollars, and its margin never reaches the
+    strength.** Score points and dollars are not the same unit: feeding a
+    60 000 dollar margin into a calculation whose other margins are single
+    digits would make every deep pool look TRÈS FORTE. `_liquidity_floor`
+    deliberately returns `None` for its margin.
+
+89. **The safety veto is stated once, not relayed twice.** Found by running the
+    search against the honeypot fixture: the card read "veto de sécurité :
+    HONEYPOT" immediately above "veto sécurité : HONEYPOT", because the
+    explosion engine relays the safety gate as its own. The same fact in two
+    wordings reads as a bug rather than as emphasis, so the relay is dropped —
+    while a veto genuinely belonging to the explosion engine, such as a pool
+    too thin for a fifteen-minute move, is still listed.
+
+90. **An undecided token is counted apart from a refused one.** `decision_counts`
+    has its own `UNDECIDED` key rather than folding those rows into ⚫. "Nobody
+    has looked" is ordinary before the safety pass has run; "we refuse" is a
+    conclusion. Merging them would make an incomplete cycle look like a chain
+    full of scams.
+
+91. **The Robinhood decision is computed last, after safety and explosion.**
+    `attach_safety` runs safety, then explosion, then the decision, in that
+    order and in that function. A decision produced before the veto existed
+    would have been taken on less evidence than the screen shows beside it —
+    the same reasoning that already put explosion after safety.
+
 ---
 
 ## 6. Design decisions and why
@@ -934,6 +971,12 @@ pytest tests/test_no_lookahead.py -v    # the ones that matter most
   (`labels` -> `alerts.engine` -> `labels`) the moment the alert engine wanted a
   French liquidity label. The catalogue must keep importing nothing from the
   engines.
+* `cryptopulse/trading/robinhood_decision.py` — compares the cross-check's
+  agreement on `.value` strings rather than importing `Agreement`. Importing it
+  creates the cycle `robinhood_decision` -> `robinhood_detail` ->
+  `robinhood_discovery` -> `robinhood_decision`, which is the same cycle
+  `i18n/labels.py` had to break, and the same fix: an engine that reads a value
+  does not need to import the module that defines it.
 * `cryptopulse/i18n/reasons.py` — a reason is added here and called from the
   engine, never written as a literal at the call site. `tests/test_french_only.py`
   greps for `reasons.append("` across ten engine files, so a literal is caught,
