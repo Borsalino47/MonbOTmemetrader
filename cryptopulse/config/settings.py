@@ -93,6 +93,26 @@ class RobinhoodSettings(BaseSettings):
     # A block from the future beyond this margin means a broken clock somewhere.
     max_block_future_seconds: float = 30.0
 
+    # --- token discovery (GeckoTerminal) ------------------------------------ #
+    # The raw RPC cannot answer "which tokens are new and trading": that needs
+    # an indexer that has already decoded pool creations and swaps. GeckoTerminal
+    # indexes Robinhood Chain under the network id below and is free.
+    geckoterminal_base_url: str = "https://api.geckoterminal.com/api/v2"
+    geckoterminal_network: str = "robinhood"
+    # Published public limit is 30 calls/min. We sit under it rather than on it:
+    # a 429 costs the whole cycle, and the discovery loop is not urgent enough
+    # to be worth the risk.
+    geckoterminal_calls_per_minute: int = 24
+    # Each page is 20 pools. Two pages is 40 of the newest pools per cycle,
+    # which on a chain minting thousands of tokens a day is a window, not a
+    # census — and the report says so rather than implying completeness.
+    discovery_pages: int = 2
+    # Anything older than this is not "new" for the purpose of this screen.
+    discovery_max_age_hours: float = 24.0
+    # Below this the pool is noise: a token with a few dollars of liquidity
+    # cannot be entered or exited, whatever its numbers look like.
+    discovery_min_liquidity_usd: float = 1_000.0
+
 
 class ScannerSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="CP_SCAN_", env_file=".env", extra="ignore")

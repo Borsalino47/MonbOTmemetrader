@@ -2,7 +2,7 @@ import type {
   AlertItem, AssetDetail, DeepScanResponse, Health, HorizonResponse, HuntResponse,
   DecisionsResponse, PerformanceResponse, Position, PositionEvent, PumpResponse,
   ResultsResponse, ScanResponse, StartupResponse, TradeSignal, Validation,
-  ValidationsResponse, ProvidersResponse, RobinhoodStatus,
+  ValidationsResponse, ProvidersResponse, RobinhoodStatus, RobinhoodTokensResponse,
 } from './types';
 
 const BASE = '/api';
@@ -106,6 +106,13 @@ export const api = {
   },
   providers: () => get<ProvidersResponse>('/providers'),
   robinhoodStatus: () => get<RobinhoodStatus>('/provider/robinhood/status'),
+  robinhoodTokens: (bucket?: string) =>
+    get<RobinhoodTokensResponse>('/robinhood/tokens', bucket ? { bucket } : undefined),
+  robinhoodSearch: async (): Promise<RobinhoodTokensResponse> => {
+    const resp = await fetch(`${BASE}/robinhood/tokens/search`, { method: 'POST' });
+    if (!resp.ok) throw new Error(`robinhood search failed: ${resp.status}`);
+    return resp.json();
+  },
   verifyRobinhood: async (): Promise<RobinhoodStatus> => {
     const resp = await fetch(`${BASE}/provider/robinhood/verify`, { method: 'POST' });
     if (!resp.ok) throw new Error(`robinhood verify failed: ${resp.status}`);

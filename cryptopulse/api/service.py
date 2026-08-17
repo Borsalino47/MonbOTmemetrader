@@ -31,8 +31,13 @@ from cryptopulse.database import repo
 from cryptopulse.database.session import init_engine
 from cryptopulse.hunter.deep import DeepScanner, DeepScanReport
 from cryptopulse.hunter.discovery import PrescanReport, SnapshotMemory, prescan
+from cryptopulse.hunter.robinhood_discovery import (
+    RobinhoodDiscoveryReport,
+    discover_new_tokens,
+)
 from cryptopulse.outcomes.horizons import HORIZONS, HorizonReport, HorizonTracker
 from cryptopulse.outcomes.tracker import OutcomeTracker, ResolutionReport
+from cryptopulse.providers.geckoterminal import GeckoTerminalClient
 from cryptopulse.providers.registry import is_synthetic
 from cryptopulse.providers.robinhood import (
     ROBINHOOD_CHAIN_ID,
@@ -61,6 +66,23 @@ log = get_logger("api.service")
 PRUNE_INTERVAL_MS = 6 * 3600 * 1000
 
 __all__ = ["ScannerService", "get_service", "set_service"]
+
+
+def _discovery_state(report) -> str:
+    """PENDING / OK / EMPTY / FAILED for the indexer.
+
+    EMPTY is its own state on purpose: a search that completed and found
+    nothing is a fact about the chain, while a search that failed is a fact
+    about our connection. Collapsing them would let an outage look like a calm
+    market — the exact confusion this project exists to prevent.
+    """
+    if report is None:
+        return "PENDING"
+    if report.errors and not report.candidates:
+        return "FAILED"
+    if not report.candidates:
+        return "EMPTY"
+    return "OK"
 
 
 class ScannerService:
@@ -156,6 +178,14 @@ class ScannerService:
         self.robinhood_chain = ChainVerification(state=ChainState.PENDING, provider="ROBINHOOD-CHAIN-RPC")
         self._robinhood_task: asyncio.Task | None = None
         self._robinhood_lock = asyncio.Lock()
+
+        # Token discovery reads a DEX indexer, not the RPC: the two are separate
+        # sources that fail separately, so they are verified and reported
+        # separately. A live chain with a down indexer is a real state.
+        self._gecko: GeckoTerminalClient | None = None
+        self.robinhood_discovery: RobinhoodDiscoveryReport | None = None
+        self._discovery_task: asyncio.Task | None = None
+        self._discovery_lock = asyncio.Lock()
 
     # -- lifecycle ----------------------------------------------------------- #
 
@@ -293,29 +323,80 @@ class ScannerService:
                 self.verify_robinhood_now(), name="robinhood-chain-verify"
             )
 
-    def robinhood_status(self) -> dict:
-        """The ROBINHOOD market's status. Honest about what does not exist yet.
+    def _get_gecko(self) -> GeckoTerminalClient:
+        if self._gecko is None:
+            self._gecko = GeckoTerminalClient(self.settings.robinhood, clock=SYSTEM_CLOCK)
+        return self._gecko
 
-        `market_data_available` is False until the discovery/price phases land;
-        the UI renders NON DISPONIBLE from this flag rather than empty lists
-        that would read as a quiet market (spec §56).
+    async def discover_robinhood_now(self) -> RobinhoodDiscoveryReport:
+        """Search for new tokens. Never raises; a failure is a reported state.
+
+        Serialised by a lock: two overlapping searches would double the request
+        cost against a 30 calls/minute budget for one answer.
         """
+        async with self._discovery_lock:
+            report = await discover_new_tokens(
+                self._get_gecko(), self.settings.robinhood, clock=SYSTEM_CLOCK
+            )
+            self.robinhood_discovery = report
+            return report
+
+    def ensure_robinhood_discovery(self) -> None:
+        """Kick a first search in the background, once, on demand.
+
+        Same contract as the chain check: the screen never waits for it, and it
+        never runs because the app started — only because someone looked.
+        """
+        if self.robinhood_discovery is not None:
+            return
+        if self._discovery_task is None or self._discovery_task.done():
+            self._discovery_task = asyncio.create_task(
+                self.discover_robinhood_now(), name="robinhood-discovery"
+            )
+
+    def robinhood_status(self) -> dict:
+        """The ROBINHOOD market's status, source by source.
+
+        Two sources, two verdicts (spec §6 generalised): the RPC proves the
+        chain, the indexer provides the market data, and one being healthy says
+        nothing about the other. `market_data_available` reflects the indexer
+        alone, and the UI renders NON DISPONIBLE from it rather than an empty
+        list that would read as a quiet chain.
+        """
+        discovery = self.robinhood_discovery
+        # A search that ran and returned rows is the only thing that makes
+        # market data "available". Not a configured URL, not a live chain.
+        market_data = bool(discovery is not None and discovery.candidates)
         return {
             "provider": ROBINHOOD_PROVIDER_ID,
             "network": ROBINHOOD_NETWORK,
             "chain_id": ROBINHOOD_CHAIN_ID,
             "verification": self.robinhood_chain.to_dict(),
             "live_verified": self.robinhood_chain.verified,
-            "market_data_available": False,
+            "market_data_available": market_data,
+            "discovery": discovery.to_dict() if discovery is not None else None,
+            "sources": [
+                {
+                    "id": "RPC",
+                    "role": "chaîne (blocs, chain id)",
+                    "endpoint": self.settings.robinhood.rpc_url.split("://", 1)[-1].split("/")[0],
+                    "state": self.robinhood_chain.state.value,
+                },
+                {
+                    "id": "GECKOTERMINAL",
+                    "role": "tokens, prix, liquidité, transactions",
+                    "endpoint": "api.geckoterminal.com",
+                    "state": _discovery_state(discovery),
+                },
+            ],
             "note": (
-                "La chaîne est vérifiable ; les données de marché (nouveaux tokens, "
-                "prix, liquidité) arrivent aux phases suivantes et sont NON DISPONIBLES "
-                "d'ici là."
+                "La chaîne et l'indexeur sont deux sources distinctes : l'une peut "
+                "répondre pendant que l'autre est en panne, et chacune a son propre état."
             ),
         }
 
     async def stop(self) -> None:
-        for attr in ("_task", "_watch_task", "_boot_task", "_robinhood_task"):
+        for attr in ("_task", "_watch_task", "_boot_task", "_robinhood_task", "_discovery_task"):
             task = getattr(self, attr)
             if task is not None:
                 task.cancel()
@@ -326,6 +407,9 @@ class ScannerService:
         if self._robinhood_rpc is not None:
             await self._robinhood_rpc.close()
             self._robinhood_rpc = None
+        if self._gecko is not None:
+            await self._gecko.close()
+            self._gecko = None
         log.info("service_stopped")
 
     async def _loop(self) -> None:

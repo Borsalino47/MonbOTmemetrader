@@ -86,11 +86,12 @@ def test_robinhood_status_answers_instantly_with_pending(client):
 
 
 def test_market_data_is_declared_unavailable_not_faked(client):
-    """Spec §56: until a real source is integrated, the API says so. An empty
-    token list would be a fabrication wearing the shape of a quiet market."""
+    """Spec §56: nothing is presented as market data until a search has actually
+    returned rows. `discovery` stays null rather than becoming an empty report,
+    which the UI would have to guess how to read."""
     body = client.get("/api/provider/robinhood/status").json()
     assert body["market_data_available"] is False
-    assert "NON DISPONIBLE" in body["note"]
+    assert body["discovery"] is None
 
 
 def test_nothing_robinhood_exists_before_someone_asks(service):
@@ -161,3 +162,48 @@ def test_binance_chrome_is_not_rendered_in_the_robinhood_universe():
         idx = src.index(block)
         preceding = src[max(0, idx - 260):idx]
         assert "market === 'BINANCE_SPOT'" in preceding, f"{block} is not gated on the market"
+
+
+# --------------------------------------------------------------------------- #
+# Discovery, exposed
+# --------------------------------------------------------------------------- #
+
+
+def test_tokens_endpoint_answers_pending_without_blocking(client):
+    body = client.get("/api/robinhood/tokens").json()
+    assert body["state"] in ("PENDING", "FAILED", "EMPTY")
+    assert body["tokens"] == []
+
+
+def test_market_data_available_requires_an_actual_search_result(client, service):
+    """Not a configured URL, not a live chain — rows. Anything weaker would let
+    the UI promise data it does not have."""
+    assert client.get("/api/provider/robinhood/status").json()["market_data_available"] is False
+
+
+def test_the_two_sources_are_reported_separately(client, service):
+    """Spec §6 generalised: the RPC proves the chain, the indexer provides the
+    market data, and one being healthy says nothing about the other."""
+    body = client.get("/api/provider/robinhood/status").json()
+    ids = [s["id"] for s in body["sources"]]
+    assert ids == ["RPC", "GECKOTERMINAL"]
+    assert body["sources"][0]["endpoint"] == "rpc.mainnet.chain.robinhood.com"
+    assert body["sources"][1]["endpoint"] == "api.geckoterminal.com"
+
+
+def test_an_empty_search_is_not_reported_as_a_failure(service):
+    """A quiet window and a broken indexer must never render the same: one is a
+    fact about the chain, the other about our connection."""
+    from cryptopulse.api.service import _discovery_state
+    from cryptopulse.hunter.robinhood_discovery import RobinhoodDiscoveryReport
+
+    assert _discovery_state(None) == "PENDING"
+    assert _discovery_state(RobinhoodDiscoveryReport()) == "EMPTY"
+    assert _discovery_state(RobinhoodDiscoveryReport(errors=["page 1: SourceUnavailable"])) == "FAILED"
+
+
+def test_nothing_discovery_runs_before_someone_asks(service):
+    """Spec §41-42: still lazy after R3. The indexer client is not even built."""
+    assert service._gecko is None
+    assert service._discovery_task is None
+    assert service.robinhood_discovery is None

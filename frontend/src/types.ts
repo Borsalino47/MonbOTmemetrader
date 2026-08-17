@@ -805,3 +805,43 @@ export interface RobinhoodStatus {
   market_data_available: boolean;
   note: string;
 }
+
+export interface RobinhoodToken {
+  provider: MarketId;
+  chain_id: number;
+  contract_address: string;
+  symbol: string | null;
+  name: string | null;
+  /** When this token's earliest pool opened. NOT the contract's age, which
+   *  this source cannot know and which stays null until Blockscout is wired. */
+  pool_age_seconds: number | null;
+  age_bucket: string | null;
+  token_age_seconds: number | null;
+  price_usd: number | null;
+  liquidity_usd: number | null;
+  liquidity_is_partial: boolean;
+  fdv_usd: number | null;
+  market_cap_usd: number | null;
+  volume_h1: number | null;
+  volume_h24: number | null;
+  buyers_h1: number | null;
+  buy_sell_ratio_h1: number | null;
+  volume_acceleration: number | null;
+  pool_count: number;
+  dex: string | null;
+}
+
+export interface RobinhoodTokensResponse {
+  state?: 'PENDING' | 'OK' | 'EMPTY' | 'FAILED';
+  tokens: RobinhoodToken[];
+  buckets?: { id: string; label_fr: string; count: number }[];
+  pools_seen?: number;
+  pages_read?: number;
+  requests?: number;
+  filtered?: { illiquid: number; too_old: number; unknown_age: number };
+  errors?: string[];
+  took_ms?: number;
+  at_ms?: number | null;
+  coverage_note?: string;
+  note?: string;
+}

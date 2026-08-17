@@ -673,9 +673,64 @@ async def cmd_doctor_robinhood(args) -> int:
         host = rpc.endpoint_host
         for line in await _diagnose_egress(host):
             print(line)
-    print()
     await rpc.close()
-    return 0 if result.verified else 1
+
+    # The indexer is a second, independent source. A live chain says nothing
+    # about it, so it gets its own round trip and its own verdict.
+    print("\n" + "-" * 68)
+    print("SOURCE DES DONNÉES DE MARCHÉ (indexeur DEX)")
+    print("-" * 68)
+    gecko_ok = await _check_discovery_source(settings)
+
+    print()
+    return 0 if (result.verified and gecko_ok) else 1
+
+
+async def _check_discovery_source(settings) -> bool:
+    """Prove the indexer answers, knows this network, and returns usable pools.
+
+    Three checks rather than one ping: an indexer that is up but has never
+    heard of `robinhood` would answer every request with an empty list, which
+    is indistinguishable from a quiet chain unless the network id is verified
+    separately.
+    """
+    from cryptopulse.hunter.robinhood_discovery import discover_new_tokens
+    from cryptopulse.providers.geckoterminal import GeckoTerminalClient
+
+    client = GeckoTerminalClient(settings.robinhood)
+    ok = True
+    try:
+        try:
+            networks = await client.list_networks()
+            known = client.network in networks
+            print(f"  [{'PASS' if known else 'FAIL'}] réseau '{client.network}' connu de l'indexeur"
+                  f" — {len(networks)} réseaux listés")
+            ok = ok and known
+        except Exception as exc:
+            print(f"  [FAIL] indexeur joignable — {type(exc).__name__}")
+            for line in await _diagnose_egress("api.geckoterminal.com"):
+                print(line)
+            return False
+
+        report = await discover_new_tokens(client, settings.robinhood)
+        if report.errors:
+            print(f"  [FAIL] recherche de nouveaux pools — {'; '.join(report.errors[:2])}")
+            return False
+        print(f"  [PASS] recherche de nouveaux pools — {report.pools_seen} pools lus, "
+              f"{len(report.candidates)} tokens retenus, {report.requests} requête(s)")
+
+        # Zero tokens is not a failure: it is what a genuinely quiet window
+        # looks like, and calling it one would be inventing an outage.
+        if report.candidates:
+            top = report.candidates[0]
+            age_min = (top.pool_age_seconds or 0) / 60
+            print(f"         plus récent : {top.symbol or '?'} "
+                  f"({top.address[:10]}…), pool de {age_min:.0f} min")
+        else:
+            print("         aucun token dans la fenêtre d'âge — la chaîne est peut-être calme")
+    finally:
+        await client.close()
+    return ok
 
 
 async def cmd_notify(args) -> int:

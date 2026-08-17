@@ -76,8 +76,10 @@ that justifies it.
 | Hybrid Android scripts (`scripts/android_env.sh`) | **TESTED — NOT DEVICE VERIFIED** | 32 tests incl. a fake `proot-distro` recording argv. Termux build / PRoot backend split. Never run on Android |
 | **Robinhood Chain RPC (`providers/robinhood.py`)** | **IMPLEMENTED — NOT LIVE VERIFIED** | 17 tests vs mocked JSON-RPC. Chain id 4663. Host refused by this sandbox (403, same as Binance was); `doctor-robinhood` is the check |
 | Robinhood Chain doctor (`providers/robinhood_verify.py`) | **TESTED** | 🟢 VERIFIED / 🟡 PARTIAL / 🔴 FAILED — core vs liveness split. Independent of Binance by construction |
+| **GeckoTerminal client (`providers/geckoterminal.py`)** | **IMPLEMENTED — NOT LIVE VERIFIED** | Contract cross-checked vs `geckoterminal-api` 0.9.0 + published docs. Host refused by this sandbox |
+| Robinhood token discovery (`hunter/robinhood_discovery.py`) | **TESTED** | 20 tests. Age buckets, address identity, NULL never 0. Run end to end against a stubbed indexer only |
 
-**Test suite: 661 tests, all passing.** Run `pytest -q`.
+**Test suite: 696 tests, all passing.** Run `pytest -q`.
 
 ---
 
@@ -238,7 +240,7 @@ frontend/                Vite + React 18 + TypeScript (strict), mobile-first
   HomeView               The five-second view: can I trust it, and what moved
   AssetCards             The scanner as cards; the table is wide-screen only
   bottom-nav             Thumb-reachable navigation, phones only
-tests/                   661 tests
+tests/                   696 tests
 pine/                    TradingView companion scripts
 ```
 
@@ -629,7 +631,31 @@ Break these and the product is lying to its user.
     there is no file (Postgres, in-memory), and the backup's existence is
     checked before the migration rather than assumed.
 
-67. **One repository, mounted at the same path on both sides.** The bind is
+67. **A pool between two quote assets is not a discovery.** Found by running the
+    search: `new_pools` returns WETH/USDC-style infrastructure pools, which have
+    no new side. `token` had to return something and returned WETH — presenting
+    a blue chip as a fresh find, priced correctly and completely wrong. Such
+    pools are filtered and counted in `filtered.not_a_discovery`.
+
+68. **The new token is not always the base token.** Address ordering decides
+    base vs quote in an AMM, so a discovery sits on the quote side about half
+    the time. Reading `base_token` blindly would misprice half the list at
+    WETH's price. The side is chosen by which one is a known quote asset, and
+    the price follows the side.
+
+69. **Pool age is not token age.** `pool_created_at` says when this pool opened,
+    not when the contract was deployed. The field is `pool_age_seconds`, and
+    `token_age_seconds` stays `None` until a source that actually knows it
+    (Blockscout) is wired in. An unknown age is never bucketed at all — filing
+    it under "< 15 min" would put it at the top of the list people act on
+    fastest.
+
+70. **A failed search and a quiet chain never render the same.** `_discovery_state`
+    has four values, and EMPTY is its own: a search that completed and found
+    nothing is a fact about the chain, while one that failed is a fact about our
+    connection. Collapsing them would let an outage look like a calm market.
+
+71. **One repository, mounted at the same path on both sides.** The bind is
     `--bind "$ROOT:$ROOT"`, so `frontend/dist`, `.env` and
     `data/cryptopulse.db` are the same files from Termux and from Ubuntu — no
     copy step, and no way for two checkouts to drift while the user cannot tell

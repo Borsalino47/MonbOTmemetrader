@@ -354,6 +354,39 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
         await service.verify_robinhood_now()
         return service.robinhood_status()
 
+    @app.get("/api/robinhood/tokens", tags=["providers"])
+    async def robinhood_tokens(bucket: str | None = None):
+        """New tokens on Robinhood Chain, newest first.
+
+        Serves the last search and kicks a first one in the background if none
+        has run — the same never-block contract as everything else here. The
+        response says how many pools it looked at, so the list is never read as
+        a census of the chain.
+        """
+        service = get_service()
+        service.ensure_robinhood_discovery()
+        report = service.robinhood_discovery
+        if report is None:
+            return {
+                "state": "PENDING",
+                "tokens": [],
+                "note": "Première recherche en cours.",
+            }
+        payload = report.to_dict()
+        if bucket:
+            payload["tokens"] = [t for t in payload["tokens"] if t["age_bucket"] == bucket]
+            payload["filtered_to_bucket"] = bucket
+        payload["state"] = "OK" if report.candidates else ("FAILED" if report.errors else "EMPTY")
+        return payload
+
+    @app.post("/api/robinhood/tokens/search", tags=["providers"])
+    async def robinhood_search():
+        """Run a search now and wait for it (the explicit refresh button)."""
+        report = await get_service().discover_robinhood_now()
+        payload = report.to_dict()
+        payload["state"] = "OK" if report.candidates else ("FAILED" if report.errors else "EMPTY")
+        return payload
+
     @app.get("/api/config", tags=["status"])
     async def config():
         s = get_settings()

@@ -1,10 +1,14 @@
+import { RobinhoodTokens } from './RobinhoodTokens';
 import type { RobinhoodStatus } from '../types';
 
 /** The ROBINHOOD universe as it honestly stands today.
  *
- * The chain layer is real and verifiable — that is what the badge and the
- * check list show. The market layer (new tokens, prices, liquidity, buyers)
- * is not implemented yet, and this screen says so in those words.
+ * Two independent sources, shown as two independent states: the RPC proves the
+ * chain (badge + check list), and a DEX indexer supplies the tokens. Either can
+ * be healthy while the other is down, so neither vouches for the other.
+ *
+ * What still does not exist — holders, safety, the scores, the decision — is
+ * listed as a roadmap rather than drawn as empty data.
  *
  * The alternative — rendering the planned sections with empty lists — would be
  * indistinguishable from a chain where nothing is happening, which is the one
@@ -72,26 +76,23 @@ export function RobinhoodView({
         <p className="feed-note">{v.note}</p>
       </div>
 
-      {!status.market_data_available && (
-        <div className="panel rh-pending">
-          <h3>Données de marché — NON DISPONIBLE</h3>
-          <p className="rh-explain">
-            La chaîne est vérifiable dès maintenant. Les données de marché
-            arrivent aux phases suivantes, chacune avec sa source réelle. Rien
-            n'est affiché tant qu'une source fiable n'est pas branchée : une
-            liste vide se lirait comme une chaîne calme, ce qui serait faux.
-          </p>
-          <ul className="rh-roadmap">
-            <li><span className="rh-icon">🆕</span> Nouveaux tokens &lt; 15 min / 1 h / 24 h</li>
-            <li><span className="rh-icon">💧</span> Prix, liquidité, pools</li>
-            <li><span className="rh-icon">👥</span> Acheteurs / vendeurs, holders</li>
-            <li><span className="rh-icon">⚠️</span> Safety + Rug Risk (veto absolu)</li>
-            <li><span className="rh-icon">📈</span> Early Score, Explosion 15 min</li>
-            <li><span className="rh-icon">🔥</span> Décision ACHETER / SURVEILLER / NE PAS ACHETER</li>
-          </ul>
-          <p className="muted small">{status.note}</p>
-        </div>
-      )}
+      <RobinhoodTokens />
+
+      <div className="panel rh-pending">
+        <h3>Pas encore disponible</h3>
+        <p className="rh-explain">
+          Ces sections arrivent aux phases suivantes, chacune avec sa source
+          réelle. Rien n'est affiché tant qu'une source fiable n'est pas
+          branchée : un chiffre inventé serait pire qu'une case vide.
+        </p>
+        <ul className="rh-roadmap">
+          <li><span className="rh-icon">👥</span> Holders, top 10, deployer</li>
+          <li><span className="rh-icon">⚠️</span> Safety + Rug Risk (veto absolu)</li>
+          <li><span className="rh-icon">📈</span> Early Score, Explosion 15 min</li>
+          <li><span className="rh-icon">🔥</span> Décision ACHETER / SURVEILLER / NE PAS ACHETER</li>
+        </ul>
+        <p className="muted small">{status.note}</p>
+      </div>
     </>
   );
 }
