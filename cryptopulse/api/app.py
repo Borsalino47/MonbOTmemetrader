@@ -238,6 +238,11 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
         service.ensure_db()
         if start_loop:
             await service.start()
+        else:
+            # Loops off (tests, one-shot runs) still constitutes a ready server,
+            # and the timeline must say so — otherwise the first phase of the
+            # sequence looks like it never happened.
+            service.startup.mark("server_ready_ms")
         yield
         await service.stop()
 
@@ -264,6 +269,26 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
     @app.get("/api/health", tags=["status"])
     async def health():
         return get_service().status()
+
+    @app.get("/api/startup", tags=["status"])
+    async def startup():
+        """How long each phase of the launch took, and where the feed check is.
+
+        Separate from `/api/health` so the dashboard can poll it during the first
+        seconds without pulling the whole status payload, and so "why was that
+        slow?" has an answer that is a measurement rather than an opinion.
+        """
+        service = get_service()
+        return {
+            "startup": service.startup.to_dict(),
+            "feed_verification": service.feed.to_dict(),
+            "live_verified": service.live_verified,
+        }
+
+    @app.post("/api/feed/verify", tags=["status"])
+    async def verify_feed_endpoint():
+        """Re-run the feed check on demand. Four requests; never blocks a scan."""
+        return (await get_service().verify_feed_now()).to_dict()
 
     @app.get("/api/config", tags=["status"])
     async def config():
@@ -308,11 +333,22 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
     ):
         service = get_service()
         report = service.last_report
-        if report is None:
-            # No scan has run in THIS process yet. Rather than an empty screen
+        # `not report.results` matters as much as `report is None`, and was found
+        # by running the app against an unreachable Binance: the scan completed
+        # with zero successes, `last_report` stopped being None, and the screen
+        # went from a populated journal to blank. A scan that produced nothing
+        # has not replaced the last one that produced something.
+        if report is None or not report.results:
+            # No usable scan from THIS process yet. Rather than an empty screen
             # for the length of a full scan, serve the last one from the journal
             # — labelled with its real age and its own provenance, never as live.
-            snap = repo.last_scan_snapshot(limit=limit)
+            # Prefer the snapshot the boot sequence already read. On a phone
+            # this is the difference between the first screen costing a SQLite
+            # query and costing nothing at all — and it is the same rows either
+            # way, so there is no honesty cost to the shortcut.
+            snap = service.warm_snapshot
+            if snap is None or len(snap.get("rows", [])) < limit:
+                snap = repo.last_scan_snapshot(limit=limit)
             if snap is None:
                 return JSONResponse(
                     status_code=503,
@@ -329,6 +365,13 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
                 "meta": {
                     "source": "journal",
                     "live": False,
+                    # Distinguishes "not scanned yet" from "scanned and the feed
+                    # returned nothing", which need different fixes.
+                    "reason": (
+                        "no scan in this process yet"
+                        if report is None
+                        else "the last scan produced no usable result"
+                    ),
                     "stale": True,
                     "age_seconds": snap["age_seconds"],
                     "message": (
@@ -779,6 +822,12 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
             "awaiting_answer": unanswered,
             "counts": _decision_counts(entries, held),
             "data_mode": service.status()["data_mode"],
+            # Whether a *new* decision here may be presented as verified live
+            # data. False while the feed check is pending as well as on failure:
+            # "not yet checked" and "checked and wrong" are different states,
+            # and neither licenses showing a fresh BUY as a live signal.
+            "live_verified": service.live_verified,
+            "feed_verification": service.feed.to_dict(),
             "engine": {
                 "version": "TRADE_DECISION_V1",
                 "weights_fingerprint": service.trade_engine.weights_fingerprint,
@@ -1032,12 +1081,19 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
 
         @app.get("/", include_in_schema=False)
         async def index():
+            # The moment the browser is actually handed something to render.
+            # Recorded once — a later reload would otherwise overwrite the launch
+            # timing with a number describing a page refresh.
+            with contextlib.suppress(Exception):
+                get_service().startup.mark("ui_ready_ms")
             return FileResponse(FRONTEND_DIST / "index.html")
 
         @app.get("/{full_path:path}", include_in_schema=False)
         async def spa(full_path: str):
             if full_path.startswith("api/"):
                 raise HTTPException(404, "unknown API route")
+            with contextlib.suppress(Exception):
+                get_service().startup.mark("ui_ready_ms")
             return FileResponse(FRONTEND_DIST / "index.html")
     else:
 

@@ -6,13 +6,16 @@ import { AssetCards } from './components/AssetCards';
 import { HomeView } from './components/HomeView';
 import { HorizonsView } from './components/HorizonsView';
 import { HunterView } from './components/HunterView';
+import { FeedBadge } from './components/FeedBadge';
 import { MeView } from './components/MeView';
 import { InstallPrompt } from './components/InstallPrompt';
 import { PerformanceView } from './components/PerformanceView';
 import { ScannerTable } from './components/ScannerTable';
 import { TopOpportunities } from './components/TopOpportunities';
 import { age, clock } from './format';
-import type { AlertItem, DecisionsResponse, Health, ScanResponse, ScoreRow } from './types';
+import type {
+  AlertItem, DecisionsResponse, FeedVerification, Health, ScanResponse, ScoreRow,
+} from './types';
 
 type Tab = 'home' | 'scanner' | 'hunter' | 'me' | 'alerts' | 'verification' | 'performance';
 
@@ -51,6 +54,8 @@ export default function App() {
   // never presented as live.
   const [scanMeta, setScanMeta] = useState<ScanResponse['meta'] | null>(null);
   const [decisions, setDecisions] = useState<DecisionsResponse | null>(null);
+  const [feed, setFeed] = useState<FeedVerification | null>(null);
+  const [verifying, setVerifying] = useState(false);
 
   // Filters
   const [minScore, setMinScore] = useState(0);
@@ -104,6 +109,38 @@ export default function App() {
     const t = setInterval(load, REFRESH_MS);
     return () => clearInterval(t);
   }, [load]);
+
+  // The feed check is polled fast while it is running and then left alone. A
+  // badge that says "vérification en cours" and only updates on the next slow
+  // refresh reads as stuck, which is worse than showing nothing.
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | undefined;
+    const tick = async () => {
+      try {
+        const s = await api.startup();
+        if (cancelled) return;
+        setFeed(s.feed_verification);
+        if (s.feed_verification.state === 'PENDING') {
+          timer = window.setTimeout(tick, 700);
+        }
+      } catch {
+        if (!cancelled) timer = window.setTimeout(tick, 2000);
+      }
+    };
+    void tick();
+    return () => { cancelled = true; if (timer) window.clearTimeout(timer); };
+  }, []);
+
+  async function retryVerification() {
+    setVerifying(true);
+    try {
+      const r = await fetch('/api/feed/verify', { method: 'POST' });
+      if (r.ok) setFeed(await r.json());
+    } catch { /* the badge keeps its previous state */ } finally {
+      setVerifying(false);
+    }
+  }
 
   async function runScan() {
     setScanning(true);
@@ -185,7 +222,13 @@ export default function App() {
             phone actually has. The full strip returns on a wide screen. */}
         <div className="status-compact">
           <span className={`dot ${isDemo || providerDown ? 'bad' : 'ok'}`} />
-          <span className={isDemo ? 'bad' : 'ok'}>{health?.data_mode ?? '—'}</span>
+          {/* LIVE means "not generated data". It does not mean the feed has been
+              verified — that is the badge below, and the two contradicting each
+              other in the same header is exactly what must not happen. */}
+          <span className={isDemo || feed?.state === 'FAILED' ? 'bad' : 'ok'}>
+            {health?.data_mode ?? '—'}
+            {feed?.state === 'FAILED' ? ' (non vérifié)' : ''}
+          </span>
           <span className="sep">·</span>
           <span className={isStale ? 'bad' : ''}>{last ? age(last.age_seconds) : '—'}</span>
           <span className="sep">·</span>
@@ -301,6 +344,11 @@ export default function App() {
       <InstallPrompt />
 
       <main className="main">
+        {/* Above everything: whether what follows can be trusted as live is
+            the first question, and it changes while the user is looking. */}
+        {feed && (
+          <FeedBadge feed={feed} onRetry={retryVerification} busy={verifying} />
+        )}
         {error && <div className="error-box">Error: {error}</div>}
 
         {tab === 'home' && (
@@ -314,6 +362,7 @@ export default function App() {
             scanning={scanning}
             onScan={runScan}
             decisions={decisions}
+            feed={feed}
           />
         )}
 

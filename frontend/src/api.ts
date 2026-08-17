@@ -1,7 +1,8 @@
 import type {
   AlertItem, AssetDetail, DeepScanResponse, Health, HorizonResponse, HuntResponse,
   DecisionsResponse, PerformanceResponse, Position, PositionEvent, PumpResponse,
-  ResultsResponse, ScanResponse, TradeSignal, Validation, ValidationsResponse,
+  ResultsResponse, ScanResponse, StartupResponse, TradeSignal, Validation,
+  ValidationsResponse,
 } from './types';
 
 const BASE = '/api';
@@ -57,6 +58,7 @@ export const api = {
   validations: (limit = 100) => get<ValidationsResponse>('/validations', { limit }),
 
   decisions: () => get<DecisionsResponse>('/decisions'),
+  startup: () => get<StartupResponse>('/startup'),
   results: () => get<ResultsResponse>('/results'),
   positions: (status = 'OPEN') =>
     get<{ positions: Position[]; watcher: Record<string, unknown> }>('/positions', { status }),

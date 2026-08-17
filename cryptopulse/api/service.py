@@ -22,6 +22,7 @@ from cryptopulse.alerts.notify import (
     notify_alerts,
     notify_decision,
 )
+from cryptopulse.api.startup import StartupTracker
 from cryptopulse.config.settings import CryptoPulseSettings, get_settings
 from cryptopulse.core.clock import SYSTEM_CLOCK
 from cryptopulse.core.logging import get_logger
@@ -33,6 +34,7 @@ from cryptopulse.hunter.discovery import PrescanReport, SnapshotMemory, prescan
 from cryptopulse.outcomes.horizons import HORIZONS, HorizonReport, HorizonTracker
 from cryptopulse.outcomes.tracker import OutcomeTracker, ResolutionReport
 from cryptopulse.providers.registry import is_synthetic
+from cryptopulse.providers.verify import FeedState, FeedVerification, verify_feed
 from cryptopulse.scanner.base import ScanReport
 from cryptopulse.scanner.cex import CexScanner
 from cryptopulse.scanner.memory import ScoreMemory
@@ -90,6 +92,14 @@ class ScannerService:
         self.last_decisions: list[dict] = []
         self._watch_task: asyncio.Task | None = None
 
+        # Boot sequencing. The interface must be usable before anything
+        # expensive runs, so every heavy job is a background task started in a
+        # stated order rather than work done inside the lifespan handler.
+        self.startup = StartupTracker(started_at_ms=SYSTEM_CLOCK.now_ms())
+        self.feed = FeedVerification(state=FeedState.PENDING, provider="")
+        self.warm_snapshot: dict | None = None
+        self._boot_task: asyncio.Task | None = None
+
         self.last_report: ScanReport | None = None
         self.last_alerts: list[Alert] = []
         self.scan_count = 0
@@ -136,19 +146,94 @@ class ScannerService:
             self._db_ready = True
 
     async def start(self) -> None:
+        """Return immediately. Everything expensive happens in `_boot()`.
+
+        This function is awaited inside the ASGI lifespan handler, which means
+        the server does not accept a single connection until it returns. Anything
+        slow placed here is time the user spends looking at a blank screen, so
+        nothing slow is placed here.
+        """
         self.ensure_db()
-        if self._task is None or self._task.done():
-            self._task = asyncio.create_task(self._loop(), name="scan-loop")
-            log.info("scan_loop_started", interval_s=self.settings.scanner.scan_interval_seconds)
+        self.startup.mark("server_ready_ms")
+        if self._boot_task is None or self._boot_task.done():
+            self._boot_task = asyncio.create_task(self._boot(), name="boot-sequence")
+
+    async def _boot(self) -> None:
+        """The staged start, in the order the user actually needs things.
+
+        Deliberately sequential rather than a burst of concurrent tasks: on a
+        phone the CPU is the constraint, and starting six jobs at once makes all
+        six slow instead of making the important one fast.
+        """
+        # 1. The last stored scan, so the screen has content before any network
+        #    call has been made. This is a local SQLite read of a few dozen rows.
+        try:
+            self.warm_snapshot = await asyncio.to_thread(repo.last_scan_snapshot, 300)
+            self.startup.mark(
+                "sqlite_restore_ms",
+                note=(
+                    f"{self.warm_snapshot['scanned']} lignes restaurées"
+                    if self.warm_snapshot
+                    else "aucun scan enregistré — premier lancement"
+                ),
+            )
+        except Exception as exc:
+            self.startup.mark("sqlite_restore_ms", note=f"échec: {type(exc).__name__}")
+            log.warning("warm_start_failed", error=type(exc).__name__)
+
+        # 2. Open positions before anything else that touches the network. A
+        #    🔴 VENDRE must never queue behind a scan of a hundred and twenty
+        #    tokens, and with nothing open this costs one SQLite query.
         if self._watch_task is None or self._watch_task.done():
             self._watch_task = asyncio.create_task(self._watch_loop(), name="position-watch-loop")
             log.info(
                 "position_watch_started",
                 interval_s=self.settings.trade.position_watch_interval_seconds,
             )
+        self.startup.mark("watcher_ready_ms")
+
+        # 3. The feed check, in the background. It used to run *before* the
+        #    server started; on a phone that was tens of seconds of blank screen
+        #    for a check the stored data does not depend on.
+        await self.verify_feed_now()
+
+        # 4. Only now the expensive pass.
+        if self._task is None or self._task.done():
+            self._task = asyncio.create_task(self._loop(), name="scan-loop")
+            log.info("scan_loop_started", interval_s=self.settings.scanner.scan_interval_seconds)
+
+    async def verify_feed_now(self) -> FeedVerification:
+        """Run the feed check. Never raises; a failed check is a reported state."""
+        try:
+            self.feed = await verify_feed(
+                self.scanner.provider,
+                self.settings,
+                timeout_seconds=self.settings.providers.request_timeout_seconds * 3,
+            )
+        except Exception as exc:
+            self.feed = FeedVerification(
+                state=FeedState.FAILED,
+                provider=self.scanner.provider.name,
+                error=f"{type(exc).__name__}",
+            )
+            log.error("feed_verification_failed", error=type(exc).__name__)
+        self.startup.mark("doctor_ms", note=self.feed.label_fr)
+        if self.feed.verified:
+            self.startup.mark("first_live_data_ms")
+        return self.feed
+
+    @property
+    def live_verified(self) -> bool:
+        """Should a new decision be presented as verified live data?
+
+        False while PENDING as well as on failure. "Not yet checked" and "checked
+        and wrong" are different states — both reported — but neither of them
+        licenses presenting a fresh BUY as a verified live signal.
+        """
+        return self.feed.state is FeedState.VERIFIED
 
     async def stop(self) -> None:
-        for attr in ("_task", "_watch_task"):
+        for attr in ("_task", "_watch_task", "_boot_task"):
             task = getattr(self, attr)
             if task is not None:
                 task.cancel()
@@ -200,6 +285,11 @@ class ScannerService:
         except Exception:
             held = set()
 
+        # Read once per cycle rather than per row: the state cannot change
+        # mid-loop, and a decision list where some rows were judged verified and
+        # others not would be incoherent.
+        verified = self.live_verified
+
         decisions: list[dict] = []
         for result in report.results:
             if result.symbol in held:
@@ -217,9 +307,21 @@ class ScannerService:
             payload["action"] = outcome.action.value
             payload["proposed"] = outcome.proposed.value
             payload["gate"] = outcome.to_dict()
+            payload["live_verified"] = verified
             decisions.append(payload)
 
             if outcome.changed and outcome.action is TradeAction.BUY:
+                if not verified:
+                    # The feed has not been proven live yet. The reading stays on
+                    # screen with its state, but it is not journalled as a signal
+                    # and does not reach the phone: a BUY recorded against an
+                    # unverified feed would enter the statistics as though it had
+                    # been a real recommendation.
+                    log.info(
+                        "buy_signal_withheld",
+                        symbol=result.symbol, feed=self.feed.state.value,
+                    )
+                    continue
                 await self._journal_buy(result, decision)
                 await self._notify_decision(decision, result)
 
@@ -316,7 +418,9 @@ class ScannerService:
         """One full pass: scan, alert, persist. Safe to call concurrently."""
         async with self._lock:
             self.ensure_db()
+            self.startup.mark("first_scan_ms")
             report = await self.scanner.scan()
+            self.startup.mark("full_scan_ms", note=f"{report.succeeded}/{report.scanned}")
             self.last_report = report
             self.scan_count += 1
 
@@ -363,15 +467,29 @@ class ScannerService:
         # Outside the scan lock: resolution is independent of scanning and must
         # not delay the next pass if the provider is slow. Each follow-up job is
         # guarded separately — a failure in one must not skip the other.
-        try:
-            await self.resolve_outcomes()
-        except Exception as exc:
-            log.error("resolution_failed", error=str(exc)[:300])
+        #
+        # The two network-bound follow-ups are skipped on the very first cycle:
+        # nothing on screen depends on them, and on a phone they would compete
+        # for bandwidth with the scan the user is actually waiting for. They run
+        # from the second cycle onward.
+        #
+        # The pre-scan below is NOT deferred — found by a failing test. It is
+        # free (it reads the ticker dictionary the scan already holds) and it is
+        # what builds the previous-reading memory the hunter's deltas need.
+        # Skipping it once would silently cost the first delta of every session.
+        first_cycle = self.scan_count <= 1
+        if first_cycle:
+            log.info("followups_deferred", reason="first cycle — the screen comes first")
+        else:
+            try:
+                await self.resolve_outcomes()
+            except Exception as exc:
+                log.error("resolution_failed", error=str(exc)[:300])
 
-        try:
-            await self.track_horizons()
-        except Exception as exc:
-            log.error("horizon_tracking_failed", error=str(exc)[:300])
+            try:
+                await self.track_horizons()
+            except Exception as exc:
+                log.error("horizon_tracking_failed", error=str(exc)[:300])
 
         # Free: reads the ticker dictionary the scan already holds. Running it
         # every cycle is what builds the previous-reading memory the deltas need.
@@ -655,6 +773,8 @@ class ScannerService:
                 # webhook's is.
                 "last": self.last_notification.to_dict() if self.last_notification else None,
             },
+            "startup": self.startup.to_dict(),
+            "feed_verification": self.feed.to_dict(),
             "trading": {
                 "engine_version": self.trade_engine.__class__.__name__,
                 "weights_fingerprint": self.trade_engine.weights_fingerprint,

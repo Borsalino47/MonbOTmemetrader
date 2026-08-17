@@ -1,5 +1,7 @@
 import { age, num, pct, scoreColor, signClass } from '../format';
-import type { AlertItem, DecisionsResponse, Health, ScoreRow } from '../types';
+import type {
+  AlertItem, DecisionsResponse, FeedVerification, Health, ScoreRow,
+} from '../types';
 import { DecisionsNow } from './DecisionsNow';
 import { InstallStatus } from './InstallPrompt';
 import { VerdictBadge } from './VerdictBadge';
@@ -18,6 +20,10 @@ interface Props {
   /** Null while the decisions endpoint has not answered. The rest of the
    *  screen stays usable in that case rather than blanking. */
   decisions: DecisionsResponse | null;
+  /** The feed verification verdict, or null before the first answer. The
+   *  trust line must agree with the badge above it — two lines contradicting
+   *  each other about the same feed is worse than either one alone. */
+  feed: FeedVerification | null;
 }
 
 /** The five-second view: is anything happening, and can I trust it?
@@ -30,7 +36,7 @@ interface Props {
  * hidden. Hiding them would suggest they were forgotten; faking them with an
  * empty list would suggest the search ran and found nothing. */
 export function HomeView({
-  rows, alerts, health, journalAgeSeconds, onOpenTab, onSelect, scanning, onScan, decisions,
+  rows, alerts, health, journalAgeSeconds, onOpenTab, onSelect, scanning, onScan, decisions, feed,
 }: Props) {
   const top = rows
     .filter((r) => !r.safety.hard_veto && !r.liquidity.veto && r.data_confidence.score >= 50)
@@ -44,8 +50,14 @@ export function HomeView({
   const isDemo = health?.data_mode === 'DEMO';
   const isStale = last?.data_stale ?? false;
   const fromJournal = journalAgeSeconds !== null;
+  // A scan that completed with nothing is not a working feed. Found by running
+  // the app against an unreachable Binance: the line said "Flux à jour" while
+  // the badge directly above said FLUX LIVE NON VÉRIFIÉ.
+  const scannedNothing = !!last && last.scanned === 0;
+  const notVerified = feed?.state === 'FAILED';
   const feedBad =
-    isDemo || isStale || fromJournal || (health?.provider_health?.some((p) => !p.available) ?? false);
+    isDemo || isStale || fromJournal || scannedNothing || notVerified
+    || (health?.provider_health?.some((p) => !p.available) ?? false);
 
   return (
     <div className="home">
@@ -58,11 +70,15 @@ export function HomeView({
         <span className="home-state-text">
           {isDemo
             ? 'DÉMO — chiffres générés, pas un marché'
-            : fromJournal
-              ? `Dernier scan enregistré, ${age(journalAgeSeconds)} — pas des prix en direct`
-              : isStale
-                ? `Flux en retard — données vieilles de ${age(last?.market_data_age_seconds)}`
-                : `Flux à jour — ${health?.provider ?? '—'}, ${age(last?.age_seconds)}`}
+            : notVerified
+              ? `Flux non vérifié — ${health?.provider ?? '—'} n'a pas répondu`
+              : scannedNothing
+                ? 'Le dernier scan n\'a rien ramené — aucun actif analysé'
+                : fromJournal
+                  ? `Dernier scan enregistré, ${age(journalAgeSeconds)} — pas des prix en direct`
+                  : isStale
+                    ? `Flux en retard — données vieilles de ${age(last?.market_data_age_seconds)}`
+                    : `Flux à jour — ${health?.provider ?? '—'}, ${age(last?.age_seconds)}`}
         </span>
         <span className="home-state-meta">
           {last ? `${last.succeeded}/${last.scanned}` : '—'}

@@ -70,9 +70,11 @@ that justifies it.
 | Positions + hysteresis | **TESTED** | 30 tests. Append-only journal; twenty alternating readings move nothing |
 | Position watcher + trading API | **TESTED** | 28 tests. Open positions only; states its request cost |
 | Trading statistics (`trading/stats.py`) | **TESTED** | Taken vs skipped, per strength, sell quality. No rate below n=20 |
+| Startup sequencing (`api/startup.py`) | **TESTED** | 16 tests. Phase timings; the screen never waits for the network |
+| Feed verification (`providers/verify.py`) | **TESTED** | One definition of LIVE VERIFIED, shared by `doctor` and the service |
 | Schema migration (`database/migrate.py`) | **TESTED** | Additive columns only; refuses destructive changes |
 
-**Test suite: 596 tests, all passing.** Run `pytest -q`.
+**Test suite: 612 tests, all passing.** Run `pytest -q`.
 
 ---
 
@@ -149,6 +151,7 @@ cryptopulse/
     kraken.py            Kraken public REST, 2nd venue <- NOT LIVE VERIFIED
     cache.py             Closed candles only. Never the forming one. `doctor` bypasses it
     fixture.py           SYNTHETIC generator for offline dev/tests
+    verify.py            Is this feed really live? One definition, two callers
     registry.py          One switch: CP_PROVIDER_MARKET_DATA
   features/
     indicators.py        Pure numpy, nan warm-up, no look-ahead
@@ -209,12 +212,15 @@ cryptopulse/
     session.py           SQLAlchemy engine
     repo.py              The only module that writes; `prune` applies retention
   api/
+    startup.py           Phase timings. An absent phase is null, never zero
     service.py           Owns the scanner, the loop and shared state
     app.py               FastAPI routes, serves the built dashboard
   cli.py                 doctor / scan / resolve / verify / notify / serve / backtest
 
 start.sh                 One-command launcher: install, verify feed, scan
-android-start.sh         Android/Termux: install, build, serve on 127.0.0.1:8000
+android-install.sh       Android, once: venv, deps, icons, build, blocking doctor
+android-update.sh        Android, after a git pull: backup, deps, rebuild if needed
+android-start.sh         Android, daily: starts. Nothing else. ~1s to HTTP
 
 frontend/public/
   manifest.webmanifest   PWA manifest. standalone, maskable icons, fr
@@ -228,7 +234,7 @@ frontend/                Vite + React 18 + TypeScript (strict), mobile-first
   HomeView               The five-second view: can I trust it, and what moved
   AssetCards             The scanner as cards; the table is wide-screen only
   bottom-nav             Thumb-reachable navigation, phones only
-tests/                   596 tests
+tests/                   612 tests
 pine/                    TradingView companion scripts
 ```
 
@@ -541,6 +547,46 @@ Break these and the product is lying to its user.
     prove it.** The workflow is analyse -> recommend -> alert -> *the user acts
     manually* -> the user confirms -> measure. There is no exchange key, no
     signing and no order path anywhere in this repository.
+
+57. **The launcher starts the server before anything else, and the screen never
+    waits for the network.** `android-start.sh` used to run pip, npm and a
+    blocking `doctor` before uvicorn — measured here at 3.6s for the doctor and
+    4.9s for an npm build, on a desktop. On a phone under PRoot those are far
+    worse, and every second of them was a blank screen showing data that was
+    already in SQLite and did not depend on any of it. Install, update and start
+    are now three scripts because they happen at three different frequencies.
+
+58. **The feed check runs in the background and has three states, not two.**
+    PENDING is not a failure — it is the honest answer for the first seconds,
+    and rendering it as "not verified" would make every launch look broken for
+    as long as the check takes. 🟡 / 🟢 / 🔴, and `live_verified` is false for
+    both 🟡 and 🔴 because neither licenses presenting a fresh BUY as live.
+
+59. **`providers/verify.py` is the only definition of LIVE VERIFIED.** Moving
+    the check in-process raised the risk that the launcher would claim verified
+    on weaker evidence than `doctor` demands. Verified means real data
+    cross-checked against itself — ticker inside its own 24h range, OHLC
+    invariants, candle spacing, klines agreeing with the ticker, bid < ask — and
+    *every* check must pass. "Mostly verified" is not a state worth displaying.
+
+60. **A scan that produced nothing has not replaced the last one that produced
+    something.** Found by running the app against an unreachable Binance: the
+    scan completed with zero successes, `last_report` stopped being None, and
+    the screen went from a populated journal to blank. `/api/scan` now falls
+    back on `not report.results` as well as on `report is None`, and says which
+    of the two it was.
+
+61. **The trust line, the topbar and the feed badge must never contradict each
+    other.** Same run: the header said LIVE and the trust line said "Flux à
+    jour" while the badge said FLUX LIVE NON VÉRIFIÉ. Three statements about
+    one feed, one of them false. They now all read the same verification state.
+
+62. **A startup phase that has not happened is null, never zero.** A zero would
+    read as "instant" when it means "not yet", and on a launch timeline that is
+    the difference between working and broken. Python's own import time is
+    reported rather than hidden: on a phone it is the larger half of a launch,
+    and a timeline starting after it would claim the app was ready long before
+    anything reached the screen.
 
 ---
 

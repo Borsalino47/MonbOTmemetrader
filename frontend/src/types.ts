@@ -719,3 +719,29 @@ export interface ResultsResponse {
   notes: string[];
   data_mode: 'LIVE' | 'DEMO';
 }
+
+export type FeedState = 'PENDING' | 'VERIFIED' | 'FAILED' | 'SKIPPED_SYNTHETIC';
+
+/** Whether the live feed has been proven live. PENDING is not a failure — it is
+ *  the honest answer for the first seconds, and showing it as "not verified"
+ *  would make every launch look broken for as long as the check takes. */
+export interface FeedVerification {
+  state: FeedState;
+  emoji: string;
+  label_fr: string;
+  provider: string;
+  verified: boolean;
+  passed: number;
+  total: number;
+  checks: { name: string; ok: boolean; detail: string }[];
+  duration_ms: number;
+  checked_at_ms: number | null;
+  error: string | null;
+  note: string;
+}
+
+export interface StartupResponse {
+  startup: Record<string, number | null | string | string[] | Record<string, string>>;
+  feed_verification: FeedVerification;
+  live_verified: boolean;
+}

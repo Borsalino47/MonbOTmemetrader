@@ -83,11 +83,43 @@ L'installation prend quelques minutes la première fois (le téléphone compile
 
 ### Installer l'application sur l'écran d'accueil
 
-Une seule commande fait tout — dépendances, icônes, interface, démarrage :
+Trois commandes, à trois moments différents :
 
 ```bash
-./android-start.sh
+./android-install.sh    # UNE FOIS. Long : compile numpy, construit l'interface.
+./android-start.sh      # TOUS LES JOURS. Démarre, et rien d'autre.
+./android-update.sh     # APRÈS UN git pull seulement.
 ```
+
+**Pourquoi trois scripts.** L'ancienne version faisait tout à chaque lancement :
+vérifier pip, chercher si l'interface devait être reconstruite, puis attendre la
+fin d'une vérification réseau **avant même de démarrer le serveur**. Mesuré :
+3,6 s rien que pour la vérification, et 4,9 s de plus les jours de
+reconstruction — sur un ordinateur de bureau. Sur un téléphone, bien davantage.
+Et pendant tout ce temps, l'écran restait vide en attendant des données déjà
+présentes dans votre base.
+
+`./android-start.sh` ne fait plus **rien** d'autre que démarrer : pas de pip,
+pas de npm, pas d'icônes, pas de vérification bloquante.
+
+### Ce que vous voyez au démarrage
+
+L'interface s'affiche **immédiatement** avec votre dernier scan enregistré,
+accompagné de son âge exact. Aucun écran vide, même si Binance est lent ou
+injoignable.
+
+En haut, un bandeau dit où en est la vérification du flux :
+
+| | Ce que ça veut dire |
+|---|---|
+| 🟡 **VÉRIFICATION BINANCE EN COURS** | La vérification tourne. Les données affichées viennent du dernier scan enregistré. |
+| 🟢 **BINANCE LIVE VERIFIED** | Un vrai aller-retour réseau a renvoyé des données cohérentes avec elles-mêmes. |
+| 🔴 **FLUX LIVE NON VÉRIFIÉ** | Échec. Vos scans précédents restent visibles avec leur âge, et un bouton « Réessayer » apparaît. |
+
+**Tant que le flux n'est pas vérifié, aucune nouvelle décision ACHETER ou VENDRE
+n'est présentée comme un signal en direct** — elle n'est ni journalisée ni
+envoyée en notification. Les données précédentes restent visibles ; c'est la
+prétention d'être « en direct » qui est retenue, pas l'information.
 
 Puis, dans **Chrome** sur le téléphone :
 
@@ -326,20 +358,21 @@ Sur Android, dans Termux, depuis le dossier `MonbOTmemetrader` :
 
 ```bash
 cd ~/MonbOTmemetrader
-cp data/cryptopulse.db data/cryptopulse.db.backup
 git pull
+./android-update.sh
 ./android-start.sh
 ```
 
+`android-update.sh` sauvegarde votre base lui-même avant toute opération.
+
 C'est tout. Détail de ce qui se passe :
 
-* **`cp ... .backup`** — une copie de votre journal avant toute opération. La
-  mise à jour n'y touche pas, mais une sauvegarde coûte une seconde.
 * **`git pull`** récupère le code. Vos fichiers `.env` et `data/` ne sont pas
   suivis par Git : ils ne peuvent pas être écrasés.
-* **`./android-start.sh`** installe les nouvelles dépendances, reconstruit
-  l'interface, **ajoute les nouvelles colonnes** à votre base existante et
-  démarre.
+* **`./android-update.sh`** sauvegarde la base, installe les nouvelles
+  dépendances, reconstruit l'interface **seulement si une source a changé**, et
+  ajoute les nouvelles colonnes à votre base existante.
+* **`./android-start.sh`** démarre. C'est tout ce qu'il fait.
 
 > **Vos données sont conservées.** La migration est *additive uniquement* : elle
 > ajoute des colonnes et des tables, et **refuse** toute opération destructive

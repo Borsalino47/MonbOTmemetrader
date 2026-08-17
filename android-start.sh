@@ -1,100 +1,59 @@
 #!/usr/bin/env bash
-# CRYPTO PULSE AI — démarrage Android, une seule commande.
+# CRYPTO PULSE AI — démarrage quotidien. Ne fait QUE démarrer.
 #
-#   ./android-start.sh          installe ce qu'il manque, construit, démarre
-#   ./android-start.sh demo     idem, en données SYNTHÉTIQUES (hors-ligne)
+#   ./android-start.sh          démarre
+#   ./android-start.sh demo     démarre en données SYNTHÉTIQUES (hors-ligne)
 #
-# Puis ouvrez http://127.0.0.1:8000 dans Chrome, menu ⋮ → « Installer
-# l'application ». Une icône CRYPTO PULSE apparaît sur l'écran d'accueil.
+# Puis ouvrez http://127.0.0.1:8000 dans Chrome.
+#
+# CE QUE CE SCRIPT NE FAIT PLUS, ET POURQUOI
+#
+# Plus de pip, plus de npm, plus de génération d'icônes, plus de `doctor`
+# bloquant. Chacune de ces étapes coûtait des secondes à chaque lancement pour
+# refaire un travail déjà fait — et le `doctor` en coûtait le plus, car il
+# attendait le réseau avant même de démarrer le serveur. L'interface attendait
+# une vérification dont l'affichage du dernier scan enregistré n'a pas besoin.
+#
+# Installation et mise à jour vivent maintenant dans leurs propres scripts :
+#   ./android-install.sh   une fois
+#   ./android-update.sh    après un git pull
+#
+# La vérification du flux tourne désormais DANS l'application, en arrière-plan.
+# L'écran affiche 🟡 pendant, puis 🟢 ou 🔴. Tant qu'elle n'a pas réussi, les
+# scans enregistrés restent visibles avec leur âge, et aucune nouvelle décision
+# n'est présentée comme vérifiée en direct.
 #
 # POURQUOI 127.0.0.1 ET PAS L'ADRESSE RÉSEAU DU TÉLÉPHONE
 #
-# L'installation d'une PWA et le service worker exigent un « contexte
-# sécurisé ». La spécification traite localhost / 127.0.0.1 comme sécurisé au
-# même titre que HTTPS — c'est ce qui rend l'installation possible ici sans
-# certificat. Depuis un autre appareil (192.168.x.x), la page fonctionne mais
-# ne peut pas être installée. L'application le dit elle-même dans ce cas.
+# L'installation d'une PWA exige un « contexte sécurisé ». La spécification
+# traite 127.0.0.1 comme sécurisé au même titre que HTTPS — c'est ce qui rend
+# l'installation possible sans certificat. Cela évite aussi d'exposer le
+# scanner au Wi-Fi.
 
 set -euo pipefail
 cd "$(dirname "$0")"
 
 MODE="${1:-live}"
-VENV=.venv
-PY="$VENV/bin/python"
+PY=.venv/bin/python
 
-say() { printf '\n\033[36m==>\033[0m %s\n' "$1"; }
-warn() { printf '\033[33m    %s\033[0m\n' "$1"; }
-
-# ------------------------------------------------------------------ python ---
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "python3 est absent. Dans Termux : pkg install -y python" >&2
+if [ ! -x "$PY" ]; then
+  echo "Environnement absent. Lancez d'abord : ./android-install.sh" >&2
   exit 1
 fi
 
-if [ ! -x "$PY" ]; then
-  say "Création de l'environnement Python"
-  python3 -m venv "$VENV"
+if [ ! -f frontend/dist/index.html ]; then
+  # Diagnostiqué ici plutôt que reconstruit : reconstruire au démarrage est
+  # exactement ce que cette phase supprime, et une minute de npm surprise est
+  # pire qu'un message clair.
+  printf '\033[33m    Interface non construite — l API démarrera sans elle.\033[0m\n'
+  printf '\033[33m    Pour la construire : ./android-update.sh\033[0m\n'
 fi
 
-if ! "$PY" -c "import cryptopulse" >/dev/null 2>&1; then
-  say "Installation des dépendances (quelques minutes la première fois)"
-  warn "Le téléphone compile numpy ; c'est normal et cela n'arrive qu'une fois."
-  "$VENV/bin/pip" install -q --upgrade pip
-  "$VENV/bin/pip" install -q -e "."
-fi
-
-# ------------------------------------------------------------------ icônes ---
-# Générées en Python pur, sans bibliothèque d'images : pas de dépendance de plus
-# pour six PNG.
-if [ ! -f frontend/public/icons/icon-512.png ]; then
-  say "Génération des icônes"
-  "$PY" scripts/make_icons.py
-fi
-
-# --------------------------------------------------------------- interface ---
-NEEDS_BUILD=0
-[ ! -f frontend/dist/index.html ] && NEEDS_BUILD=1
-# Reconstruire si une source est plus récente que le bundle.
-if [ -f frontend/dist/index.html ] && [ -n "$(find frontend/src frontend/public frontend/index.html -newer frontend/dist/index.html 2>/dev/null | head -1)" ]; then
-  NEEDS_BUILD=1
-fi
-
-if [ "$NEEDS_BUILD" = "1" ]; then
-  if command -v npm >/dev/null 2>&1; then
-    say "Construction de l'interface"
-    (cd frontend && npm install --silent && npm run build)
-  else
-    warn "npm absent : l'API démarrera sans l'interface."
-    warn "Dans Termux : pkg install -y nodejs-lts"
-    warn "Sans interface construite, l'application n'est pas installable."
-  fi
-fi
-
-# ---------------------------------------------------------- notifications ---
-# Purement informatif : l'absence de Termux:API n'empêche rien de fonctionner,
-# elle prive seulement des notifications. Le dire ici évite de le découvrir en
-# ne recevant jamais rien.
-if ! command -v termux-notification >/dev/null 2>&1; then
-  warn "Notifications Android indisponibles (paquet termux-api absent)."
-  warn "Pour les activer : pkg install termux-api  + l'application Termux:API."
-  warn "Puis vérifiez avec : ./.venv/bin/python -m cryptopulse.cli notify"
-fi
-
-# ------------------------------------------------------------ vérifications --
 if [ "$MODE" = "demo" ]; then
   export CP_PROVIDER_MARKET_DATA=fixture
-  warn "MODE DÉMO : toutes les valeurs sont générées. Aucune ne vient d'un marché."
-else
-  say "Vérification du flux de données"
-  if ! "$PY" -m cryptopulse.cli doctor; then
-    echo
-    warn "Le flux n'est pas vérifié — voir le diagnostic ci-dessus."
-    warn "Pour essayer l'interface malgré tout : ./android-start.sh demo"
-    exit 1
-  fi
+  printf '\033[33m    MODE DÉMO : toutes les valeurs sont générées.\033[0m\n'
 fi
 
-# ------------------------------------------------------------------ départ ---
 cat <<'BANNER'
 
   ┌────────────────────────────────────────────────────────┐
@@ -102,15 +61,17 @@ cat <<'BANNER'
   │                                                        │
   │  Ouvrez  http://127.0.0.1:8000  dans Chrome            │
   │                                                        │
-  │  Pour l'installer sur l'écran d'accueil :              │
-  │    menu ⋮  →  « Installer l'application »              │
+  │  L'interface s'affiche immédiatement avec le dernier   │
+  │  scan enregistré. La vérification du flux se fait      │
+  │  ensuite, en arrière-plan :                            │
   │                                                        │
-  │  Laissez cette fenêtre Termux ouverte.                 │
+  │    🟡 vérification en cours                            │
+  │    🟢 flux vérifié                                     │
+  │    🔴 flux non vérifié                                 │
+  │                                                        │
   │  Arrêter : Ctrl+C                                      │
   └────────────────────────────────────────────────────────┘
 
 BANNER
 
-# 127.0.0.1 et non 0.0.0.0 : le contexte sécurisé exigé par l'installation vaut
-# pour la boucle locale, et cela évite d'exposer le scanner au réseau Wi-Fi.
 exec "$PY" -m cryptopulse.cli serve --host 127.0.0.1 --port 8000

@@ -11,7 +11,16 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
+import time
+
+# Stamped before the heavy imports below, so `server_ready_ms` measures the wait
+# the user actually experiences rather than the wait after numpy, SQLAlchemy and
+# FastAPI have already loaded. On a phone those imports are the larger half of
+# the launch, and a metric that excluded them would have said the start was fast
+# while the screen was still blank.
+os.environ.setdefault("CP_PROCESS_START", str(time.time()))
 
 from cryptopulse.config.settings import get_settings
 from cryptopulse.core.clock import SYSTEM_CLOCK

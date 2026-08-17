@@ -1156,3 +1156,54 @@ tbody td.sym { font-weight: 600; text-align: left; }
 @media (max-width: 400px) {
   .me-tabs button { font-size: 11px; padding: 9px 4px; }
 }
+
+/* ── Feed verification ───────────────────────────────────────────────────
+   Three states, because "not yet checked" and "checked and wrong" are
+   different facts. Collapsing them would make every launch look broken for as
+   long as the check takes — which on a phone is several seconds. */
+
+.feed-badge {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 13px; border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.feed-emoji { font-size: 14px; flex: 0 0 auto; }
+.feed-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.feed-label { font-weight: 650; letter-spacing: .03em; }
+.feed-detail { font-size: 10px; color: var(--text-faint); }
+
+.feed-badge.PENDING {
+  background: rgba(255, 192, 67, 0.08);
+  border-bottom-color: rgba(255, 192, 67, 0.30);
+}
+.feed-badge.PENDING .feed-label { color: var(--warn); }
+/* A slow pulse: the check is running, and a static amber bar reads as a
+   warning that will never change. */
+.feed-badge.PENDING .feed-emoji { animation: feed-pulse 1.4s ease-in-out infinite; }
+@keyframes feed-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+
+.feed-badge.VERIFIED {
+  background: rgba(0, 224, 122, 0.07);
+  border-bottom-color: rgba(0, 224, 122, 0.28);
+}
+.feed-badge.VERIFIED .feed-label { color: var(--dec-buy); }
+
+.feed-badge.FAILED {
+  background: rgba(255, 59, 92, 0.08);
+  border-bottom-color: rgba(255, 59, 92, 0.32);
+}
+.feed-badge.FAILED .feed-label { color: var(--dec-sell); }
+
+.feed-retry {
+  flex: 0 0 auto; min-height: 32px; padding: 6px 11px; border-radius: 7px;
+  background: var(--bg); border: 1px solid var(--border-strong);
+  color: var(--text); font-size: 11px; font-weight: 600; cursor: pointer;
+}
+.feed-retry:disabled { opacity: .55; cursor: default; }
+.feed-note { font-size: 10.5px; color: var(--text-faint); line-height: 1.5; margin: 10px 0 0; }
+
+/* Respect a reduced-motion preference: the pulse is decoration, and the text
+   already says the check is running. */
+@media (prefers-reduced-motion: reduce) {
+  .feed-badge.PENDING .feed-emoji { animation: none; }
+}
