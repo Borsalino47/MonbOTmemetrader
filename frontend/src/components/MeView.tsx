@@ -3,9 +3,10 @@ import { api } from '../api';
 import { DASH, age, num, pct, price, signClass } from '../format';
 import type { DecisionsResponse, Position, PositionEvent, TradeSignal } from '../types';
 import { DECISION_LABELS, DecisionBadge, DecisionCard } from './DecisionBadge';
+import { ResultsView } from './ResultsView';
 import { ValidationsView } from './ValidationsView';
 
-type Section = 'positions' | 'decisions';
+type Section = 'positions' | 'decisions' | 'results';
 
 /** Everything that is *yours* rather than the market's: open positions,
  *  recommendations waiting for an answer, and the decisions you have taken.
@@ -61,10 +62,18 @@ export function MeView({ onSelect }: { onSelect: (symbol: string) => void }) {
         >
           📋 Mes choix
         </button>
+        <button
+          className={section === 'results' ? 'active' : ''}
+          onClick={() => setSection('results')}
+        >
+          📊 Résultats
+        </button>
       </div>
 
       {section === 'decisions' ? (
         <ValidationsView onSelect={onSelect} />
+      ) : section === 'results' ? (
+        <ResultsView />
       ) : (
         <>
           {data.awaiting_answer.map((s) => (

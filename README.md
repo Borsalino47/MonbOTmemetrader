@@ -104,6 +104,30 @@ No success rate is ever shown for those decisions: a percentage over a handful o
 judgements reads as a verdict on your own skill, which is the most misleading
 number this product could display.
 
+**Tells you what to do, in one word.** Six decisions — 🟢 ACHETER, 🔵 CONSERVER,
+🟡 SURVEILLER, 🟠 RÉDUIRE, 🔴 VENDRE, ⚫ NE PAS ACHETER — produced by a separate
+engine with its own version and fingerprint, because saying "buy" asserts
+something no individual score contains. Green is reserved for opening a position
+and blue for holding one: a glance has to separate "there is something to do"
+from "there is nothing to do".
+
+A buy needs seven floors to clear **at once**. One spectacular score never
+produces one, and any hard veto produces ⚫ outright rather than a reduced score —
+a reduced score still lets a dangerous token outrank a safe one in a sorted list.
+
+**Follows what you actually did.** Confirm 🟢 ACHETER with OUI and the position
+is watched every 15 seconds instead of 60, with a health score answering "is the
+reason you bought still true?" — deliberately independent of your profit, since a
+position up 30% on a broken setup is precisely the one about to give it back.
+Answer NON and the signal is *still* followed, because the signals you skipped
+are the ones you were unsure about and dropping them would flatter every later
+statistic.
+
+**Never places an order.** No exchange key, no signing, no order path anywhere in
+this repository. A test walks the live routing table on every run to prove no
+endpoint could. The workflow is analyse → recommend → alert → you act manually →
+you confirm → measure.
+
 **Grades itself.** Every emitted signal is written to a journal with NULL outcome
 columns. Once its horizon elapses, the outcome tracker fetches the bars that
 actually followed and records WIN / LOSS / TIMEOUT with the realised return, MFE
@@ -600,6 +624,14 @@ otherwise leak the test window into training.
   stand-in binary that is genuinely executed — but no test here has spoken to a
   real `termux-notification`. `cryptopulse notify` is the one-command check on
   the device.
+* **The trade decision thresholds are guesses.** `CP_TRADE_BUY_MIN_*` are
+  reasoned starting points, not fitted values — which is exactly why they are
+  settings and not constants. On synthetic data the defaults produce no buy
+  signal at all; whether that is correct strictness or a badly placed floor
+  cannot be known without real history.
+* **No position has ever been opened on a real feed.** The whole position
+  lifecycle — open, watch, health, exit, close — has been exercised end to end,
+  but only against generated candles.
 * **Manual validations are stored but never graded.** The rows carry outcome
   columns that nothing fills in yet. Grading them means answering "did the user
   beat the scanner?", which needs real decisions on a real feed over months, not

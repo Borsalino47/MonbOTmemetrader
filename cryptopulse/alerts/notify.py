@@ -76,6 +76,9 @@ __all__ = [
     "NotificationGate",
     "build_notifier",
     "notify_alerts",
+    "DecisionNotice",
+    "notify_decision",
+    "DECISION_NOTIFICATION_IDS",
 ]
 
 # Ordered weakest to strongest. A symbol re-notifies only on a move up this list.
@@ -431,3 +434,123 @@ def _rank(level: str) -> int:
         return LEVEL_ORDER.index(level)
     except ValueError:
         return 0
+
+
+# --------------------------------------------------------------------------- #
+# Trade decisions on the lock screen.
+#
+# A decision is a different kind of notification from an alert. An alert says
+# "something is happening"; a decision says "do this". The second has to survive
+# being read in two seconds with the phone in one hand, and 🔴 VENDRE has to win
+# against 🟢 ACHETER when both arrive at once — an exit has a deadline that an
+# entry does not.
+# --------------------------------------------------------------------------- #
+
+# Separate notification ids so a sell never replaces a buy or vice versa. One
+# shared id would mean the loud one could silently overwrite the other.
+DECISION_NOTIFICATION_IDS = {"BUY": "cryptopulse-buy", "SELL": "cryptopulse-sell"}
+
+
+@dataclass(slots=True)
+class DecisionNotice:
+    """Everything the lock screen needs, already formatted.
+
+    Built by the caller rather than read off a `TradeDecision` so this module
+    keeps no dependency on `trading/` — the notifier is about delivery, not
+    about what a decision means.
+    """
+
+    action: str                 # BUY / SELL
+    symbol: str
+    price: str
+    lines: list[str] = field(default_factory=list)
+    strength: str | None = None
+    health: str | None = None
+    pnl: str | None = None
+
+
+async def notify_decision(
+    provider: NotificationProvider, notice: DecisionNotice, *, synthetic: bool
+) -> NotificationReport:
+    """Send one trade decision. Never raises; a failure costs a notification.
+
+    Not routed through `NotificationGate`: that gate exists to stop a symbol
+    repeating at the same alert level, and a decision only reaches here when the
+    hysteresis in `trading/hysteresis.py` has already confirmed it *changed*.
+    Applying both would mean a genuine change could be suppressed for having the
+    same name as the previous one.
+    """
+    if not isinstance(provider, TermuxNotifier):
+        availability = provider.availability()
+        return NotificationReport(
+            attempted=False, ok=availability.available, channel=provider.name,
+            error=None if availability.available else availability.reason,
+        )
+
+    args = _decision_args(provider.binary, notice, synthetic=synthetic)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
+        )
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=provider.timeout)
+    except TimeoutError:
+        await _terminate(proc)
+        return NotificationReport(
+            attempted=True, ok=False, channel=provider.name,
+            error="the command hung — this usually means the Termux:API app is not installed",
+        )
+    except Exception as exc:
+        return NotificationReport(
+            attempted=True, ok=False, channel=provider.name,
+            error=f"{type(exc).__name__} while running {provider.binary}",
+        )
+
+    if proc.returncode != 0:
+        detail = (stderr or b"").decode("utf-8", "replace").strip()[:160]
+        return NotificationReport(
+            attempted=True, ok=False, channel=provider.name,
+            error=f"{provider.binary} exited {proc.returncode}" + (f": {detail}" if detail else ""),
+        )
+
+    log.info("decision_notification", action=notice.action, symbol=notice.symbol)
+    return NotificationReport(attempted=True, sent=1, ok=True, channel=provider.name)
+
+
+def _decision_args(binary: str, notice: DecisionNotice, *, synthetic: bool) -> list[str]:
+    selling = notice.action == "SELL"
+    emoji = "🔴" if selling else "🟢"
+    word = "VENDRE" if selling else "ACHETER"
+    # The DEMO warning goes in the title, where Android does not truncate.
+    prefix = f"{_SYNTHETIC_TITLE} · " if synthetic else ""
+    # The siren is on the sell only. An exit has a deadline that an entry does
+    # not, and if both are equally loud the one that matters stops standing out.
+    title = f"{prefix}{'🚨 ' if selling else '🔥 '}{emoji} {word} {notice.symbol}"
+
+    body: list[str] = [f"Prix : {notice.price}"]
+    if notice.strength:
+        body.append(f"Signal : {notice.strength}")
+    if notice.health:
+        body.append(f"Santé position : {notice.health}")
+    if notice.pnl:
+        body.append(f"PnL : {notice.pnl}")
+    body.extend(notice.lines[:3])
+
+    args = [
+        binary,
+        "--title", title[:120],
+        "--content", "\n".join(body)[:900],
+        "--id", DECISION_NOTIFICATION_IDS.get(notice.action, "cryptopulse-decision"),
+        "--group", "cryptopulse",
+        "--priority", "max",
+        "--sound",
+    ]
+    if selling:
+        # A longer, more insistent pattern than the buy: the two must be
+        # distinguishable without looking at the phone.
+        args += ["--vibrate", "400,200,400,200,400"]
+    else:
+        args += ["--vibrate", "300,150,300"]
+    return args

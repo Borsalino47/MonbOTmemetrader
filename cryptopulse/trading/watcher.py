@@ -46,6 +46,7 @@ scan.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from dataclasses import dataclass, field
 
@@ -102,6 +103,7 @@ class PositionWatcher:
         engine: TradeDecisionEngine | None = None,
         gate: DecisionGate | None = None,
         clock: Clock = SYSTEM_CLOCK,
+        on_decision=None,
     ) -> None:
         self.settings = settings
         self.cfg = settings.trade
@@ -112,6 +114,9 @@ class PositionWatcher:
             confirmations_required=self.cfg.confirmations_required,
             min_seconds_between_changes=self.cfg.min_seconds_between_changes,
         )
+        # Called when a position's decision moves toward the exit, so the
+        # notification layer can be wired in without this module importing it.
+        self.on_decision = on_decision
         self.last_report: WatchReport | None = None
         self._lock = asyncio.Lock()
 
@@ -235,6 +240,13 @@ class PositionWatcher:
 
         if not outcome.changed:
             return False
+
+        # A move toward the exit reaches the phone. A return to CONSERVER does
+        # not: nobody needs to be interrupted to be told everything is fine, and
+        # a notification for that is how the red one stops being noticed.
+        if outcome.action in (TradeAction.SELL, TradeAction.REDUCE) and self.on_decision:
+            with contextlib.suppress(Exception):
+                await self.on_decision(decision, result, updated)
 
         # The screen decision, not the raw one — so the journal and the screen
         # can never disagree about what the user was actually told.

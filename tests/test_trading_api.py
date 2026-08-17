@@ -288,3 +288,65 @@ def test_a_signal_for_another_token_is_refused(client):
     assert resp.status_code == 400
     assert "WIFUSDT" in resp.json()["detail"]
     assert client.get("/api/positions").json()["positions"] == []
+
+
+# --------------------------------------------------------------------------- #
+# Results — two questions, deliberately not merged
+# --------------------------------------------------------------------------- #
+
+
+def test_results_separate_the_engine_from_the_user(client):
+    """Did the engine recommend well, and did the user do well, are different
+    numbers. Someone can follow good signals badly or ignore them profitably."""
+    body = client.get("/api/results").json()
+
+    assert "positions" in body and "signals" in body
+    assert "taken_vs_skipped" in body
+    assert "sell_signals" in body
+
+
+def test_no_rate_is_shown_below_the_sample_floor(client):
+    """A win rate over four positions is not a finding about anyone's trading,
+    and this feature is days old — 'insufficient sample' is the correct output
+    for months, not a failure."""
+    position = _open(client)
+    client.post(f"/api/positions/{position['id']}/close", json={})
+
+    overall = client.get("/api/results").json()["positions"]["overall"]
+    assert overall["n"] == 1
+    assert overall["insufficient_sample"] is True
+    assert overall["win_rate"] is None
+    assert overall["profit_factor"] is None
+
+
+def test_unanswered_signals_are_counted_apart_from_refused_ones(client):
+    """Folding them together would turn every prompt nobody got round to into a
+    deliberate refusal."""
+    repo.save_trade_signal({
+        "symbol": "ETHUSDT", "action": "BUY", "timestamp_ms": 1_700_000_000_000,
+        "price": 3000.0, "engine_version": "TRADE_DECISION_V1",
+    })
+    refused = repo.save_trade_signal({
+        "symbol": "SOLUSDT", "action": "BUY", "timestamp_ms": 1_700_000_000_000,
+        "price": 150.0, "engine_version": "TRADE_DECISION_V1",
+    })
+    repo.answer_trade_signal(refused["id"], False)
+
+    signals = client.get("/api/results").json()["signals"]
+    assert signals["unanswered"] == 1
+    assert signals["skipped"] == 1
+    assert signals["follow_rate"] == 0.0, "one refusal out of one answered"
+
+
+def test_the_sell_table_states_that_its_sign_is_inverted(client):
+    """A sell was right when the price fell afterwards. Reading that table with
+    a buy's intuition would invert the conclusion."""
+    note = client.get("/api/results").json()["sell_signals"]["note"]
+    assert "BAISSÉ" in note
+
+
+def test_results_never_grade_the_user(client):
+    """The most misleading number this product could produce, and the one people
+    would remember."""
+    body = client.get("/api/results").json()
+    assert any("ne juge pas votre flair" in n for n in body["notes"])

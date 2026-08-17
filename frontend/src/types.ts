@@ -676,3 +676,46 @@ export interface PositionEvent {
   reasons: string[];
   risks: string[];
 }
+
+export interface TradeBucket {
+  key: string;
+  n: number;
+  wins: number;
+  /** Null below the sample floor. Absent, not greyed out. */
+  win_rate: number | null;
+  mean_pct: number | null;
+  median_pct: number | null;
+  best_pct: number | null;
+  worst_pct: number | null;
+  mean_win_pct: number | null;
+  mean_loss_pct: number | null;
+  profit_factor: number | null;
+  mean_mfe_pct: number | null;
+  mean_mae_pct: number | null;
+  median_minutes_held: number | null;
+  insufficient_sample: boolean;
+  min_sample: number;
+  notes: string[];
+}
+
+export interface ResultsResponse {
+  positions: { opened: number; closed: number; overall: TradeBucket; by_strength: TradeBucket[] };
+  signals: {
+    buy_total: number;
+    taken: number;
+    skipped: number;
+    /** Neither taken nor skipped. Never folded into "skipped". */
+    unanswered: number;
+    follow_rate: number | null;
+  };
+  taken_vs_skipped: {
+    taken: TradeBucket;
+    skipped: TradeBucket;
+    mean_difference_pct: number | null;
+    note: string;
+  };
+  sell_signals: { total: number; by_horizon: Record<string, TradeBucket>; note: string };
+  min_sample: number;
+  notes: string[];
+  data_mode: 'LIVE' | 'DEMO';
+}

@@ -951,6 +951,28 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
         service.ensure_db()
         return (await service.watcher.run_once()).to_dict()
 
+    @app.get("/api/results", tags=["trading"])
+    async def results():
+        """Mes résultats: what was decided, and what followed.
+
+        Two questions kept apart: did the engine recommend well, and did the
+        user do well. They are not the same number — someone can follow good
+        signals badly or ignore them profitably — and the comparison between
+        them only works because refused signals are kept and followed.
+        """
+        from cryptopulse.trading.stats import build_trading_performance
+
+        service = get_service()
+        service.ensure_db()
+        closed = await asyncio.to_thread(repo.positions, "CLOSED", 500)
+        opened = await asyncio.to_thread(repo.positions, None, 500)
+        signals = await asyncio.to_thread(repo.recent_trade_signals, 500)
+
+        report = build_trading_performance(opened, signals)
+        report["closed_positions"] = closed[:50]
+        report["data_mode"] = service.status()["data_mode"]
+        return report
+
     # ---------------------------------------------------------- maintenance #
 
     @app.post("/api/maintenance/prune", tags=["maintenance"])

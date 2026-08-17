@@ -15,10 +15,12 @@ from cryptopulse.alerts.delivery import AlertDelivery, send_alerts
 from cryptopulse.alerts.engine import Alert, AlertEngine
 from cryptopulse.alerts.notify import (
     LEVEL_ORDER,
+    DecisionNotice,
     NotificationGate,
     NotificationReport,
     build_notifier,
     notify_alerts,
+    notify_decision,
 )
 from cryptopulse.config.settings import CryptoPulseSettings, get_settings
 from cryptopulse.core.clock import SYSTEM_CLOCK
@@ -83,6 +85,7 @@ class ScannerService:
         self.watcher = PositionWatcher(
             self.settings, self.scanner,
             engine=self.trade_engine, gate=self.decision_gate, clock=SYSTEM_CLOCK,
+            on_decision=self._notify_decision_for_position,
         )
         self.last_decisions: list[dict] = []
         self._watch_task: asyncio.Task | None = None
@@ -218,6 +221,7 @@ class ScannerService:
 
             if outcome.changed and outcome.action is TradeAction.BUY:
                 await self._journal_buy(result, decision)
+                await self._notify_decision(decision, result)
 
         decisions.sort(key=lambda d: (d["action"] != "BUY", -(d.get("price") or 0)))
         self.last_decisions = decisions
@@ -263,6 +267,40 @@ class ScannerService:
         except Exception as exc:
             # A journalling failure costs a record, never the scan.
             log.error("buy_signal_journal_failed", symbol=result.symbol, error=type(exc).__name__)
+
+    async def _notify_decision_for_position(self, decision, result, position: dict) -> None:
+        """Adapter for the watcher's callback, which passes the position row."""
+        await self._notify_decision(decision, result, position=position)
+
+    async def _notify_decision(self, decision, result, *, position: dict | None = None) -> None:
+        """Put a BUY or SELL on the lock screen. Never costs the scan.
+
+        Not gated by the notification anti-spam rule: that gate stops a symbol
+        repeating at the same alert level, while a decision only reaches here
+        once the hysteresis has confirmed it *changed*. Applying both would let a
+        genuine change be suppressed for sharing a name with the previous one.
+        """
+        notice = DecisionNotice(
+            action=decision.action.value,
+            symbol=decision.symbol,
+            price=f"{decision.price:.6g}",
+            strength=decision.strength.value if decision.strength else None,
+            lines=(decision.blocking or decision.reasons)[:3],
+            health=(
+                None if position is None or position.get("health_score") is None
+                else f"{position['health_score']:.0f}/100"
+            ),
+            pnl=(
+                None if position is None or position.get("pnl_pct") is None
+                else f"{position['pnl_pct']:+.2f}%"
+            ),
+        )
+        try:
+            self.last_notification = await notify_decision(
+                self.notifier, notice, synthetic=is_synthetic(self.scanner.provider)
+            )
+        except Exception as exc:
+            log.error("decision_notification_failed", error=type(exc).__name__)
 
     def _has_open_positions(self) -> bool:
         """One cheap query. With nothing open the watcher costs nothing at all."""

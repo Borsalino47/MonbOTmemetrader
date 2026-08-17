@@ -65,9 +65,14 @@ that justifies it.
 | Pump history (`pumps/detect.py`) | **TESTED** | 18 tests. Threshold-free episodes on 1h; 23-38 found per token |
 | Pump similarity (`pumps/stats.py`) | **TESTED** | Refuses any rate below n=20, which is the common case |
 | PWA (manifest + service worker) | **TESTED** | 11 tests. Verified installable in a real browser on 127.0.0.1 |
+| Trade decision (`trading/decision.py`) | **TESTED** | 30 tests. TRADE_DECISION_V1. Six decisions; convergence required |
+| Position health + exit risk | **TESTED** | 22 tests. Health is not PnL; invalidation outranks everything |
+| Positions + hysteresis | **TESTED** | 30 tests. Append-only journal; twenty alternating readings move nothing |
+| Position watcher + trading API | **TESTED** | 28 tests. Open positions only; states its request cost |
+| Trading statistics (`trading/stats.py`) | **TESTED** | Taken vs skipped, per strength, sell quality. No rate below n=20 |
 | Schema migration (`database/migrate.py`) | **TESTED** | Additive columns only; refuses destructive changes |
 
-**Test suite: 486 tests, all passing.** Run `pytest -q`.
+**Test suite: 596 tests, all passing.** Run `pytest -q`.
 
 ---
 
@@ -180,6 +185,13 @@ cryptopulse/
   pumps/
     detect.py            Episodes, not thresholds. 1h = the shortest usable sample
     stats.py             Descriptive stats + similarity, both carrying their n
+  trading/
+    decision.py          TRADE_DECISION_V1 — six decisions, convergence not a maximum
+    health.py            POSITION_HEALTH — is the buy thesis still standing?
+    exit_risk.py         Named deterioration signals, counted by severity not summed
+    hysteresis.py        Confirmation + cooldown + escalation exemption
+    watcher.py           Open positions only, 15s, states its request cost
+    stats.py             Engine quality vs user results, deliberately kept apart
   outcomes/
     tracker.py           Grades emitted signals against the bars that followed
     horizons.py          What the price did 15m/1h/4h/24h later — path, not verdict
@@ -192,6 +204,7 @@ cryptopulse/
     engine.py            Replays the live scorer over history via series.upto()
   database/
     models.py            signals / score_points / alerts / scan_runs / validations
+                         trade_signals / positions / position_events
     migrate.py           Additive ALTER TABLE for columns create_all cannot add
     session.py           SQLAlchemy engine
     repo.py              The only module that writes; `prune` applies retention
@@ -215,7 +228,7 @@ frontend/                Vite + React 18 + TypeScript (strict), mobile-first
   HomeView               The five-second view: can I trust it, and what moved
   AssetCards             The scanner as cards; the table is wide-screen only
   bottom-nav             Thumb-reachable navigation, phones only
-tests/                   486 tests
+tests/                   596 tests
 pine/                    TradingView companion scripts
 ```
 
@@ -477,6 +490,57 @@ Break these and the product is lying to its user.
     30-second sleep — turning a 0.4 second timeout into a 30 second stall inside
     the scan cycle. `start_new_session=True` plus `killpg` is what makes the
     timeout mean what it says.
+
+47. **A decision is an instruction, so it needs convergence rather than a
+    maximum.** Seven floors must clear at once before a BUY — a single spiking
+    score never produces one, and a test sets one to 100 with the rest at the
+    floor to prove it. This is the only engine here whose output gets acted on
+    rather than interpreted, which changes what a wrong answer costs.
+
+48. **Green means open, blue means hold, and they are never the same colour.**
+    Sharing one would mean a glance no longer separates "there is something to
+    do" from "there is nothing to do". Every rendering carries icon + text +
+    colour together; colour alone fails for anyone who cannot distinguish these
+    hues, and for everyone on a phone in sunlight.
+
+49. **Position health is not PnL.** A position up 30% on a broken setup is
+    unhealthy, and saying so is the point — that is the moment the gain is about
+    to be given back. A health score that tracked profit would fall silent
+    exactly then. PnL is shown beside it so the two can visibly disagree.
+
+50. **An unknown health is not a bad one.** Below half coverage the score is
+    `None` and the decision becomes WATCH, never SELL. Telling someone to sell
+    because a request failed is the worst false alarm this system could produce.
+
+51. **The invalidation recorded at entry outranks every other signal.** It was
+    agreed before the position existed and before any of this was emotional, so
+    a close through it produces SELL whatever momentum, volume and the scores
+    are doing. Everything else is evidence; this is the terms of the trade.
+
+52. **Exit signals are counted by severity, never summed.** Five cosmetic
+    warnings must not outweigh one broken support, and a total would let them.
+    A test asserts the report has no total at all.
+
+53. **A move toward the exit is never delayed by the anti-noise cooldown.**
+    Confirmation and cooldown exist so the screen does not oscillate — twenty
+    alternating readings move it zero times — but getting out late because a
+    timer was running is not a trade-off worth making. Four conditions bypass
+    the gate entirely: broken invalidation, safety veto, liquidity collapse,
+    critical rug risk.
+
+54. **A skipped signal is followed exactly like a taken one.** Recording only
+    what the user acted on would compare the engine against a sample the user
+    pre-selected. `taken` has three states and NULL is one of them: an
+    unanswered prompt is not a refusal.
+
+55. **Peak and trough are seeded from the price the returns use.** Found by
+    running it: seeding from the observed price while computing returns from the
+    user's fill rendered "perte max" as +75.79% — a maximum loss that was a gain.
+
+56. **No endpoint can place an order, and a test walks the routing table to
+    prove it.** The workflow is analyse -> recommend -> alert -> *the user acts
+    manually* -> the user confirms -> measure. There is no exchange key, no
+    signing and no order path anywhere in this repository.
 
 ---
 

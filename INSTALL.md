@@ -210,6 +210,151 @@ longtemps. Un pourcentage sur quelques décisions se lirait comme un jugement su
 votre propre flair, et ce serait le chiffre le plus trompeur que ce logiciel
 puisse afficher.
 
+
+---
+
+## Les six décisions
+
+L'application ne se contente plus d'afficher des scores : elle dit quoi faire.
+
+| | Quand | Ce que ça veut dire |
+|---|---|---|
+| 🟢 **ACHETER** | token non détenu | Tous les critères d'entrée passent en même temps |
+| 🟡 **SURVEILLER** | les deux | Il se passe quelque chose, mais pas encore assez |
+| ⚫ **NE PAS ACHETER** | token non détenu | Les conditions ne sont pas réunies, ou un risque bloque |
+| 🔵 **CONSERVER** | position ouverte | La raison de l'achat tient toujours |
+| 🟠 **RÉDUIRE / PROTÉGER** | position ouverte | Plusieurs signes de retournement, le gain mérite protection |
+| 🔴 **VENDRE** | position ouverte | Sortie claire, ou setup invalidé |
+
+**Le vert est réservé à une nouvelle entrée, le bleu à une position déjà
+ouverte.** Ce n'est pas cosmétique : d'un coup d'œil vous devez distinguer
+« il y a quelque chose à faire » de « il n'y a rien à faire ». Chaque décision
+affiche toujours **icône + texte + couleur** — jamais la couleur seule, qui
+disparaît au soleil sur un téléphone.
+
+### 🟢 ACHETER n'apparaît pas facilement
+
+Un seul score élevé ne suffit jamais. Sept critères doivent passer **en même
+temps** : opportunité, explosion 15 min, confiance, sécurité, maturité,
+liquidité, et un setup réellement déclenché. Voir zéro ACHETER pendant des
+heures est le fonctionnement normal, pas une panne.
+
+Les seuils sont réglables dans `.env` (`CP_TRADE_BUY_MIN_OPPORTUNITY=75`, etc.).
+Ils ne sont **pas** validés : ce sont des hypothèses de départ, et c'est
+précisément pour cela qu'ils sont des réglages et non des constantes.
+
+### Un veto passe avant tout
+
+Liquidité dangereuse, alerte sécurité, setup déjà invalidé : ⚫ **NE PAS
+ACHETER**, quels que soient les scores. Pas un score réduit — un score réduit
+laisserait quand même le token dangereux passer devant un token sain dans une
+liste triée.
+
+---
+
+## Mes positions
+
+### Après un 🟢 ACHETER
+
+L'application demande : **AVEZ-VOUS ACHETÉ ?** — OUI ou NON.
+
+* **OUI** ouvre une position, surveillée toutes les 15 secondes. Vous pouvez
+  indiquer votre prix réel et le montant investi ; c'est facultatif, et la fiche
+  précise ensuite quel prix a servi au calcul du rendement.
+* **NON** est enregistré aussi, **et le signal reste suivi**. C'est la seule
+  façon de savoir plus tard si votre hésitation avait raison. Un tableau de bord
+  qui ne garderait que ce que vous avez suivi vous flatterait systématiquement.
+
+Ne pas répondre n'est **pas** un « non ». Les recommandations sans réponse sont
+comptées à part.
+
+### Pendant que vous détenez
+
+Le **Position Watcher** ne regarde que vos positions ouvertes, toutes les 15
+secondes au lieu de 60. Il calcule une **santé de position** : « les raisons qui
+avaient conduit à dire ACHETER sont-elles toujours valides ? »
+
+> **La santé n'est pas le gain.** Une position à +30 % dont le setup est cassé
+> est en mauvaise santé — et c'est exactement le moment où le gain est sur le
+> point d'être rendu. Les deux chiffres sont affichés côte à côte et ont le
+> droit de se contredire.
+
+Si trop de données manquent, la santé s'affiche « INCONNUE » et la décision
+devient 🟡 SURVEILLER, jamais 🔴 VENDRE. Vous dire de vendre parce qu'une requête
+a échoué serait la pire fausse alerte possible.
+
+### L'invalidation prime sur tout
+
+Le niveau d'invalidation est fixé **au moment de l'achat**, avant que quoi que ce
+soit ne soit émotionnel. S'il est franchi, l'application affiche immédiatement
+🔴 **VENDRE** et « SETUP INVALIDÉ », même si le momentum et les scores restent
+bons. Tout le reste est un faisceau d'indices ; celui-là est le contrat.
+
+### L'écran ne clignote pas
+
+Une décision doit se répéter deux cycles avant de changer l'affichage, et un
+délai de 5 minutes empêche les allers-retours. **Sauf** vers la sortie : passer
+à RÉDUIRE ou VENDRE n'attend jamais. Sortir en retard parce qu'un minuteur
+tournait n'est pas un compromis acceptable.
+
+### Après un 🔴 VENDRE
+
+**AVEZ-VOUS VENDU ?** Si oui, indiquez éventuellement votre prix réel et la
+position se clôture avec son rendement réalisé.
+
+---
+
+## Ce que l'application ne fera jamais
+
+**Aucun ordre n'est passé automatiquement.** Il n'existe pas une ligne de code
+capable de passer un ordre dans ce dépôt, aucune clé d'exchange, aucune
+signature. Un test parcourt la table de routage de l'API à chaque exécution pour
+vérifier qu'aucun point d'entrée ne pourrait le faire.
+
+Le déroulé est toujours :
+
+```
+ANALYSE → DÉCISION → ALERTE → VOUS ACHETEZ VOUS-MÊME
+        → VOUS CONFIRMEZ → SUIVI ET STATISTIQUES
+```
+
+---
+
+## Mettre à jour sans perdre vos données
+
+Sur Android, dans Termux, depuis le dossier `MonbOTmemetrader` :
+
+```bash
+cd ~/MonbOTmemetrader
+cp data/cryptopulse.db data/cryptopulse.db.backup
+git pull
+./android-start.sh
+```
+
+C'est tout. Détail de ce qui se passe :
+
+* **`cp ... .backup`** — une copie de votre journal avant toute opération. La
+  mise à jour n'y touche pas, mais une sauvegarde coûte une seconde.
+* **`git pull`** récupère le code. Vos fichiers `.env` et `data/` ne sont pas
+  suivis par Git : ils ne peuvent pas être écrasés.
+* **`./android-start.sh`** installe les nouvelles dépendances, reconstruit
+  l'interface, **ajoute les nouvelles colonnes** à votre base existante et
+  démarre.
+
+> **Vos données sont conservées.** La migration est *additive uniquement* : elle
+> ajoute des colonnes et des tables, et **refuse** toute opération destructive
+> plutôt que de la deviner. Vos signaux, vos vérifications, vos décisions et vos
+> positions restent en place.
+
+Si vous voyez un message `column_added` au démarrage, c'est le fonctionnement
+normal : la nouvelle version a besoin de colonnes que votre base n'avait pas.
+
+**Si quelque chose se passe mal** : `cp data/cryptopulse.db.backup
+data/cryptopulse.db` restaure l'état d'avant.
+
+Sur ordinateur, la même chose avec `./start.sh` à la place de
+`./android-start.sh`.
+
 ---
 
 ## Si quelque chose ne marche pas
