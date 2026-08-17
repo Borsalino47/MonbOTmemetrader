@@ -35,6 +35,9 @@ from cryptopulse.scanner.base import ScanReport
 from cryptopulse.scanner.cex import CexScanner
 from cryptopulse.scanner.memory import ScoreMemory
 from cryptopulse.scoring.engine import ScoreResult
+from cryptopulse.trading.decision import TradeAction, TradeDecisionEngine
+from cryptopulse.trading.hysteresis import DecisionGate
+from cryptopulse.trading.watcher import PositionWatcher
 
 log = get_logger("api.service")
 
@@ -68,6 +71,21 @@ class ScannerService:
         )
         self.notification_gate = NotificationGate()
         self.last_notification: NotificationReport | None = None
+
+        # The decision layer. One gate shared by the scanner and the watcher,
+        # so a symbol cannot show one decision in the list and another in its
+        # position card.
+        self.trade_engine = TradeDecisionEngine(self.settings.trade)
+        self.decision_gate = DecisionGate(
+            confirmations_required=self.settings.trade.confirmations_required,
+            min_seconds_between_changes=self.settings.trade.min_seconds_between_changes,
+        )
+        self.watcher = PositionWatcher(
+            self.settings, self.scanner,
+            engine=self.trade_engine, gate=self.decision_gate, clock=SYSTEM_CLOCK,
+        )
+        self.last_decisions: list[dict] = []
+        self._watch_task: asyncio.Task | None = None
 
         self.last_report: ScanReport | None = None
         self.last_alerts: list[Alert] = []
@@ -119,13 +137,21 @@ class ScannerService:
         if self._task is None or self._task.done():
             self._task = asyncio.create_task(self._loop(), name="scan-loop")
             log.info("scan_loop_started", interval_s=self.settings.scanner.scan_interval_seconds)
+        if self._watch_task is None or self._watch_task.done():
+            self._watch_task = asyncio.create_task(self._watch_loop(), name="position-watch-loop")
+            log.info(
+                "position_watch_started",
+                interval_s=self.settings.trade.position_watch_interval_seconds,
+            )
 
     async def stop(self) -> None:
-        if self._task is not None:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
-            self._task = None
+        for attr in ("_task", "_watch_task"):
+            task = getattr(self, attr)
+            if task is not None:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+                setattr(self, attr, None)
         await self.scanner.close()
         log.info("service_stopped")
 
@@ -140,6 +166,111 @@ class ScannerService:
                 self.consecutive_failures += 1
                 log.error("scan_loop_error", error=str(exc)[:300], consecutive=self.consecutive_failures)
             await asyncio.sleep(self.settings.scanner.scan_interval_seconds)
+
+    async def _watch_loop(self) -> None:
+        """Higher frequency, open positions only.
+
+        Independent of the scan loop on purpose: a slow scan must not delay the
+        one thing whose latency actually costs money, and a failing watcher must
+        not stop the scanner finding the next opportunity.
+        """
+        while True:
+            try:
+                if await asyncio.to_thread(self._has_open_positions):
+                    await self.watcher.run_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.error("position_watch_loop_error", error=str(exc)[:300])
+            await asyncio.sleep(self.settings.trade.position_watch_interval_seconds)
+
+    async def _refresh_entry_decisions(self, report, now_ms: int) -> None:
+        """Decide about everything not currently held, and journal new buys.
+
+        The noise gate applies here too. A 🟢 ACHETER that appears and vanishes
+        inside a minute is worse than one that arrives a minute late: it teaches
+        the reader to distrust the green card, which is the only card that has to
+        be believed immediately.
+        """
+        try:
+            held = set(await asyncio.to_thread(repo.open_position_symbols))
+        except Exception:
+            held = set()
+
+        decisions: list[dict] = []
+        for result in report.results:
+            if result.symbol in held:
+                continue  # the watcher owns this one
+            try:
+                decision = self.trade_engine.decide_entry(result)
+            except Exception as exc:
+                log.warning("decision_failed", symbol=result.symbol, error=type(exc).__name__)
+                continue
+
+            outcome = self.decision_gate.evaluate(result.symbol, decision.action, now_ms=now_ms)
+            payload = decision.to_dict()
+            # What is on screen is the gated action, not the raw one, so the
+            # journal and the screen can never disagree about what was shown.
+            payload["action"] = outcome.action.value
+            payload["proposed"] = outcome.proposed.value
+            payload["gate"] = outcome.to_dict()
+            decisions.append(payload)
+
+            if outcome.changed and outcome.action is TradeAction.BUY:
+                await self._journal_buy(result, decision)
+
+        decisions.sort(key=lambda d: (d["action"] != "BUY", -(d.get("price") or 0)))
+        self.last_decisions = decisions
+
+    async def _journal_buy(self, result, decision) -> None:
+        """Record the recommendation so it can be answered and then measured.
+
+        Written whether or not the user ever answers: a signal nobody responded
+        to is still a signal the engine made, and excluding it would make every
+        later statistic flattering.
+        """
+        try:
+            await asyncio.to_thread(
+                repo.save_trade_signal,
+                {
+                    "symbol": result.symbol,
+                    "action": "BUY",
+                    "strength": decision.strength.value if decision.strength else None,
+                    "timestamp_ms": decision.timestamp_ms,
+                    "price": decision.price,
+                    "opportunity_score": result.final_score,
+                    "explosion_score": result.explosion.score if result.explosion else None,
+                    "safety_score": result.safety.score,
+                    "data_confidence": result.confidence.score,
+                    "pump_maturity": result.maturity.score,
+                    "setup_state": result.state.state.value,
+                    "market_regime": self.scanner.regime.trend.value,
+                    "trigger_price": decision.trigger_price,
+                    "invalidation_price": decision.invalidation_price,
+                    "reasons": decision.reasons,
+                    "risks": decision.risks,
+                    "engine_version": decision.engine_version,
+                    "weights_fingerprint": decision.weights_fingerprint,
+                    "data_source": self.scanner.provider.name,
+                    "synthetic": is_synthetic(self.scanner.provider),
+                },
+            )
+            log.info(
+                "buy_signal",
+                symbol=result.symbol,
+                strength=decision.strength.value if decision.strength else None,
+            )
+        except Exception as exc:
+            # A journalling failure costs a record, never the scan.
+            log.error("buy_signal_journal_failed", symbol=result.symbol, error=type(exc).__name__)
+
+    def _has_open_positions(self) -> bool:
+        """One cheap query. With nothing open the watcher costs nothing at all."""
+        try:
+            self.ensure_db()
+            return bool(repo.open_position_symbols())
+        except Exception:
+            return False
 
     # -- scanning ------------------------------------------------------------ #
 
@@ -159,6 +290,11 @@ class ScannerService:
             now_ms = SYSTEM_CLOCK.now_ms()
             alerts = self.alerts.evaluate(report.results, now_ms)
             self.last_alerts = alerts
+
+            # Entry decisions for everything scanned. Held positions are skipped
+            # here: what to do about something you own is the watcher's job, and
+            # answering it from a once-a-minute loop would be the wrong latency.
+            await self._refresh_entry_decisions(report, now_ms)
 
             # Database work off the event loop.
             regime = self.scanner.regime.trend.value
@@ -480,6 +616,17 @@ class ScannerService:
                 # market, so the last outcome is reported the same way the
                 # webhook's is.
                 "last": self.last_notification.to_dict() if self.last_notification else None,
+            },
+            "trading": {
+                "engine_version": self.trade_engine.__class__.__name__,
+                "weights_fingerprint": self.trade_engine.weights_fingerprint,
+                "decisions_now": len(self.last_decisions),
+                "buy_now": sum(1 for d in self.last_decisions if d["action"] == "BUY"),
+                "position_watcher": self.watcher.status(),
+                "note": (
+                    "Aucun ordre n'est jamais passé automatiquement. L'application "
+                    "recommande ; vous exécutez vous-même et vous confirmez ensuite."
+                ),
             },
             "outcome_tracker": {
                 "label_config": self.tracker.label.name,

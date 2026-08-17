@@ -62,6 +62,107 @@ class ValidationRequest(BaseModel):
     synthetic: bool | None = None
 
 
+class OpenPositionRequest(BaseModel):
+    """"Oui, j'ai acheté." Everything except the symbol is optional.
+
+    Someone who does not want to record what they paid should still get position
+    tracking, so the fill details are optional and the observed price is the
+    fallback. Which one is in use is reported back as `pnl_basis`.
+    """
+
+    symbol: str
+    signal_id: int | None = None
+    chain: str | None = None
+    contract_address: str | None = None
+    entry_price: float | None = None
+    actual_entry_price: float | None = None
+    amount_invested: float | None = None
+    quantity: float | None = None
+    trigger_price: float | None = None
+    invalidation_price: float | None = None
+
+
+class ClosePositionRequest(BaseModel):
+    """"Oui, j'ai vendu." """
+
+    exit_price: float | None = None
+    actual_exit_price: float | None = None
+    reason: str | None = None
+
+
+class AnswerRequest(BaseModel):
+    taken: bool
+
+
+def _decision_counts(entries: list[dict], held: list[dict]) -> dict:
+    """One count per decision, including the zeroes.
+
+    A missing key renders as a blank rather than a zero, and "no buy signals"
+    is a real answer that the screen has to be able to state.
+    """
+    counts = {a: 0 for a in ("BUY", "HOLD", "WATCH", "REDUCE", "SELL", "AVOID")}
+    for row in entries:
+        counts[row["action"]] = counts.get(row["action"], 0) + 1
+    for row in held:
+        decision = row.get("current_decision")
+        if decision:
+            counts[decision] = counts.get(decision, 0) + 1
+    return counts
+
+
+def _merge_position_context(payload: dict, result, signal: dict | None, service) -> dict:
+    """Fill an opening from the signal it answers, then from the live scan.
+
+    Order matters. The signal is what the user was actually looking at when they
+    decided; the live scan is where the price has drifted to since. Preferring
+    the scan would silently reprice the entry to a moment the user never saw.
+    """
+    if signal is not None:
+        for key, source in (
+            ("entry_price", "price"),
+            ("trigger_price", "trigger_price"),
+            ("invalidation_price", "invalidation_price"),
+        ):
+            if payload.get(key) is None:
+                payload[key] = signal.get(source)
+        payload.setdefault("entry_opportunity", signal.get("opportunity_score"))
+        payload.setdefault("entry_explosion", signal.get("explosion_score"))
+        payload.setdefault("entry_discovery", signal.get("discovery_score"))
+        payload.setdefault("entry_safety", signal.get("safety_score"))
+        payload.setdefault("entry_confidence", signal.get("data_confidence"))
+        payload.setdefault("entry_maturity", signal.get("pump_maturity"))
+        payload.setdefault("entry_state", signal.get("setup_state"))
+        payload.setdefault("entry_regime", signal.get("market_regime"))
+        payload.setdefault("entry_reasons", signal.get("reasons"))
+
+    if result is not None:
+        d = result.to_dict()
+        defaults = {
+            "entry_price": d["price"],
+            "entry_opportunity": d["final_score"],
+            "entry_explosion": (d["explosion"] or {}).get("explosion_score"),
+            "entry_safety": d["safety"]["score"],
+            "entry_confidence": d["data_confidence"]["score"],
+            "entry_maturity": d["pump_maturity"]["score"],
+            "entry_rvol": (d.get("metrics") or {}).get("rvol"),
+            "entry_state": d["setup"]["state"],
+            "entry_reasons": d["why"][:8],
+            "trigger_price": (d.get("metrics") or {}).get("resistance"),
+            "invalidation_price": (d.get("metrics") or {}).get("support"),
+        }
+        for key, value in defaults.items():
+            if payload.get(key) is None:
+                payload[key] = value
+
+    payload["opened_ms"] = SYSTEM_CLOCK.now_ms()
+    payload["chain"] = payload.get("chain") or "CEX"
+    if payload.get("entry_regime") is None:
+        payload["entry_regime"] = service.scanner.regime.trend.value
+    payload["data_source"] = service.scanner.provider.name
+    payload["synthetic"] = service.status()["data_mode"] == "DEMO"
+    return payload
+
+
 def _merge_validation_context(payload: dict, result) -> dict:
     """Fill blanks from the live scan; never overwrite what the client sent.
 
@@ -648,6 +749,207 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
         service = get_service()
         service.ensure_db()
         return {"current": await asyncio.to_thread(repo.latest_validation_per_symbol, limit)}
+
+    # ------------------------------------------------------------- decisions #
+
+    @app.get("/api/decisions", tags=["trading"])
+    async def decisions(limit: int = Query(60, ge=1, le=300)):
+        """What to do right now, about everything and about what you hold.
+
+        Two lists rather than one merged ranking. A 🟢 ACHETER and a 🔴 VENDRE
+        are instructions to different halves of a portfolio and sorting them
+        together would bury whichever happened to score lower — the sell in
+        particular, since a position being exited rarely has a high score.
+        """
+        service = get_service()
+        service.ensure_db()
+
+        entries = service.last_decisions[:limit]
+        try:
+            held = await asyncio.to_thread(repo.positions, "OPEN", 200)
+            unanswered = await asyncio.to_thread(repo.unanswered_trade_signals, 20)
+        except Exception:
+            held, unanswered = [], []
+
+        return {
+            "entries": entries,
+            "positions": held,
+            # Prompts still waiting for OUI / NON. Surfaced here so an
+            # unanswered recommendation cannot quietly disappear off the screen.
+            "awaiting_answer": unanswered,
+            "counts": _decision_counts(entries, held),
+            "data_mode": service.status()["data_mode"],
+            "engine": {
+                "version": "TRADE_DECISION_V1",
+                "weights_fingerprint": service.trade_engine.weights_fingerprint,
+            },
+            "disclaimer": (
+                "Aucun ordre n'est jamais passé automatiquement. L'application analyse "
+                "et recommande ; vous exécutez vous-même et vous confirmez ensuite."
+            ),
+        }
+
+    # ------------------------------------------------------------- positions #
+
+    @app.get("/api/positions", tags=["trading"])
+    async def list_positions(status: str = Query("OPEN"), limit: int = Query(100, ge=1, le=500)):
+        service = get_service()
+        service.ensure_db()
+        wanted = None if status.upper() == "ALL" else status.upper()
+        rows = await asyncio.to_thread(repo.positions, wanted, limit)
+        return {
+            "positions": rows,
+            "watcher": service.watcher.status(),
+            "data_mode": service.status()["data_mode"],
+        }
+
+    @app.get("/api/positions/{position_id}/events", tags=["trading"])
+    async def position_history(position_id: int):
+        """Every decision change, in order — the engine's reasoning made visible."""
+        service = get_service()
+        service.ensure_db()
+        position = await asyncio.to_thread(repo.position_by_id, position_id)
+        if position is None:
+            raise HTTPException(404, f"aucune position {position_id}")
+        events = await asyncio.to_thread(repo.position_events, position_id)
+        return {"position": position, "events": events}
+
+    @app.post("/api/positions/open", tags=["trading"])
+    async def open_a_position(body: OpenPositionRequest):
+        """"Oui, j'ai acheté." Creates the position and starts watching it.
+
+        Opening is only ever a user action. Nothing in this application opens a
+        position on its own, and no code path here can place an order.
+        """
+        service = get_service()
+        service.ensure_db()
+        payload = body.model_dump()
+
+        result = service.find(body.symbol)
+        signal = None
+        if body.signal_id is not None:
+            try:
+                signal = await asyncio.to_thread(
+                    repo.answer_trade_signal, body.signal_id, True
+                )
+            except LookupError as exc:
+                raise HTTPException(404, str(exc)) from exc
+
+            # Found by opening a position with the wrong signal id: without this
+            # check the merge below happily imported another token's entry price
+            # and invalidation level, and the position was then judged for its
+            # whole life against a level from a different chart.
+            if signal["symbol"] != body.symbol.upper():
+                raise HTTPException(
+                    400,
+                    f"le signal {body.signal_id} concerne {signal['symbol']}, "
+                    f"pas {body.symbol.upper()}",
+                )
+
+        payload = _merge_position_context(payload, result, signal, service)
+        if payload.get("entry_price") is None:
+            raise HTTPException(
+                400,
+                f"aucun prix connu pour {body.symbol.upper()} — indiquez `entry_price`, "
+                "ou attendez que le scanner l'ait analysé",
+            )
+
+        try:
+            position = await asyncio.to_thread(repo.open_position, payload)
+        except Exception as exc:
+            log.error("open_position_failed", symbol=body.symbol, error=type(exc).__name__)
+            raise HTTPException(
+                503, f"la position n'a pas pu être enregistrée ({type(exc).__name__})"
+            ) from exc
+
+        if signal is not None:
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(
+                    repo.answer_trade_signal, body.signal_id, True, position_id=position["id"]
+                )
+
+        # A fresh position starts with a clean decision memory, so it is not
+        # judged against the state a previous position in the same token left.
+        service.watcher.forget(position["symbol"])
+        return position
+
+    @app.post("/api/positions/{position_id}/close", tags=["trading"])
+    async def close_a_position(position_id: int, body: ClosePositionRequest):
+        """"Oui, j'ai vendu." Closes the position and stops watching it.
+
+        The exit price falls back to what the scanner currently observes when
+        the user does not supply their fill — stated in `pnl_basis`, because a
+        return computed from a screen price is a different number from one
+        computed from a fill.
+        """
+        service = get_service()
+        service.ensure_db()
+
+        existing = await asyncio.to_thread(repo.position_by_id, position_id)
+        if existing is None:
+            raise HTTPException(404, f"aucune position {position_id}")
+
+        observed = existing.get("last_price")
+        result = service.find(existing["symbol"])
+        if result is not None:
+            observed = result.price
+        exit_price = body.actual_exit_price or body.exit_price or observed
+        if exit_price is None:
+            raise HTTPException(
+                400, "aucun prix de sortie connu — indiquez `exit_price`"
+            )
+
+        closed = await asyncio.to_thread(
+            repo.close_position,
+            position_id,
+            exit_price=float(exit_price),
+            actual_exit_price=body.actual_exit_price,
+            now_ms=SYSTEM_CLOCK.now_ms(),
+            reason=body.reason,
+        )
+        service.watcher.forget(closed["symbol"])
+        return closed
+
+    # --------------------------------------------------------- trade signals #
+
+    @app.get("/api/trade-signals", tags=["trading"])
+    async def list_trade_signals(
+        limit: int = Query(100, ge=1, le=500),
+        action: str | None = None,
+        taken: bool | None = None,
+    ):
+        service = get_service()
+        service.ensure_db()
+        rows = await asyncio.to_thread(repo.recent_trade_signals, limit, action=action, taken=taken)
+        return {
+            "signals": rows,
+            "note": (
+                "`taken` vaut null tant que la question n'a pas reçu de réponse. "
+                "Ce n'est pas un « non » : un signal sans réponse n'est pas un signal refusé."
+            ),
+        }
+
+    @app.post("/api/trade-signals/{signal_id}/answer", tags=["trading"])
+    async def answer_a_signal(signal_id: int, body: AnswerRequest):
+        """"Avez-vous acheté ?" — OUI or NON.
+
+        A NON is recorded and then followed exactly like a OUI. The signals
+        someone skipped are the ones they were unsure about, and dropping them
+        would make every later statistic flattering.
+        """
+        service = get_service()
+        service.ensure_db()
+        try:
+            return await asyncio.to_thread(repo.answer_trade_signal, signal_id, body.taken)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @app.post("/api/positions/watch", tags=["trading"])
+    async def watch_now():
+        """Run one position-watch pass on demand, and say what it cost."""
+        service = get_service()
+        service.ensure_db()
+        return (await service.watcher.run_once()).to_dict()
 
     # ---------------------------------------------------------- maintenance #
 

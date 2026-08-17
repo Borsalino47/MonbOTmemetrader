@@ -1155,10 +1155,15 @@ def answer_trade_signal(signal_id: int, taken: bool, *, position_id: int | None 
         if row.taken is None:
             row.taken = bool(taken)
             row.answered_at = _utcnow()
-            if position_id is not None:
-                row.position_id = position_id
-            session.commit()
-            session.refresh(row)
+        # The position link is not part of the answer, so it can still be
+        # attached afterwards. Found by the API test: opening a position answers
+        # the signal first and only knows the position id once the row exists,
+        # so refusing the second write left every position unlinked from the
+        # recommendation that produced it.
+        if position_id is not None and row.position_id is None:
+            row.position_id = position_id
+        session.commit()
+        session.refresh(row)
         return _trade_signal_to_dict(row)
 
 
