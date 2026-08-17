@@ -9,7 +9,7 @@ about is a price nobody should act on.
 THE RULE THIS MODULE EXISTS TO ENFORCE
 
 **Two sources are reported side by side, never merged.** No average, no
-"preferred source wins", no silent fallback. Averaging two prices 40 % apart
+"preferred source wins", no silent fallback. Averaging two prices 40 % apart
 produces a number describing neither and destroys the only signal that mattered
 — that something is wrong with this token's data. Each figure keeps its source
 label, and a disagreement becomes a named caveat the decision layer can read.

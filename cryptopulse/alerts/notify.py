@@ -450,7 +450,27 @@ def _rank(level: str) -> int:
 
 # Separate notification ids so a sell never replaces a buy or vice versa. One
 # shared id would mean the loud one could silently overwrite the other.
-DECISION_NOTIFICATION_IDS = {"BUY": "cryptopulse-buy", "SELL": "cryptopulse-sell"}
+DECISION_NOTIFICATION_IDS = {
+    "BUY": "cryptopulse-buy",
+    "SELL": "cryptopulse-sell",
+    # RÉDUIRE shares the exit id: it is the same instruction at lower urgency,
+    # and giving it its own card would leave two exit notifications stacked for
+    # one position.
+    "REDUCE": "cryptopulse-sell",
+}
+
+# Icon, word and urgency per action. Read from one table so a notification can
+# never disagree with the screen about what a colour means (spec §21).
+#
+# Found by running it: `_decision_args` branched on `action == "SELL"` alone, so
+# a 🟠 RÉDUIRE rendered as "🔥 🟢 ACHETER" — telling someone to buy at exactly
+# the moment the engine wanted them to take profit off the table. That is the
+# single most expensive confusion this surface could produce (invariant 48).
+_DECISION_PRESENTATION = {
+    "BUY":    ("🟢", "ACHETER", "🔥 ", "300,150,300"),
+    "SELL":   ("🔴", "VENDRE", "🚨 ", "400,200,400,200,400"),
+    "REDUCE": ("🟠", "RÉDUIRE / PROTÉGER", "⚠️ ", "400,200,400"),
+}
 
 
 @dataclass(slots=True)
@@ -523,14 +543,15 @@ async def notify_decision(
 
 
 def _decision_args(binary: str, notice: DecisionNotice, *, synthetic: bool) -> list[str]:
-    selling = notice.action == "SELL"
-    emoji = "🔴" if selling else "🟢"
-    word = "VENDRE" if selling else "ACHETER"
+    emoji, word, siren, vibration = _DECISION_PRESENTATION.get(
+        notice.action, _DECISION_PRESENTATION["BUY"]
+    )
     # The DEMO warning goes in the title, where Android does not truncate.
     prefix = f"{_SYNTHETIC_TITLE} · " if synthetic else ""
-    # The siren is on the sell only. An exit has a deadline that an entry does
-    # not, and if both are equally loud the one that matters stops standing out.
-    title = f"{prefix}{'🚨 ' if selling else '🔥 '}{emoji} {word} {notice.symbol}"
+    # The siren is heaviest on the sell. An exit has a deadline that an entry
+    # does not, and if both are equally loud the one that matters stops
+    # standing out.
+    title = f"{prefix}{siren}{emoji} {word} {notice.symbol}"
 
     body: list[str] = [f"Prix : {notice.price}"]
     if notice.strength:
@@ -539,7 +560,12 @@ def _decision_args(binary: str, notice: DecisionNotice, *, synthetic: bool) -> l
         body.append(f"Santé position : {notice.health}")
     if notice.pnl:
         body.append(f"PnL : {notice.pnl}")
-    body.extend(notice.lines[:3])
+    # Five rather than three: the caller orders these most-important-first, and
+    # on an entry the two that decide whether the position is even exitable —
+    # pool depth and the rug verdict — sit behind the reasons. Cutting at three
+    # dropped exactly those. Android truncates the collapsed card itself and
+    # shows the rest when expanded, so the cost of the extra lines is nothing.
+    body.extend(notice.lines[:5])
 
     args = [
         binary,
@@ -550,10 +576,7 @@ def _decision_args(binary: str, notice: DecisionNotice, *, synthetic: bool) -> l
         "--priority", "max",
         "--sound",
     ]
-    if selling:
-        # A longer, more insistent pattern than the buy: the two must be
-        # distinguishable without looking at the phone.
-        args += ["--vibrate", "400,200,400,200,400"]
-    else:
-        args += ["--vibrate", "300,150,300"]
+    # Each action has its own pattern: the three must be distinguishable
+    # without looking at the phone.
+    args += ["--vibrate", vibration]
     return args

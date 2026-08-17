@@ -61,7 +61,7 @@ from dataclasses import dataclass, field
 
 from cryptopulse.config.settings import RobinhoodSettings
 from cryptopulse.core.logging import get_logger
-from cryptopulse.i18n import money
+from cryptopulse.i18n import money, num
 
 log = get_logger("scoring.robinhood_explosion")
 
@@ -109,7 +109,7 @@ class RobinhoodExplosion:
     def to_dict(self) -> dict:
         return {
             "score": round(self.score, 1),
-            # Never "89 % de chance" (spec §16). A rank under fixed weights.
+            # Never "89 % de chance" (spec §16). A rank under fixed weights.
             "label": f"{self.score:.0f}/100",
             "horizon_minutes": self.horizon_minutes,
             "components": {k: round(v, 2) for k, v in self.components.items()},
@@ -177,16 +177,16 @@ def score_explosion(candidate, settings: RobinhoodSettings) -> RobinhoodExplosio
     else:
         if accel >= 6:
             earned = cap
-            result.reasons.append(f"volume {accel:.1f}× le rythme horaire — rupture nette")
+            result.reasons.append(f"volume {num(accel, 1)}× le rythme horaire — rupture nette")
         elif accel >= 3:
             earned = cap * 0.75
-            result.reasons.append(f"volume {accel:.1f}× le rythme horaire")
+            result.reasons.append(f"volume {num(accel, 1)}× le rythme horaire")
         elif accel >= 1.5:
             earned = cap * 0.4
-            result.reasons.append(f"volume {accel:.1f}× le rythme horaire")
+            result.reasons.append(f"volume {num(accel, 1)}× le rythme horaire")
         else:
             earned = 0.0
-            result.caveats.append(f"volume au rythme habituel ({accel:.1f}×)")
+            result.caveats.append(f"volume au rythme habituel ({num(accel, 1)}×)")
         points += earned
         result.components["volume_burst"] = earned
 
@@ -202,16 +202,16 @@ def score_explosion(candidate, settings: RobinhoodSettings) -> RobinhoodExplosio
         ratio = (tx_m5 * 12.0) / tx_h1
         if ratio >= 5:
             earned = cap
-            result.reasons.append(f"{ratio:.1f}× plus de transactions — afflux d'acheteurs")
+            result.reasons.append(f"{num(ratio, 1)}× plus de transactions — afflux d'acheteurs")
         elif ratio >= 2.5:
             earned = cap * 0.75
-            result.reasons.append(f"transactions {ratio:.1f}× le rythme horaire")
+            result.reasons.append(f"transactions {num(ratio, 1)}× le rythme horaire")
         elif ratio >= 1.3:
             earned = cap * 0.4
-            result.reasons.append(f"transactions {ratio:.1f}× le rythme horaire")
+            result.reasons.append(f"transactions {num(ratio, 1)}× le rythme horaire")
         else:
             earned = 0.0
-            result.caveats.append(f"transactions au rythme habituel ({ratio:.1f}×)")
+            result.caveats.append(f"transactions au rythme habituel ({num(ratio, 1)}×)")
         points += earned
         result.components["trade_burst"] = earned
 
@@ -229,16 +229,16 @@ def score_explosion(candidate, settings: RobinhoodSettings) -> RobinhoodExplosio
         share = buys / (buys + sells)
         if share >= 0.75:
             earned = cap
-            result.reasons.append(f"{share * 100:.0f} % d'achats sur 5 min")
+            result.reasons.append(f"{share * 100:.0f} % d'achats sur 5 min")
         elif share >= 0.6:
             earned = cap * 0.65
-            result.reasons.append(f"{share * 100:.0f} % d'achats sur 5 min")
+            result.reasons.append(f"{share * 100:.0f} % d'achats sur 5 min")
         elif share >= 0.5:
             earned = cap * 0.3
-            result.reasons.append(f"achats légèrement majoritaires ({share * 100:.0f} %)")
+            result.reasons.append(f"achats légèrement majoritaires ({share * 100:.0f} %)")
         else:
             earned = 0.0
-            result.caveats.append(f"vendeurs majoritaires sur 5 min ({(1 - share) * 100:.0f} %)")
+            result.caveats.append(f"vendeurs majoritaires sur 5 min ({(1 - share) * 100:.0f} %)")
         points += earned
         result.components["buy_pressure"] = earned
 
@@ -253,20 +253,20 @@ def score_explosion(candidate, settings: RobinhoodSettings) -> RobinhoodExplosio
     else:
         if m5_change >= 5:
             earned = cap
-            result.reasons.append(f"+{m5_change:.1f} % sur 5 min")
+            result.reasons.append(f"+{num(m5_change, 1)} % sur 5 min")
         elif m5_change >= 1:
             earned = cap * 0.6
-            result.reasons.append(f"+{m5_change:.1f} % sur 5 min")
+            result.reasons.append(f"+{num(m5_change, 1)} % sur 5 min")
         elif m5_change > -1:
             earned = cap * 0.2
         else:
             earned = 0.0
-            result.caveats.append(f"{m5_change:.1f} % sur 5 min — prix en repli")
+            result.caveats.append(f"{num(m5_change, 1)} % sur 5 min — prix en repli")
         # An hour that disagrees with the last five minutes is a bounce inside
         # a decline rather than the start of a rise.
         if h1_change is not None and h1_change < -10 and earned > 0:
             earned *= 0.5
-            result.caveats.append(f"rebond dans une baisse ({h1_change:.0f} % sur 1 h)")
+            result.caveats.append(f"rebond dans une baisse ({h1_change:.0f} % sur 1 h)")
         points += earned
         result.components["thrust"] = earned
 

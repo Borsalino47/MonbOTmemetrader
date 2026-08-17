@@ -354,3 +354,60 @@ def test_the_alert_body_the_user_reads_on_the_phone_is_french():
     assert _looks_english(text) is None, text
     assert "POURQUOI" in text and "RISQUES" in text
     assert "BONNE" in text  # the liquidity label, not the enum value
+
+
+# --------------------------------------------------------------------------- #
+# The Robinhood engines, which predate the localisation layer
+# --------------------------------------------------------------------------- #
+
+ROBINHOOD_FILES = (
+    "cryptopulse/scoring/robinhood_early.py",
+    "cryptopulse/scoring/robinhood_explosion.py",
+    "cryptopulse/risk/robinhood_safety.py",
+    "cryptopulse/hunter/robinhood_discovery.py",
+    "cryptopulse/hunter/robinhood_detail.py",
+    "cryptopulse/trading/robinhood_decision.py",
+    "cryptopulse/trading/robinhood_health.py",
+    "cryptopulse/trading/robinhood_exit_risk.py",
+    "cryptopulse/trading/robinhood_watcher.py",
+    "cryptopulse/alerts/robinhood_notify.py",
+    "cryptopulse/outcomes/robinhood_outcomes.py",
+    "cryptopulse/outcomes/robinhood_stats.py",
+)
+
+
+@pytest.mark.parametrize("path", ROBINHOOD_FILES)
+def test_no_robinhood_engine_formats_a_decimal_with_a_point(path: str):
+    """`f"{x:.1f}"` writes `5.3`, which is an English decimal on a French screen.
+
+    Found by running the app: a lock-screen notification read "volume actuel
+    5.3× le rythme horaire" beside reasons that read "+3,42 %". These engines
+    were written before `cryptopulse/i18n` existed and formatted their own
+    numbers; `num()` is the only place the comma is applied.
+
+    `:.0f` is deliberately allowed — an integer has no decimal separator.
+    """
+    source = (ROOT / path).read_text(encoding="utf-8")
+    offenders = [
+        f"line {source[:m.start()].count(chr(10)) + 1}: {m.group(0)}"
+        for m in re.finditer(r"\{[^{}:]+:[,]?\.[1-9]f\}", source)
+    ]
+    assert not offenders, (
+        f"{path} : formatage décimal anglais, utilisez num() — {offenders}"
+    )
+
+
+@pytest.mark.parametrize("path", ROBINHOOD_FILES)
+def test_no_robinhood_engine_writes_a_plain_space_before_a_percent(path: str):
+    """French typography wants U+202F, and *no-break* is the load-bearing half:
+    a plain space lets the sign wrap to the next line on a phone."""
+    source = (ROOT / path).read_text(encoding="utf-8")
+    # Only inside string literals; a bare `%` in code is the modulo operator.
+    offenders = []
+    for line_no, line in enumerate(source.splitlines(), start=1):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        if " %" in line and ('"' in line or "'" in line):
+            offenders.append(f"line {line_no}: {stripped[:80]}")
+    assert not offenders, f"{path} : espace ordinaire avant % — {offenders}"

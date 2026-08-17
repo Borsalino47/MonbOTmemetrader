@@ -25,7 +25,7 @@ all:
 
 HEALTH IS NOT PnL (invariant 49)
 
-A position up 300 % on a pool that just lost 80 % of its depth is unhealthy, and
+A position up 300 % on a pool that just lost 80 % of its depth is unhealthy, and
 saying so is the entire point — that is the moment the gain is about to be
 impossible to realise. PnL is shown beside this, and the two are meant to
 disagree visibly.
@@ -83,7 +83,7 @@ class HealthComponent:
     # A ceiling this component imposes on the whole score, or None.
     #
     # Found by writing the test for invariant 49 and watching it fail against
-    # this engine: a position up 300 % whose pool had lost 90 % of its depth
+    # this engine: a position up 300 % whose pool had lost 90 % of its depth
     # scored 73.5 and rendered as SAINE, because liquidity is only 25 of the
     # 100 points and everything else was perfect. But a withdrawn pool is not
     # "a quarter of a problem" — it is the reason a DEX position goes to zero,

@@ -91,9 +91,10 @@ that justifies it.
 | Robinhood position watcher (`trading/robinhood_watcher.py`) | **TESTED** | Held tokens only. One indexer request per token, one batched safety request. States its cost |
 | Robinhood outcomes (`outcomes/robinhood_outcomes.py`) | **TESTED** | 24 tests. Resolves exactly from pool OHLCV, so a decision from last week is gradeable today |
 | Robinhood statistics (`outcomes/robinhood_stats.py`) | **TESTED** | `by_action` is the table that matters: 🟢 must beat 🟡 must beat ⚫. Every rate carries its `n` |
+| Robinhood notifications (`alerts/robinhood_notify.py`) | **TESTED — NOT DEVICE VERIFIED** | 30 tests against a stand-in binary. 🟢 once per token, 🔴/🟠 never rate-limited |
 | **French localisation (`cryptopulse/i18n/`, `frontend/src/i18n/fr.ts`)** | **TESTED** | 46 anti-English tests. 240 catalogue entries + 50 enum labels + 42 UI labels. Rendered at emission, no network, no model |
 
-**Test suite: 944 tests, all passing.** Run `pytest -q`.
+**Test suite: 998 tests, all passing.** Run `pytest -q`.
 
 ---
 
@@ -201,6 +202,7 @@ cryptopulse/
     engine.py            Levels, gates, dedup, cooldown
     delivery.py          Webhook delivery. The URL is a credential and is never logged
     notify.py            Android notifications via Termux:API. Escalation-only anti-spam
+    robinhood_notify.py  🟢 once per token, 🔴/🟠 never delayed. Builds the notice
   hunter/
     discovery.py         Wide pre-scan. Reads the scan's own ticker call, costs nothing
     deep.py              The expensive look, only on selected candidates
@@ -266,7 +268,7 @@ frontend/                Vite + React 18 + TypeScript (strict), mobile-first
   HomeView               The five-second view: can I trust it, and what moved
   AssetCards             The scanner as cards; the table is wide-screen only
   bottom-nav             Thumb-reachable navigation, phones only
-tests/                   944 tests
+tests/                   998 tests
 pine/                    TradingView companion scripts
 ```
 
@@ -894,6 +896,28 @@ Break these and the product is lying to its user.
     is often thin. 3 % is a placeholder, not a measurement, and
     `RobinhoodCosts.describe()` says so — flattering it would make every rate
     look better than anything achievable, which is the opposite of the point.
+
+101. **Only 🟢 and 🔴/🟠 are worth a Robinhood notification.** ⚫ is the ordinary
+    answer for most of a permissionless chain and 🟡 is an invitation to look
+    rather than an instruction; notifying either would be a phone that vibrates
+    all day, and then the one that mattered is muted too. The entry gate is
+    keyed on the **contract address**, not the symbol: symbols are not unique
+    on-chain, and two tokens calling themselves FRONG silencing each other is
+    exactly the copycat's trick.
+
+102. **The three decision words never share an icon on a lock screen.** Found by
+    running it: `_decision_args` branched on `action == "SELL"` alone, so a
+    🟠 RÉDUIRE rendered as "🔥 🟢 ACHETER" — telling someone to buy at exactly
+    the moment the engine wanted them to take profit off the table. One
+    presentation table now, three vibration patterns, so the three are
+    distinguishable without looking (invariant 48).
+
+103. **The Robinhood engines format their numbers through `num()` like
+    everything else.** They were written before `cryptopulse/i18n` existed and
+    used `f"{x:.1f}"`, which writes `5.3`. Found on a lock screen: "volume
+    actuel 5.3× le rythme horaire" beside reasons reading "+3,42 %". Two
+    parametrized tests now walk all twelve Robinhood modules for a decimal
+    point and for a plain space before `%`.
 
 ---
 

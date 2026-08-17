@@ -22,6 +22,7 @@ from cryptopulse.alerts.notify import (
     notify_alerts,
     notify_decision,
 )
+from cryptopulse.alerts.robinhood_notify import RobinhoodEntryGate
 from cryptopulse.api.startup import StartupTracker
 from cryptopulse.config.settings import CryptoPulseSettings, get_settings
 from cryptopulse.core.clock import SYSTEM_CLOCK
@@ -193,6 +194,10 @@ class ScannerService:
         # opens the Robinhood tab must not pay for it at startup (spec §41-42).
         self._robinhood_watcher = None
         self._robinhood_tracker = None
+        # Entries have no hysteresis of their own — the search re-decides every
+        # candidate every cycle — so the anti-spam memory lives here.
+        self._robinhood_entry_gate = RobinhoodEntryGate()
+        self.last_robinhood_notification: dict | None = None
         self.last_robinhood_horizon_run: dict | None = None
         self._discovery_task: asyncio.Task | None = None
         self._discovery_lock = asyncio.Lock()
@@ -388,7 +393,42 @@ class ScannerService:
             # row written earlier would record an opinion taken on less
             # evidence than the screen showed beside it (invariant 91).
             await self._journal_robinhood(report)
+            # Last of all, and never before the journal: a notification is the
+            # loudest surface here, so it goes out only once the row it
+            # describes is on disk and can be looked at afterwards.
+            await self._notify_robinhood_entries(report)
             return report
+
+    async def _notify_robinhood_entries(self, report) -> int:
+        """Buzz for 🟢 ACHETER, once per token, and for nothing else.
+
+        ⚫ is the ordinary answer for most of a chain, and 🟡 is an invitation
+        to look rather than an instruction — notifying either would be a phone
+        that vibrates all day, and then the one that mattered gets muted
+        (invariant 44).
+        """
+        from cryptopulse.alerts.notify import notify_decision
+        from cryptopulse.alerts.robinhood_notify import entry_notice, worth_notifying_entry
+
+        sent = 0
+        for c in report.candidates:
+            if c.decision is None or not worth_notifying_entry(c.decision.action.value):
+                # The gate still sees non-buys, so becoming a buy later is news.
+                if c.decision is not None:
+                    self._robinhood_entry_gate.allow(c.address, c.decision.action.value)
+                continue
+            if not self._robinhood_entry_gate.allow(c.address, c.decision.action.value):
+                continue
+            try:
+                result = await notify_decision(
+                    self.notifier, entry_notice(c), synthetic=False
+                )
+                self.last_robinhood_notification = result.to_dict()
+                sent += int(result.ok)
+            except Exception as exc:
+                # A notification failure costs a notification, never a search.
+                log.warning("robinhood_entry_notify_failed", error=type(exc).__name__)
+        return sent
 
     async def _journal_robinhood(self, report) -> int:
         """Append this cycle's decisions. A failure costs the journal, not the scan."""
@@ -484,8 +524,16 @@ class ScannerService:
                 self._get_gecko(),
                 self._get_goplus(),
                 clock=SYSTEM_CLOCK,
+                on_exit=self._deliver_robinhood_exit,
             )
         return self._robinhood_watcher
+
+    async def _deliver_robinhood_exit(self, notice) -> None:
+        """A held token turned 🔴 or 🟠. Never raises."""
+        from cryptopulse.alerts.notify import notify_decision
+
+        result = await notify_decision(self.notifier, notice, synthetic=False)
+        self.last_robinhood_notification = result.to_dict()
 
     def ensure_robinhood_discovery(self) -> None:
         """Kick a first search in the background, once, on demand.

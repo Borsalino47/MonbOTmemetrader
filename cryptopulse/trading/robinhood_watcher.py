@@ -45,6 +45,10 @@ import asyncio
 import time
 from dataclasses import dataclass, field
 
+from cryptopulse.alerts.robinhood_notify import (
+    position_notice,
+    worth_notifying_position,
+)
 from cryptopulse.core.clock import SYSTEM_CLOCK, Clock
 from cryptopulse.core.logging import get_logger
 from cryptopulse.database import repo
@@ -106,6 +110,7 @@ class RobinhoodPositionWatcher:
         *,
         clock: Clock = SYSTEM_CLOCK,
         gate: DecisionGate | None = None,
+        on_exit=None,
     ) -> None:
         self.settings = settings
         self.gecko = gecko
@@ -113,6 +118,10 @@ class RobinhoodPositionWatcher:
         self.clock = clock
         self.engine = RobinhoodTradeDecisionEngine(settings)
         self.gate = gate or DecisionGate()
+        # Called with a formatted notice when a held token turns 🔴 or 🟠.
+        # Injected rather than imported so the watcher keeps no dependency on
+        # a delivery channel — and so a test can assert what it would have sent.
+        self.on_exit = on_exit
         self.last_report: RobinhoodWatchReport | None = None
         self._lock = asyncio.Lock()
 
@@ -301,6 +310,21 @@ class RobinhoodPositionWatcher:
                 now_ms=now_ms,
                 health=health.score,
             )
+
+        # An exit notice bypasses every rate limit by design (invariant 53 and
+        # 44 together): the watcher's own gate has already confirmed the change,
+        # and holding back a rug in progress to be polite is how the loud
+        # notification becomes the one that was missed.
+        if outcome.changed and self.on_exit is not None and worth_notifying_position(
+            outcome.action.value
+        ):
+            try:
+                await self.on_exit(
+                    position_notice(row, decision, health, exit_risk)
+                )
+            except Exception as exc:
+                # A notification failure costs a notification, never a cycle.
+                log.warning("rh_exit_notify_failed", error=type(exc).__name__)
 
         if outcome.changed:
             await asyncio.to_thread(

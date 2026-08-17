@@ -15,7 +15,7 @@ changing. So this is a different engine reading different inputs, not the
 opportunity score with new thresholds.
 
 It is also deliberately biased toward the *beginning* of a move. A token
-already up 400 % scores badly here even though it looks spectacular, because
+already up 400 % scores badly here even though it looks spectacular, because
 the question is not "is something happening" but "is there anything left". That
 is what `ROBINHOOD_PUMP_MATURITY` measures, and the early score reads it as an
 input rather than duplicating it.
@@ -48,6 +48,7 @@ from dataclasses import dataclass, field
 
 from cryptopulse.config.settings import RobinhoodSettings
 from cryptopulse.core.logging import get_logger
+from cryptopulse.i18n import num
 
 log = get_logger("scoring.robinhood_early")
 
@@ -236,18 +237,18 @@ def assess_maturity(candidate) -> PumpMaturity:
         inputs_seen += 1
         if value >= 300:
             points += weight
-            reasons.append(f"+{value:.0f} % sur {window} — mouvement déjà très étendu")
+            reasons.append(f"+{value:.0f} % sur {window} — mouvement déjà très étendu")
         elif value >= 100:
             points += weight * 0.6
-            reasons.append(f"+{value:.0f} % sur {window} — mouvement bien engagé")
+            reasons.append(f"+{value:.0f} % sur {window} — mouvement bien engagé")
         elif value >= 30:
             points += weight * 0.25
-            reasons.append(f"+{value:.0f} % sur {window}")
+            reasons.append(f"+{value:.0f} % sur {window}")
         elif value < -20:
             # A retracement after a run is late, not early: the move happened
             # and is now being given back.
             points += weight * 0.5
-            reasons.append(f"{value:.0f} % sur {window} — repli après hausse")
+            reasons.append(f"{value:.0f} % sur {window} — repli après hausse")
 
     # 2. Volume climax: the current five-minute rate far above the 24h average
     #    means the crowd has already arrived.
@@ -273,10 +274,10 @@ def assess_maturity(candidate) -> PumpMaturity:
         sell_share = sells / (buys + sells)
         if sell_share > 0.6:
             points += 20.0
-            reasons.append(f"{sell_share * 100:.0f} % de ventes sur 5 min — vendeurs majoritaires")
+            reasons.append(f"{sell_share * 100:.0f} % de ventes sur 5 min — vendeurs majoritaires")
         elif sell_share > 0.5:
             points += 8.0
-            reasons.append(f"{sell_share * 100:.0f} % de ventes sur 5 min")
+            reasons.append(f"{sell_share * 100:.0f} % de ventes sur 5 min")
 
     if inputs_seen == 0:
         # Nothing to judge on. 50 rather than 0: claiming a move has not started
@@ -395,16 +396,16 @@ def score_early(
             caveats=["Accélération du volume indisponible"], unavailable=True)
     elif accel >= 3:
         add("volume_acceleration", "Accélération du volume", cap,
-            reasons=[f"volume actuel {accel:.1f}× le rythme horaire"])
+            reasons=[f"volume actuel {num(accel, 1)}× le rythme horaire"])
     elif accel >= 1.5:
         add("volume_acceleration", "Accélération du volume", cap * 0.6,
-            reasons=[f"volume {accel:.1f}× le rythme horaire"])
+            reasons=[f"volume {num(accel, 1)}× le rythme horaire"])
     elif accel >= 1.0:
         add("volume_acceleration", "Accélération du volume", cap * 0.25,
-            reasons=[f"volume légèrement au-dessus du rythme horaire ({accel:.1f}×)"])
+            reasons=[f"volume légèrement au-dessus du rythme horaire ({num(accel, 1)}×)"])
     else:
         add("volume_acceleration", "Accélération du volume", 0.0,
-            caveats=[f"volume en dessous du rythme horaire ({accel:.1f}×)"])
+            caveats=[f"volume en dessous du rythme horaire ({num(accel, 1)}×)"])
 
     # -- 2. transaction acceleration ----------------------------------------- #
     # Trade count rather than dollars: one whale can move volume, but not the
@@ -419,16 +420,16 @@ def score_early(
         ratio = (tx_m5 * 12.0) / tx_h1
         if ratio >= 3:
             add("transaction_acceleration", "Accélération des transactions", cap,
-                reasons=[f"{ratio:.1f}× plus de transactions que le rythme horaire"])
+                reasons=[f"{num(ratio, 1)}× plus de transactions que le rythme horaire"])
         elif ratio >= 1.5:
             add("transaction_acceleration", "Accélération des transactions", cap * 0.6,
-                reasons=[f"transactions {ratio:.1f}× le rythme horaire"])
+                reasons=[f"transactions {num(ratio, 1)}× le rythme horaire"])
         elif ratio >= 1.0:
             add("transaction_acceleration", "Accélération des transactions", cap * 0.25,
-                reasons=[f"transactions au rythme horaire ({ratio:.1f}×)"])
+                reasons=[f"transactions au rythme horaire ({num(ratio, 1)}×)"])
         else:
             add("transaction_acceleration", "Accélération des transactions", 0.0,
-                caveats=[f"transactions en ralentissement ({ratio:.1f}×)"])
+                caveats=[f"transactions en ralentissement ({num(ratio, 1)}×)"])
 
     # -- 3. buyer dominance --------------------------------------------------- #
     cap = EARLY_WEIGHTS["buyer_dominance"]
@@ -442,15 +443,15 @@ def score_early(
         reasons, caveats = [], []
         if ratio >= 3:
             points = cap * 0.7
-            reasons.append(f"{ratio:.1f} achats par vente")
+            reasons.append(f"{num(ratio, 1)} achats par vente")
         elif ratio >= 1.5:
             points = cap * 0.45
-            reasons.append(f"{ratio:.1f} achats par vente")
+            reasons.append(f"{num(ratio, 1)} achats par vente")
         elif ratio >= 1.0:
             points = cap * 0.2
-            reasons.append(f"achats et ventes équilibrés ({ratio:.1f})")
+            reasons.append(f"achats et ventes équilibrés ({num(ratio, 1)})")
         else:
-            caveats.append(f"plus de ventes que d'achats ({ratio:.2f})")
+            caveats.append(f"plus de ventes que d'achats ({num(ratio, 2)})")
         # Unique buyers is the part that is hard to fake: one wallet can make
         # forty buys, but it stays one buyer.
         if buyers is not None and buyers >= 30:
@@ -481,7 +482,7 @@ def score_early(
     elif age < 3600:
         add("freshness", "Fraîcheur", cap * 0.7, reasons=[f"pool ouvert il y a {age / 60:.0f} min"])
     elif age < 6 * 3600:
-        add("freshness", "Fraîcheur", cap * 0.35, reasons=[f"pool ouvert il y a {age / 3600:.1f} h"])
+        add("freshness", "Fraîcheur", cap * 0.35, reasons=[f"pool ouvert il y a {num(age / 3600, 1)} h"])
     else:
         add("freshness", "Fraîcheur", 0.0, caveats=[f"pool déjà âgé de {age / 3600:.0f} h"])
 

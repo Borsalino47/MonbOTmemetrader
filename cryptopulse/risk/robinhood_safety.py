@@ -38,6 +38,7 @@ from enum import Enum
 
 from cryptopulse.config.settings import RobinhoodSettings
 from cryptopulse.core.logging import get_logger
+from cryptopulse.i18n import num
 from cryptopulse.providers.goplus import TokenSecurity
 
 log = get_logger("risk.robinhood_safety")
@@ -299,18 +300,18 @@ def assess_safety(sec: TokenSecurity, settings: RobinhoodSettings) -> SafetyRepo
         # both are catastrophic anyway.
         pct = value * 100.0 if value <= 1.0 else value
         if pct >= 100.0:
-            add(f"{attr.upper()}_TOTAL", Severity.CRITICAL, f"Taxe à l'{name} de 100 %",
+            add(f"{attr.upper()}_TOTAL", Severity.CRITICAL, f"Taxe à l'{name} de 100 %",
                 blocking=True)
             taxes = 0.0
         elif pct > cap:
-            add(f"{attr.upper()}_HIGH", Severity.MAJOR, f"Taxe à l'{name} élevée", f"{pct:.1f} %")
+            add(f"{attr.upper()}_HIGH", Severity.MAJOR, f"Taxe à l'{name} élevée", f"{num(pct, 1)} %")
             taxes *= 0.3
         elif pct > 0:
-            add(f"{attr.upper()}_PRESENT", Severity.MINOR, f"Taxe à l'{name}", f"{pct:.1f} %")
+            add(f"{attr.upper()}_PRESENT", Severity.MINOR, f"Taxe à l'{name}", f"{num(pct, 1)} %")
             taxes *= 0.85
     if sec.slippage_modifiable is True:
         add("SLIPPAGE_MODIFIABLE", Severity.MAJOR, "Taxes modifiables après coup",
-            "une taxe basse aujourd'hui peut devenir 100 % demain")
+            "une taxe basse aujourd'hui peut devenir 100 % demain")
         taxes *= 0.3
     if sec.personal_slippage_modifiable is True:
         add("PERSONAL_SLIPPAGE", Severity.CRITICAL, "Taxe modifiable adresse par adresse",
@@ -326,7 +327,7 @@ def assess_safety(sec: TokenSecurity, settings: RobinhoodSettings) -> SafetyRepo
     elif locked < settings.safety_min_lp_locked_percent:
         severity = Severity.CRITICAL if locked < 10 else Severity.MAJOR
         add("LP_UNLOCKED", severity, "Liquidité non verrouillée",
-            f"{locked:.0f} % verrouillé ou brûlé")
+            f"{locked:.0f} % verrouillé ou brûlé")
         lp *= 0.25 if severity is Severity.CRITICAL else 0.6
 
     # ----------------------------------------------------- 5. distribution --- #
@@ -337,11 +338,11 @@ def assess_safety(sec: TokenSecurity, settings: RobinhoodSettings) -> SafetyRepo
         dist *= 0.5
     elif top10 > settings.safety_max_top10_percent:
         add("TOP10_CONCENTRATED", Severity.MAJOR, "Concentration des 10 premiers détenteurs",
-            f"{top10:.0f} %")
+            f"{top10:.0f} %")
         dist *= 0.4
     creator = sec.creator_percent
     if creator is not None and creator > settings.safety_max_creator_percent:
-        add("CREATOR_HEAVY", Severity.MAJOR, "Le créateur détient une part importante", f"{creator:.0f} %")
+        add("CREATOR_HEAVY", Severity.MAJOR, "Le créateur détient une part importante", f"{creator:.0f} %")
         dist *= 0.4
     if sec.honeypot_with_same_creator is True:
         add("CREATOR_HONEYPOT_HISTORY", Severity.CRITICAL,

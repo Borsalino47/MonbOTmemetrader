@@ -764,20 +764,20 @@ async def cmd_notify(args) -> int:
     )
     availability = notifier.availability()
 
-    print(f"\nChannel   : {notifier.name}")
-    print(f"Available : {'yes' if availability.available else 'NO'}")
-    print(f"Reason    : {availability.reason}")
+    print(f"\nCanal      : {notifier.name}")
+    print(f"Disponible : {'oui' if availability.available else 'NON'}")
+    print(f"Raison     : {availability.reason}")
     if availability.fix:
-        print(f"Fix       : {availability.fix}")
+        print(f"Correctif  : {availability.fix}")
 
     if not availability.available:
-        print("\nNothing sent. Fix the above and run this again.")
+        print("\nRien n'a été envoyé. Corrigez ce qui précède et relancez.")
         return 1
 
     probe = Alert(
         symbol="TESTUSDT",
         level=AlertLevel.HIGH,
-        headline="test notification from CRYPTO PULSE AI",
+        headline="notification de test de CRYPTO PULSE AI",
         timestamp_ms=SYSTEM_CLOCK.now_ms(),
         final_score=77.0,
         pump_maturity=0.0,
@@ -787,7 +787,7 @@ async def cmd_notify(args) -> int:
         state="IGNORE",
         price=0.0,
         score_acceleration=None,
-        why=["this is a test, not a signal"],
+        why=["ceci est un test, pas un signal"],
     )
     # `synthetic=True` on purpose: this alert is invented, and the one rule that
     # must never bend is that an invented number is labelled as one.
@@ -795,12 +795,13 @@ async def cmd_notify(args) -> int:
 
     print()
     if report.ok and report.sent:
-        print("Sent. Look at your phone — a notification titled 'DÉMO … TESTUSDT'")
-        print("should be on screen. If nothing appeared, the Termux:API *app* is")
-        print("missing even though the termux-api package is installed.")
+        print("Envoyée. Regardez votre téléphone : une notification intitulée")
+        print("« DÉMO … TESTUSDT » doit être affichée. Si rien n'apparaît, c'est")
+        print("l'*application* Termux:API qui manque, même si le paquet termux-api")
+        print("est bien installé — ce sont deux installations distinctes.")
         return 0
 
-    print(f"Failed: {report.error}")
+    print(f"Échec : {report.error}")
     return 1
 
 
