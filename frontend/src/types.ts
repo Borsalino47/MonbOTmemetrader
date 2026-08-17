@@ -839,6 +839,22 @@ export interface RobinhoodToken {
   early: EarlyScore | null;
   maturity: PumpMaturityRH | null;
   confidence: DataConfidenceRH | null;
+  explosion: RobinhoodExplosionScore | null;
+}
+
+export interface RobinhoodExplosionScore {
+  score: number;
+  label: string;
+  horizon_minutes: number;
+  components: Record<string, number>;
+  reasons: string[];
+  caveats: string[];
+  unavailable: string[];
+  vetoed: boolean;
+  veto_reason: string | null;
+  version: string;
+  weights_fingerprint: string;
+  note: string;
 }
 
 export interface RobinhoodTokensResponse {

@@ -84,8 +84,9 @@ that justifies it.
 | Source cross-check (`hunter/robinhood_detail.py`) | **TESTED** | 16 tests. Two sources side by side, disagreement surfaced and never averaged |
 | `ROBINHOOD_EARLY_SCORE_V1` (`scoring/robinhood_early.py`) | **TESTED** | 25 tests. Flow, not candles. Favours the start of a move; weights are a hypothesis |
 | Robinhood maturity + data confidence | **TESTED** | Three separate readings of one snapshot, allowed to disagree (spec §52) |
+| `ROBINHOOD_EXPLOSION_15M_V1` (`scoring/robinhood_explosion.py`) | **TESTED** | 15 tests. Horizon in the fingerprint; a selling burst never scores as upside |
 
-**Test suite: 779 tests, all passing.** Run `pytest -q`.
+**Test suite: 795 tests, all passing.** Run `pytest -q`.
 
 ---
 
@@ -246,7 +247,7 @@ frontend/                Vite + React 18 + TypeScript (strict), mobile-first
   HomeView               The five-second view: can I trust it, and what moved
   AssetCards             The scanner as cards; the table is wide-screen only
   bottom-nav             Thumb-reachable navigation, phones only
-tests/                   779 tests
+tests/                   795 tests
 pine/                    TradingView companion scripts
 ```
 

@@ -1475,3 +1475,7 @@ tbody td.sym { font-weight: 600; text-align: left; }
 .rh-comp-head .unknown { color: var(--text-faint); font-style: italic; }
 .rh-comp-why  { font-size: 10.5px; color: var(--text-faint); padding-left: 8px; line-height: 1.45; }
 .rh-comp-risk { font-size: 10.5px; color: var(--warn); padding-left: 8px; line-height: 1.45; }
+
+.rh-pill.boom { border-color: rgba(255, 140, 32, .35); }
+.rh-pill.boom .rh-pill-v { color: #ff8c20; }
+.rh-explosion { margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--border); }

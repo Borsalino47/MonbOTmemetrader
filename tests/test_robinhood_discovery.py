@@ -554,3 +554,19 @@ async def test_the_row_carries_its_veto_for_the_ui():
     assert rows["XYZ"]["hard_veto"] is True
     assert rows["XYZ"]["safety"]["rug_risk"] == "CRITICAL"
     assert report.to_dict()["vetoed"] == 2   # FOO had no data, so it is vetoed too
+
+
+async def test_explosion_is_scored_after_safety_never_before():
+    """A row must never carry a high explosion score and a veto at the same
+    time: the veto zeroes it, so the order of the two passes is load-bearing."""
+    from cryptopulse.hunter.robinhood_discovery import attach_safety
+
+    report, settings = await _discovered()
+    gp = FakeGoPlus({XYZ.lower(): {**CLEAN, "is_honeypot": "1"}, FOO.lower(): CLEAN})
+    await attach_safety(report, gp, settings)
+
+    rows = {r["symbol"]: r for r in report.to_dict()["tokens"]}
+    assert rows["XYZ"]["hard_veto"] is True
+    assert rows["XYZ"]["explosion"]["score"] == 0.0
+    assert rows["XYZ"]["explosion"]["vetoed"] is True
+    assert rows["FOO"]["explosion"] is not None

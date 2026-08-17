@@ -46,6 +46,7 @@ from cryptopulse.scoring.robinhood_early import (
     assess_maturity,
     score_early,
 )
+from cryptopulse.scoring.robinhood_explosion import RobinhoodExplosion, score_explosion
 
 log = get_logger("hunter.robinhood")
 
@@ -100,6 +101,9 @@ class TokenCandidate:
     early: EarlyScore | None = None
     maturity: PumpMaturity | None = None
     confidence: DataConfidence | None = None
+    # Filled after safety, because a veto zeroes it — scoring it first and
+    # zeroing later would leave a window where the two disagreed.
+    explosion: RobinhoodExplosion | None = None
 
     @property
     def primary_pool(self) -> PoolSnapshot | None:
@@ -193,6 +197,7 @@ class TokenCandidate:
             "hard_veto": self.safety.hard_veto if self.safety else True,
             # Three readings, never one blended number (invariant 37).
             "early": self.early.to_dict() if self.early else None,
+            "explosion": self.explosion.to_dict() if self.explosion else None,
             "maturity": self.maturity.to_dict() if self.maturity else None,
             "confidence": self.confidence.to_dict() if self.confidence else None,
         }
@@ -387,6 +392,12 @@ async def attach_safety(
             continue
         candidate.safety = assess_safety(sec, settings)
         report.safety_analysed += 1
+
+    # Explosion reads the safety verdict, so it can only be scored once safety
+    # exists. Scoring it earlier and zeroing afterwards would leave a moment
+    # where the row carried a high explosion score and a veto at the same time.
+    for candidate in targets:
+        candidate.explosion = score_explosion(candidate, settings)
 
     log.info(
         "robinhood_safety",

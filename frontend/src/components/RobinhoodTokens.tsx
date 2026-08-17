@@ -173,6 +173,13 @@ function TokenRow({ t }: { t: RobinhoodToken }) {
       {t.early && (
         <div className="rh-scores">
           <ScorePill label="Early" value={t.early.label} tone="early" />
+          {t.explosion && (
+            <ScorePill
+              label={`Explosion ${t.explosion.horizon_minutes} min`}
+              value={t.explosion.label}
+              tone={t.explosion.vetoed ? 'late' : 'boom'}
+            />
+          )}
           <ScorePill
             label="Maturité"
             value={t.maturity ? (t.maturity.known ? t.maturity.label : 'inconnue') : '—'}
@@ -244,6 +251,17 @@ function EarlyDetail({ t }: { t: RobinhoodToken }) {
           {c.caveats.map((r, i) => <div className="rh-comp-risk" key={`c${i}`}>⚠ {r}</div>)}
         </div>
       ))}
+
+      {t.explosion && (
+        <div className="rh-explosion">
+          <div className="rh-comp-head">
+            <span>Explosion {t.explosion.horizon_minutes} min — {t.explosion.label}</span>
+          </div>
+          {t.explosion.reasons.map((r, i) => <div className="rh-comp-why" key={`er${i}`}>· {r}</div>)}
+          {t.explosion.caveats.map((r, i) => <div className="rh-comp-risk" key={`ec${i}`}>⚠ {r}</div>)}
+          <p className="feed-note">{t.explosion.note}</p>
+        </div>
+      )}
 
       {t.maturity && !t.maturity.known && (
         <p className="rh-comp-risk">
