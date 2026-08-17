@@ -444,8 +444,9 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
             "primary_timeframe": s.scanner.primary_timeframe.value,
             "scan_interval_seconds": s.scanner.scan_interval_seconds,
             "disclaimer": (
-                "The opportunity score is a transparent 0-100 ranking produced by fixed weights. "
-                "It has NOT been statistically calibrated and must not be read as a probability."
+                "Le score d'opportunité est un classement transparent de 0 à 100 produit par "
+                "des pondérations fixes. Il n'a PAS été calibré statistiquement et ne doit pas "
+                "être lu comme une probabilité."
             ),
         }
 
@@ -483,8 +484,8 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
                     status_code=503,
                     content={
                         "reason": "NO_SCAN_YET",
-                        "message": "No scan has ever completed and the journal is empty. "
-                                   "Call POST /api/scan/run or wait for the loop.",
+                        "message": "Aucun scan n'a jamais abouti et le journal est vide. "
+                                   "Lancez un scan ou attendez le cycle automatique.",
                     },
                 )
             rows = _filter_snapshot(
@@ -497,15 +498,16 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
                     # Distinguishes "not scanned yet" from "scanned and the feed
                     # returned nothing", which need different fixes.
                     "reason": (
-                        "no scan in this process yet"
+                        "aucun scan dans ce processus pour l'instant"
                         if report is None
-                        else "the last scan produced no usable result"
+                        else "le dernier scan n'a produit aucun résultat exploitable"
                     ),
                     "stale": True,
                     "age_seconds": snap["age_seconds"],
                     "message": (
-                        "Last recorded scan, restored from the journal while a fresh one runs. "
-                        "Order-book columns were never journalled and read as unknown."
+                        "Dernier scan enregistré, restauré depuis le journal pendant qu'un "
+                        "nouveau tourne. Les colonnes du carnet d'ordres n'ont jamais été "
+                        "journalisées et sont donc inconnues."
                     ),
                     "started_at_ms": snap["started_at_ms"],
                     "finished_at_ms": snap["signals_at_ms"],
@@ -584,7 +586,7 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
         service = get_service()
         result = service.find(symbol)
         if result is None:
-            raise HTTPException(404, f"{symbol.upper()} not present in the last scan")
+            raise HTTPException(404, f"{symbol.upper()} absent du dernier scan")
         payload = result.to_dict(include_features=True)
         payload["score_history"] = [p.to_dict() for p in service.memory.history(symbol.upper(), 200)]
         payload["explainability"] = {
@@ -703,8 +705,9 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
                 "signal_id": signal_id,
                 "horizons": [],
                 "message": (
-                    "No horizon window has closed for this signal yet. A pending window is "
-                    "reported as absent rather than settled at the current price."
+                    "Aucune fenêtre de vérification n'est encore close pour ce signal. Une "
+                    "fenêtre en cours est signalée comme absente plutôt que tranchée au prix "
+                    "actuel."
                 ),
             }
         return {"signal_id": signal_id, "horizons": rows}
@@ -745,8 +748,8 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
                 status_code=503,
                 content={
                     "reason": "NO_SCAN_YET",
-                    "message": "The hunter reads the ticker snapshot a scan produces. "
-                               "Run POST /api/scan/run first, or wait for the loop.",
+                    "message": "La recherche lit l'instantané de marché qu'un scan produit. "
+                               "Lancez d'abord un scan, ou attendez le cycle automatique.",
                 },
             )
         # Serve the cycle's own report rather than recomputing.
@@ -771,8 +774,9 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
             "refreshes_with_the_scan": True,
             "data_mode": "DEMO" if service.status()["synthetic_data"] else "LIVE",
             "disclaimer": (
-                "Priority ranks which tokens deserve an expensive look. It is not a score, "
-                "not a probability, and says nothing about whether a token is worth buying."
+                "La priorité classe les tokens qui méritent un examen coûteux. Ce n'est pas "
+                "un score, pas une probabilité, et cela ne dit rien sur l'intérêt d'acheter "
+                "un token."
             ),
         }
 
@@ -795,8 +799,9 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
                 status_code=503,
                 content={
                     "reason": "NO_PRESCAN_YET",
-                    "message": "The deep scan analyses the pre-scan's candidates. "
-                               "Run a scan first so the wide search has something to rank.",
+                    "message": "L'analyse approfondie porte sur les candidats du pré-scan. "
+                               "Lancez d'abord un scan pour que la recherche large ait "
+                               "quelque chose à classer.",
                 },
             )
         report = await service.deep_scan(max_symbols=max_symbols)
@@ -810,9 +815,9 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
                 "weights": DISCOVERY_WEIGHTS,
             },
             "disclaimer": (
-                "Discovery ranks how much a token's behaviour has changed. It is a 0-100 "
-                "ranking, not a probability, and these weights have never been validated "
-                "against outcomes."
+                "La découverte classe l'ampleur du changement de comportement d'un token. "
+                "C'est un classement de 0 à 100, pas une probabilité, et ces pondérations "
+                "n'ont jamais été validées contre des résultats réels."
             ),
         }
 
@@ -905,9 +910,9 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
             **summary,
             "decisions": list(repo.VALID_DECISIONS),
             "note": (
-                "These are the user's own decisions, stored with the screen state that "
-                "produced them. Decisions taken in DEMO mode are counted separately and "
-                "must never be pooled with real ones."
+                "Ce sont vos propres décisions, enregistrées avec l'état de l'écran qui les "
+                "a produites. Les décisions prises en mode DÉMO sont comptées séparément et "
+                "ne doivent jamais être mélangées aux réelles."
             ),
         }
 
@@ -1230,8 +1235,8 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
         async def no_frontend():
             return {
                 "message": (
-                    f"{get_settings().app_name} API is running. The dashboard bundle is not built. "
-                    "Run: cd frontend && npm install && npm run build"
+                    f"L'API {get_settings().app_name} fonctionne. L'interface n'est pas "
+                    "compilée. Lancez : cd frontend && npm install && npm run build"
                 ),
                 "docs": "/docs",
                 "health": "/api/health",

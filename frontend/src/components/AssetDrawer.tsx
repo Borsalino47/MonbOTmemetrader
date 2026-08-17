@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
+import { BIAS_FR, COMPONENT_FR, labelFor, LIQUIDITY_FR, SETUP_STATE_LONG_FR } from '../i18n/fr';
 import { api } from '../api';
 import type { AssetDetail } from '../types';
-import { DASH, age, compact, maturityColor, num, pct, price, scoreColor } from '../format';
+import { age, compact, DASH, maturityColor, mult, num, pct, price, scoreColor } from '../format';
 import { DecisionBar } from './DecisionBar';
 import { ExplosionPanel } from './ExplosionBadge';
 import { PumpPanel } from './PumpPanel';
@@ -41,11 +42,11 @@ export function AssetDrawer({ symbol, onClose }: Props) {
             <h2>{symbol}</h2>
             {data && <div className="price">{price(data.price)}</div>}
           </div>
-          <button className="close-btn" onClick={onClose} aria-label="Close">×</button>
+          <button className="close-btn" onClick={onClose} aria-label="Fermer">×</button>
         </div>
 
         {error && <div className="error-box">Could not load {symbol}: {error}</div>}
-        {!data && !error && <div className="loading">Loading…</div>}
+        {!data && !error && <div className="loading">Chargement…</div>}
 
         {data && (
           <>
@@ -71,15 +72,15 @@ export function AssetDrawer({ symbol, onClose }: Props) {
             {data.explosion && <ExplosionPanel explosion={data.explosion} />}
 
             <div className="panel">
-              <h3>Status</h3>
-              <div className="kv"><span className="k">Setup state</span>
-                <span className="v"><span className={`pill ${data.setup.state}`}>{data.setup.state}</span></span></div>
-              <div className="kv"><span className="k">Liquidity</span>
-                <span className="v"><span className={`pill ${data.liquidity.status}`}>{data.liquidity.status}</span></span></div>
+              <h3>ÉTAT</h3>
+              <div className="kv"><span className="k">État du setup</span>
+                <span className="v"><span className={`pill ${data.setup.state}`}>{labelFor(SETUP_STATE_LONG_FR, data.setup.state)}</span></span></div>
+              <div className="kv"><span className="k">Liquidité</span>
+                <span className="v"><span className={`pill ${data.liquidity.status}`}>{labelFor(LIQUIDITY_FR, data.liquidity.status)}</span></span></div>
               <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 7 }}>{data.setup.rationale}</div>
               {data.setup.trigger && (
                 <div className="kv" style={{ marginTop: 7 }}>
-                  <span className="k">Trigger</span><span className="v" style={{ textAlign: 'right', maxWidth: '68%' }}>{data.setup.trigger}</span>
+                  <span className="k">Déclencheur</span><span className="v" style={{ textAlign: 'right', maxWidth: '68%' }}>{data.setup.trigger}</span>
                 </div>
               )}
             </div>
@@ -87,44 +88,50 @@ export function AssetDrawer({ symbol, onClose }: Props) {
             <ScoreHistory points={data.score_history} />
 
             <div className="panel">
-              <h3>Score explainability</h3>
+              <h3>DÉTAIL DU SCORE</h3>
               {data.explainability.breakdown.map((b) => (
                 <div key={b.component} className={`breakdown-row ${b.points === 0 ? 'zero' : ''}`}>
-                  <div className="name">{b.component}</div>
+                  <div className="name">{labelFor(COMPONENT_FR, b.component)}</div>
                   <div className="bar"><div className="fill" style={{ width: `${(b.points / b.max) * 100}%` }} /></div>
-                  <div className="pts">+{b.points.toFixed(1)} / {b.max}</div>
+                  <div className="pts">+{num(b.points, 1)} / {b.max}</div>
                 </div>
               ))}
               <div className="math">
-                <div className="line"><span>RAW_SCORE</span><span>{data.explainability.raw_score.toFixed(2)}</span></div>
-                <div className="line"><span>RISK_PENALTY</span><span>−{data.explainability.risk_penalty.toFixed(2)}</span></div>
-                <div className="line total"><span>FINAL_SCORE</span><span>{data.explainability.final_score.toFixed(2)} / 100</span></div>
+                <div className="line"><span>SCORE BRUT</span><span>{num(data.explainability.raw_score)}</span></div>
+                <div className="line"><span>PÉNALITÉ DE RISQUE</span><span>−{num(data.explainability.risk_penalty)}</span></div>
+                <div className="line total"><span>SCORE FINAL</span><span>{num(data.explainability.final_score)} / 100</span></div>
               </div>
             </div>
 
             {data.explainability.penalties.length > 0 && (
               <div className="panel">
-                <h3>Risk penalties applied</h3>
+                <h3>PÉNALITÉS DE RISQUE APPLIQUÉES</h3>
                 <ul>
                   {data.explainability.penalties.map((p, i) => (
-                    <li key={i} className="risk">−{p.points.toFixed(1)} · {p.reason}</li>
+                    <li key={i} className="risk">−{num(p.points, 1)} · {p.reason}</li>
                   ))}
                 </ul>
               </div>
             )}
 
             <div className="panel">
-              <h3>Why this asset?</h3>
+              <h3>POURQUOI</h3>
               {data.why_this_asset.length > 0
-                ? <ul>{data.why_this_asset.map((w, i) => <li key={i}>{w}</li>)}</ul>
-                : <div className="empty" style={{ padding: 10 }}>Nothing notable.</div>}
+                ? <ul className="why-list">
+                    {data.why_this_asset.map((w, i) => <li key={i}><span aria-hidden="true">✓</span> {w}</li>)}
+                  </ul>
+                : <div className="empty" style={{ padding: 10 }}>Rien de notable.</div>}
             </div>
 
             <div className="panel">
-              <h3>What can invalidate it?</h3>
+              <h3>RISQUES ET INVALIDATION</h3>
               {data.what_can_invalidate_it.length > 0
-                ? <ul>{data.what_can_invalidate_it.filter(Boolean).map((w, i) => <li key={i} className="risk">{w}</li>)}</ul>
-                : <div className="empty" style={{ padding: 10 }}>No specific invalidation identified.</div>}
+                ? <ul className="risk-list">
+                    {data.what_can_invalidate_it.filter(Boolean).map((w, i) => (
+                      <li key={i} className="risk"><span aria-hidden="true">⚠</span> {w}</li>
+                    ))}
+                  </ul>
+                : <div className="empty" style={{ padding: 10 }}>Aucune invalidation spécifique identifiée.</div>}
             </div>
 
             {/* Loaded on its own, after the card is already useful: it is a
@@ -135,9 +142,9 @@ export function AssetDrawer({ symbol, onClose }: Props) {
             <MarketPanel data={data} />
 
             <div className="panel">
-              <h3>Data provenance</h3>
-              <div className="kv"><span className="k">Engine</span><span className="v">{data.engine_version}</span></div>
-              <div className="kv"><span className="k">Data age</span>
+              <h3>PROVENANCE DES DONNÉES</h3>
+              <div className="kv"><span className="k">Moteur</span><span className="v">{data.engine_version}</span></div>
+              <div className="kv"><span className="k">Âge des données</span>
                 <span className="v">{age(data.data_confidence.max_age_seconds)}</span></div>
               {data.data_confidence.issues.map((issue, i) => (
                 <div key={i} style={{ fontSize: 11, color: 'var(--warn)', marginTop: 4 }}>! {issue}</div>
@@ -163,9 +170,10 @@ function ScoreHistory({ points }: { points: AssetDetail['score_history'] }) {
   if (points.length < 2) {
     return (
       <div className="panel">
-        <h3>Score history</h3>
+        <h3>HISTORIQUE DU SCORE</h3>
         <div className="empty" style={{ padding: 12 }}>
-          Only {points.length} observation so far. Score acceleration needs at least two scans.
+          {points.length} observation pour l’instant. L’accélération du score demande au
+          moins deux scans.
         </div>
       </div>
     );
@@ -190,16 +198,16 @@ function ScoreHistory({ points }: { points: AssetDetail['score_history'] }) {
 
   return (
     <div className="panel">
-      <h3>Score history ({points.length} scans)</h3>
+      <h3>HISTORIQUE DU SCORE ({points.length} scans)</h3>
       <svg className="sparkline" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
         <path d={path} fill="none" stroke="var(--accent)" strokeWidth="1.6" vectorEffect="non-scaling-stroke" />
       </svg>
       <div className="kv" style={{ marginTop: 6 }}>
-        <span className="k">Oldest → newest</span>
+        <span className="k">Du plus ancien au plus récent</span>
         <span className="v">
-          {first.toFixed(0)} → {last.toFixed(0)}{' '}
+          {num(first, 0)} → {num(last, 0)}{' '}
           <span className={delta > 0 ? 'pos' : delta < 0 ? 'neg' : 'muted'}>
-            ({delta >= 0 ? '+' : ''}{delta.toFixed(1)})
+            ({delta >= 0 ? '+' : ''}{num(delta, 1)})
           </span>
         </span>
       </div>
@@ -214,16 +222,16 @@ function TimeframePanel({ data }: { data: AssetDetail }) {
   const present = order.filter((t) => tfs[t]);
   return (
     <div className="panel">
-      <h3>Multi-timeframe</h3>
+      <h3>UNITÉS DE TEMPS</h3>
       <div className="tf-grid">
         {present.map((t) => {
           const f = tfs[t];
           return (
             <div className="tf-box" key={t}>
               <div className="tf">{t}</div>
-              <div className={`bias ${f.bias}`}>{f.bias}</div>
+              <div className={`bias ${f.bias}`}>{labelFor(BIAS_FR, f.bias)}</div>
               <div className="sub">RSI {num(f.rsi14, 0)}</div>
-              <div className="sub">RVOL {f.rvol === null ? DASH : `${num(f.rvol)}x`}</div>
+              <div className="sub">RVOL {f.rvol === null ? DASH : mult(f.rvol, 2)}</div>
             </div>
           );
         })}
@@ -238,19 +246,19 @@ function MarketPanel({ data }: { data: AssetDetail }) {
   const st = p?.structure;
   return (
     <div className="panel">
-      <h3>Market data</h3>
-      <div className="kv"><span className="k">24h quote volume</span><span className="v">{compact(f?.quote_volume_24h)}</span></div>
-      <div className="kv"><span className="k">24h change</span><span className="v">{pct(f?.price_change_pct_24h ?? null)}</span></div>
-      <div className="kv"><span className="k">Spread</span>
+      <h3>DONNÉES DE MARCHÉ</h3>
+      <div className="kv"><span className="k">Volume 24 h (en cotation)</span><span className="v">{compact(f?.quote_volume_24h)}</span></div>
+      <div className="kv"><span className="k">Variation 24 h</span><span className="v">{pct(f?.price_change_pct_24h ?? null)}</span></div>
+      <div className="kv"><span className="k">Écart achat/vente</span>
         <span className="v">{f?.spread_bps === null || f?.spread_bps === undefined ? DASH : `${num(f.spread_bps, 1)} bps`}</span></div>
-      <div className="kv"><span className="k">Order book imbalance</span>
+      <div className="kv"><span className="k">Déséquilibre du carnet</span>
         <span className="v">{f?.order_book_imbalance === null || f?.order_book_imbalance === undefined
           ? DASH : num(f.order_book_imbalance, 3)}</span></div>
       <div className="kv"><span className="k">ATR (5m)</span>
         <span className="v">{p?.atr_pct === null || p?.atr_pct === undefined ? DASH : `${num(p.atr_pct)}%`}</span></div>
-      <div className="kv"><span className="k">Resistance</span>
+      <div className="kv"><span className="k">Résistance</span>
         <span className="v">{st?.nearest_resistance ? price(st.nearest_resistance.price) : DASH}</span></div>
-      <div className="kv"><span className="k">Distance to breakout</span>
+      <div className="kv"><span className="k">Distance à la cassure</span>
         <span className="v">{st?.distance_to_resistance_atr === null || st?.distance_to_resistance_atr === undefined
           ? DASH : `${num(st.distance_to_resistance_atr)} ATR`}</span></div>
       <div className="kv"><span className="k">Support</span>

@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from cryptopulse.core.types import Timeframe
 from cryptopulse.features.pipeline import AssetFeatures
 from cryptopulse.features.stats import clamp01, scale
+from cryptopulse.i18n import num, pct
+from cryptopulse.i18n import reasons as R
 
 __all__ = ["PumpMaturity", "compute_pump_maturity"]
 
@@ -67,11 +69,11 @@ def compute_pump_maturity(af: AssetFeatures) -> PumpMaturity:
     if f.roc3 is not None:
         parts["short_change"] = scale(f.roc3, 1.5, 9.0)
         if f.roc3 > 5:
-            reasons.append(f"+{f.roc3:.1f}% in the last 3 bars")
+            reasons.append(R.PM_ROC_SHORT(change=pct(f.roc3, 1), bars=3))
     if f.roc12 is not None:
         parts["medium_change"] = scale(f.roc12, 3.0, 20.0)
         if f.roc12 > 12:
-            reasons.append(f"+{f.roc12:.1f}% over the last 12 bars")
+            reasons.append(R.PM_ROC_LONG(change=pct(f.roc12, 1), bars=12))
 
     h1 = af.get(Timeframe.H1)
     h4 = af.get(Timeframe.H4)
@@ -85,13 +87,13 @@ def compute_pump_maturity(af: AssetFeatures) -> PumpMaturity:
     if long_change is not None:
         parts["long_change"] = scale(long_change, 8.0, 55.0)
         if long_change > 30:
-            reasons.append(f"already +{long_change:.0f}% on the higher timeframe")
+            reasons.append(R.PM_HTF_MOVE(change=pct(long_change, 0)))
 
     # -- extension from fair-value anchors ---------------------------------- #
     if f.ema20_distance_pct is not None:
         parts["ema20_extension"] = scale(f.ema20_distance_pct, 1.5, 9.0)
         if f.ema20_distance_pct > 6:
-            reasons.append(f"{f.ema20_distance_pct:.1f}% above EMA20")
+            reasons.append(R.PM_ABOVE_EMA(change=pct(f.ema20_distance_pct, 1)))
     if f.vwap_distance_pct is not None:
         parts["vwap_extension"] = scale(f.vwap_distance_pct, 1.0, 7.0)
 
@@ -100,17 +102,17 @@ def compute_pump_maturity(af: AssetFeatures) -> PumpMaturity:
         atr_ext = (f.close - f.ema20) / f.atr14
         parts["atr_extension"] = scale(atr_ext, 1.0, 5.0)
         if atr_ext > 3:
-            reasons.append(f"price {atr_ext:.1f} ATR above EMA20 — stretched")
+            reasons.append(R.PM_STRETCHED(distance=num(atr_ext, 1)))
 
     # -- exhaustion tells ---------------------------------------------------- #
     parts["consecutive_green"] = scale(float(f.consecutive_green), 3.0, 9.0)
     if f.consecutive_green >= 6:
-        reasons.append(f"{f.consecutive_green} consecutive green candles")
+        reasons.append(R.PM_GREEN_RUN(count=f.consecutive_green))
 
     if f.rsi14 is not None:
         parts["rsi"] = scale(f.rsi14, 62.0, 85.0)
         if f.rsi14 > 78:
-            reasons.append(f"RSI {f.rsi14:.0f}")
+            reasons.append(R.PM_RSI(rsi=num(f.rsi14, 0)))
 
     if f.rvol is not None:
         # Climax volume is the classic late tell: enormous participation *after* a run.
@@ -120,13 +122,13 @@ def compute_pump_maturity(af: AssetFeatures) -> PumpMaturity:
         moved = parts.get("medium_change", 0.0)
         parts["volume_climax"] = clamp01(climax * (0.35 + 0.65 * moved))
         if f.volume_climax and moved > 0.3:
-            reasons.append("volume climax after an extended move")
+            reasons.append(R.PM_VOLUME_CLIMAX())
 
     if f.structure and f.structure.range_position is not None:
         parts["range_position"] = scale(f.structure.range_position, 0.75, 1.0)
 
     if not parts:
-        return PumpMaturity(score=0.0, coverage=0.0, reasons=["insufficient data to assess maturity"])
+        return PumpMaturity(score=0.0, coverage=0.0, reasons=[R.PM_INSUFFICIENT()])
 
     total_w = sum(_WEIGHTS[k] for k in parts)
     weighted = sum(_WEIGHTS[k] * v for k, v in parts.items())
@@ -134,6 +136,6 @@ def compute_pump_maturity(af: AssetFeatures) -> PumpMaturity:
     coverage = total_w / sum(_WEIGHTS.values())
 
     if score < 25 and not reasons:
-        reasons.append("no signs the move is extended")
+        reasons.append(R.PM_NOT_EXTENDED())
 
     return PumpMaturity(score=score, components=parts, reasons=reasons, coverage=coverage)

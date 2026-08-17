@@ -4,7 +4,7 @@ import { DASH, num } from '../format';
 import type { HorizonBucket, HorizonResponse } from '../types';
 
 function pct(v: number | null | undefined): string {
-  return v === null || v === undefined || !Number.isFinite(v) ? DASH : `${(v * 100).toFixed(1)}%`;
+  return v === null || v === undefined || !Number.isFinite(v) ? DASH : `${num(v * 100, 1)} %`;
 }
 
 function changeClass(v: number | null | undefined): string {
@@ -51,7 +51,7 @@ export function HorizonsView() {
   }
 
   if (error) return <div className="error-box">Could not load verification: {error}</div>;
-  if (!data) return <div className="loading">Loading…</div>;
+  if (!data) return <div className="loading">Chargement…</div>;
 
   const p = data.performance;
   const graded = p.overall.reduce((sum, b) => sum + b.n, 0);
@@ -60,25 +60,25 @@ export function HorizonsView() {
     <div>
       <div className="toolbar">
         <div className="filter">
-          <label>Windows</label>
+          <label>Fenêtres</label>
           <span style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>{p.horizons.join(' · ')}</span>
         </div>
         <div className="filter">
-          <label>Round-trip cost</label>
+          <label>Coût aller-retour</label>
           <span style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>
             {num(data.costs.round_trip_cost_pct as number, 2)}%
           </span>
         </div>
         <button className="action" onClick={trackNow} disabled={tracking} style={{ marginLeft: 'auto' }}>
-          {tracking ? 'Checking…' : 'Check now'}
+          {tracking ? 'Vérification…' : 'Vérifier maintenant'}
         </button>
       </div>
 
       <div className="panel">
-        <h3>How a signal is verified</h3>
+        <h3>Comment un signal est vérifié</h3>
         <div style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.6 }}>
           <div>Entry — {data.tracker.entry_rule}.</div>
-          <div>Success — {data.tracker.success_criterion}. A signal that ends flat is not a win.</div>
+          <div>Réussite — {data.tracker.success_criterion}. Un signal qui finit à l’équilibre n’est pas un gain.</div>
           <div style={{ marginTop: 6 }}>
             A window that has not fully elapsed is absent from this table, never settled at
             whatever price happens to be current.
@@ -97,7 +97,7 @@ export function HorizonsView() {
         <>
           {p.overall.some((b) => b.n > 0 && b.insufficient_sample) && (
             <div className="banner stale" style={{ borderRadius: 6, marginBottom: 14 }}>
-              <strong>SMALL SAMPLE</strong>
+              <strong>ÉCHANTILLON INSUFFISANT</strong>
               <span>
                 Some windows have fewer than {p.min_sample} results. Those rows describe what
                 happened; they are not yet evidence about what will happen.
@@ -106,28 +106,28 @@ export function HorizonsView() {
           )}
 
           <HorizonTable
-            title="What actually happened after each signal"
-            subtitle="Change is measured from the entry price to the close of the window, net of costs."
+            title="Ce que le prix a réellement fait après chaque signal"
+            subtitle="La variation est mesurée du prix d’entrée à la clôture de la fenêtre, nette de frais."
             buckets={p.overall}
-            keyLabel="Window"
+            keyLabel="Fenêtre"
             showKey={false}
           />
 
           <HorizonTable
-            title="By opportunity score — does a higher score actually do better?"
-            subtitle="If the bands do not separate, the score is not carrying information about outcomes."
+            title="Par score d’opportunité — un score plus élevé fait-il réellement mieux ?"
+            subtitle="Si les tranches ne se séparent pas, le score ne porte aucune information sur les résultats."
             buckets={p.by_score_band}
-            keyLabel="Score band"
+            keyLabel="Tranche de score"
           />
 
           <HorizonTable
-            title="By setup state"
+            title="Par état du setup"
             buckets={p.by_state}
-            keyLabel="State"
+            keyLabel="État"
           />
 
           {p.by_provider.length > 1 && (
-            <HorizonTable title="By data source" buckets={p.by_provider} keyLabel="Provider" />
+            <HorizonTable title="Par source de données" buckets={p.by_provider} keyLabel="Source" />
           )}
         </>
       )}
@@ -166,14 +166,14 @@ function HorizonTable({
           <thead>
             <tr>
               {showKey && <th className="left">{keyLabel}</th>}
-              <th className="left">Window</th>
+              <th className="left">Fenêtre</th>
               <th>n</th>
-              <th>Success</th>
-              <th>Median</th>
-              <th>Average</th>
-              <th>Best</th>
-              <th>Worst</th>
-              <th>Avg max DD</th>
+              <th>Réussite</th>
+              <th>Médiane</th>
+              <th>Moyenne</th>
+              <th>Meilleur</th>
+              <th>Pire</th>
+              <th>Perte max moy.</th>
             </tr>
           </thead>
           <tbody>
@@ -188,7 +188,7 @@ function HorizonTable({
                 <td>
                   {pct(b.success_rate)}
                   {b.n > 0 && b.insufficient_sample && (
-                    <span className="muted" style={{ fontSize: 10, marginLeft: 6 }}>small n</span>
+                    <span className="muted" style={{ fontSize: 10, marginLeft: 6 }}>n faible</span>
                   )}
                 </td>
                 <td className={changeClass(b.median_change_pct)}>{num(b.median_change_pct)}%</td>

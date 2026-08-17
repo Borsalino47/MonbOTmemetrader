@@ -14,6 +14,8 @@ from cryptopulse.config.settings import ScannerSettings
 from cryptopulse.core.types import DataQuality
 from cryptopulse.features.pipeline import AssetFeatures
 from cryptopulse.features.stats import clamp01
+from cryptopulse.i18n import num
+from cryptopulse.i18n import reasons as R
 
 __all__ = ["DataConfidence", "compute_confidence"]
 
@@ -58,7 +60,7 @@ def compute_confidence(af: AssetFeatures, cfg: ScannerSettings, now_ms: int) -> 
     tolerance = cfg.stale_after_seconds + tf_ms / 1000.0
     parts["freshness"] = clamp01(1.0 - max(0.0, age_s - tf_ms / 1000.0) / max(tolerance, 1.0))
     if age_s > tolerance:
-        issues.append(f"STALE_DATA: primary candle closed {age_s:.0f}s ago")
+        issues.append(R.CONF_STALE(age=f"{age_s:.0f} s"))
 
     # Reported age is the *primary* timeframe's, not the max across timeframes.
     # A 4h candle is legitimately up to four hours old; reporting that as "data
@@ -69,21 +71,21 @@ def compute_confidence(af: AssetFeatures, cfg: ScannerSettings, now_ms: int) -> 
     depth = primary.bars / max(cfg.candles_per_timeframe, 1)
     parts["history_depth"] = clamp01(depth)
     if primary.bars < cfg.min_candles_required:
-        issues.append(f"INSUFFICIENT_HISTORY: {primary.bars} closed bars")
+        issues.append(R.CONF_SHORT(bars=primary.bars))
 
     # -- timeframe coverage ------------------------------------------------- #
     wanted = len(cfg.timeframes)
     got = len(af.timeframes)
     parts["timeframe_coverage"] = clamp01(got / wanted) if wanted else 0.0
     if got < wanted:
-        issues.append(f"only {got}/{wanted} timeframes available")
+        issues.append(R.CONF_MISSING_TF(got=got, wanted=wanted))
 
     # -- continuity (gaps in the candle stream) ----------------------------- #
     quality_penalty = 0.0
     for f in af.timeframes.values():
         if f.provenance and f.provenance.quality is DataQuality.PARTIAL:
             quality_penalty += 0.25
-            issues.append(f"{f.timeframe.value}: partial series")
+            issues.append(R.CONF_PARTIAL_TF(timeframe=f.timeframe.value))
         if f.warnings:
             quality_penalty += 0.10
     parts["continuity"] = clamp01(1.0 - quality_penalty)
@@ -91,7 +93,7 @@ def compute_confidence(af: AssetFeatures, cfg: ScannerSettings, now_ms: int) -> 
     # -- order book --------------------------------------------------------- #
     parts["order_book"] = 1.0 if af.order_book_imbalance is not None else 0.0
     if af.order_book_imbalance is None:
-        issues.append("order book DATA_UNAVAILABLE")
+        issues.append(R.CONF_NO_BOOK())
 
     # -- feature completeness ----------------------------------------------- #
     checks = [primary.rvol, primary.atr14, primary.rsi14, primary.compression, primary.ema20]
@@ -108,7 +110,7 @@ def compute_confidence(af: AssetFeatures, cfg: ScannerSettings, now_ms: int) -> 
         overshoot = (age_s - tolerance) / max(tolerance, 1.0)
         cap = max(10.0, 40.0 / (1.0 + overshoot))
         if cap < score:
-            issues.append(f"confidence capped at {cap:.0f} because the data is {age_s:.0f}s old")
+            issues.append(R.CONF_CAPPED(cap=num(cap, 0), age=f"{age_s:.0f} s"))
             score = cap
 
     return DataConfidence(score=score, components=parts, issues=issues, max_age_seconds=max_age)

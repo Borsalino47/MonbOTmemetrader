@@ -13,8 +13,11 @@ from enum import Enum
 from cryptopulse.config.settings import RiskSettings
 from cryptopulse.features.pipeline import AssetFeatures
 from cryptopulse.features.stats import clamp01, scale
+from cryptopulse.i18n import money, num
+from cryptopulse.i18n import reasons as R
+from cryptopulse.i18n.labels import LIQUIDITY_FR
 
-__all__ = ["LiquidityStatus", "LiquidityAssessment", "assess_liquidity"]
+__all__ = ["LiquidityStatus", "LIQUIDITY_LABEL_FR", "LiquidityAssessment", "assess_liquidity"]
 
 
 class LiquidityStatus(str, Enum):
@@ -28,6 +31,19 @@ class LiquidityStatus(str, Enum):
     @property
     def rank(self) -> int:
         return _RANK[self]
+
+
+# The enum values stay English: they are stored in SQLite, filtered on by the
+# API and compared in code. Only the *label* is translated — changing the value
+# would be a database migration wearing a translation's clothes.
+LIQUIDITY_LABEL_FR: dict[LiquidityStatus, str] = {
+    LiquidityStatus.EXCELLENT: "excellente",
+    LiquidityStatus.GOOD: "bonne",
+    LiquidityStatus.ACCEPTABLE: "acceptable",
+    LiquidityStatus.POOR: "faible",
+    LiquidityStatus.DANGEROUS: "dangereuse",
+    LiquidityStatus.UNKNOWN: "inconnue",
+}
 
 
 _RANK = {
@@ -51,6 +67,9 @@ class LiquidityAssessment:
     def to_dict(self) -> dict:
         return {
             "status": self.status.value,
+            # The identifier stays for filtering and storage; the label is what
+            # the screen renders (invariant: never print the enum value).
+            "status_label_fr": LIQUIDITY_FR[self.status.value],
             "fraction": None if self.fraction is None else round(self.fraction, 3),
             "veto": self.veto,
             "reasons": self.reasons,
@@ -68,7 +87,7 @@ def assess_liquidity(af: AssetFeatures, cfg: RiskSettings) -> LiquidityAssessmen
             status=LiquidityStatus.UNKNOWN,
             fraction=None,
             veto=False,
-            reasons=["24h volume DATA_UNAVAILABLE — cannot assess liquidity"],
+            reasons=[R.LIQ_NO_VOLUME_DATA()],
         )
 
     detail["quote_volume_24h"] = qv
@@ -84,7 +103,7 @@ def assess_liquidity(af: AssetFeatures, cfg: RiskSettings) -> LiquidityAssessmen
         vol_status = LiquidityStatus.POOR
     else:
         vol_status = LiquidityStatus.DANGEROUS
-        reasons.append(f"24h volume {qv:,.0f} below the {cfg.liq_poor_volume:,.0f} floor")
+        reasons.append(R.LIQ_BELOW_FLOOR(volume=money(qv), floor=money(cfg.liq_poor_volume)))
 
     # Spread tier, when a book was fetched. The final status is the worse of the two.
     status = vol_status
@@ -92,10 +111,10 @@ def assess_liquidity(af: AssetFeatures, cfg: RiskSettings) -> LiquidityAssessmen
         detail["spread_bps"] = round(af.spread_bps, 2)
         if af.spread_bps >= cfg.spread_dangerous_bps:
             spread_status = LiquidityStatus.DANGEROUS
-            reasons.append(f"spread {af.spread_bps:.0f} bps — execution cost alone invalidates the setup")
+            reasons.append(R.LIQ_SPREAD_FATAL(spread=num(af.spread_bps, 0)))
         elif af.spread_bps >= cfg.spread_acceptable_bps:
             spread_status = LiquidityStatus.POOR
-            reasons.append(f"wide spread ({af.spread_bps:.0f} bps)")
+            reasons.append(R.LIQ_SPREAD_WIDE(spread=num(af.spread_bps, 0)))
         elif af.spread_bps >= cfg.spread_good_bps:
             spread_status = LiquidityStatus.ACCEPTABLE
         elif af.spread_bps >= cfg.spread_excellent_bps:
@@ -105,13 +124,13 @@ def assess_liquidity(af: AssetFeatures, cfg: RiskSettings) -> LiquidityAssessmen
         if spread_status.rank < status.rank:
             status = spread_status
     else:
-        reasons.append("spread unknown (no order book) — liquidity judged on volume alone")
+        reasons.append(R.LIQ_SPREAD_UNKNOWN())
 
     # Continuous fraction for the 5-point scoring component.
     frac = clamp01(0.7 * scale(qv, cfg.liq_poor_volume, cfg.liq_excellent_volume) + 0.3 * (status.rank / 5.0))
 
     if status is not LiquidityStatus.DANGEROUS and not reasons:
-        reasons.append(f"liquidity {status.value.lower()} on 24h volume {qv:,.0f}")
+        reasons.append(R.LIQ_GRADED(status=LIQUIDITY_LABEL_FR[status], volume=money(qv)))
 
     return LiquidityAssessment(
         status=status,

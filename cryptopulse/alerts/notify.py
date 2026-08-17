@@ -64,6 +64,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
 from cryptopulse.core.logging import get_logger
+from cryptopulse.i18n import reasons as R
 
 log = get_logger("alerts.notify")
 
@@ -182,17 +183,17 @@ class TermuxNotifier(NotificationProvider):
         if shutil.which(self.binary) is None:
             return Availability(
                 available=False,
-                reason=f"{self.binary} not found — the termux-api package is not installed",
+                reason=R.NOTIF_NO_PACKAGE(binary=self.binary),
                 fix="pkg install termux-api",
             )
         return Availability(
             available=True,
-            reason="termux-notification is on PATH",
+            reason="termux-notification est présent dans le PATH",
             # Stated even in the success case: the package being present says
             # nothing about the companion app, and that is the failure people
             # actually hit. The command hangs rather than erroring in that case,
             # which the timeout below turns into a reported failure.
-            fix="If nothing appears on screen, install the Termux:API app from the same source as Termux.",
+            fix="Si rien n'apparaît à l'écran, installez l'application Termux:API depuis la même source que Termux.",
         )
 
     async def send(self, alerts: list, *, synthetic: bool) -> NotificationReport:
@@ -236,14 +237,15 @@ class TermuxNotifier(NotificationProvider):
             log.warning("notification_timeout", channel=self.name)
             return NotificationReport(
                 attempted=True, ok=False, channel=self.name,
-                error="the command hung — this usually means the Termux:API app is not installed",
+                error="la commande s'est bloquée — cela signifie en général que l'application "
+                      "Termux:API n'est pas installée",
             )
         except Exception as exc:
             await _terminate(proc)
             log.warning("notification_failed", channel=self.name, error=type(exc).__name__)
             return NotificationReport(
                 attempted=True, ok=False, channel=self.name,
-                error=f"{type(exc).__name__} while running {self.binary}",
+                error=f"{type(exc).__name__} pendant l'exécution de {self.binary}",
             )
 
         if proc.returncode != 0:
@@ -251,7 +253,7 @@ class TermuxNotifier(NotificationProvider):
             log.warning("notification_rejected", channel=self.name, code=proc.returncode)
             return NotificationReport(
                 attempted=True, ok=False, channel=self.name,
-                error=f"{self.binary} exited {proc.returncode}" + (f": {detail}" if detail else ""),
+                error=f"{self.binary} s'est terminé avec le code {proc.returncode}" + (f": {detail}" if detail else ""),
             )
 
         log.info("notification_sent", channel=self.name, alerts=len(batch))
@@ -335,7 +337,7 @@ class NotificationGate:
                 passed.append(a)
                 self._seen[symbol] = level
             else:
-                held.append(f"{symbol}: already notified at {previous}, still {level}")
+                held.append(R.NOTIF_ALREADY_SENT(symbol=symbol, previous=previous, level=level))
                 # Track the current level so a later climb is detected against
                 # where it is now, not against its all-time peak.
                 self._seen[symbol] = level
@@ -352,13 +354,13 @@ def build_notifier(*, enabled: bool = True, binary: str = "termux-notification")
     """Pick a channel, or return one that explains why there isn't one."""
     if not enabled:
         return UnavailableNotifier(
-            reason="Android notifications are switched off (CP_ALERT_ANDROID_NOTIFICATIONS=false)",
+            reason="Notifications Android désactivées (CP_ALERT_ANDROID_NOTIFICATIONS=false)",
         )
     if shutil.which(binary) is not None:
         return TermuxNotifier(binary=binary)
     return UnavailableNotifier(
-        reason=f"{binary} not found — this device is not running Termux with termux-api",
-        fix="On Android: pkg install termux-api, and install the Termux:API app.",
+        reason=R.NOTIF_NO_TERMUX(binary=binary),
+        fix="Sur Android : pkg install termux-api, puis installez l'application Termux:API.",
     )
 
 
@@ -382,7 +384,7 @@ async def notify_alerts(
         log.error("notification_provider_raised", channel=provider.name, error=type(exc).__name__)
         return NotificationReport(
             attempted=True, ok=False, channel=provider.name,
-            error=f"{type(exc).__name__} raised by the notification provider",
+            error=f"{type(exc).__name__} levé par le canal de notification",
         )
 
     report.suppressed = len(held)
@@ -500,19 +502,20 @@ async def notify_decision(
         await _terminate(proc)
         return NotificationReport(
             attempted=True, ok=False, channel=provider.name,
-            error="the command hung — this usually means the Termux:API app is not installed",
+            error="la commande s'est bloquée — cela signifie en général que l'application "
+                      "Termux:API n'est pas installée",
         )
     except Exception as exc:
         return NotificationReport(
             attempted=True, ok=False, channel=provider.name,
-            error=f"{type(exc).__name__} while running {provider.binary}",
+            error=f"{type(exc).__name__} pendant l'exécution de {provider.binary}",
         )
 
     if proc.returncode != 0:
         detail = (stderr or b"").decode("utf-8", "replace").strip()[:160]
         return NotificationReport(
             attempted=True, ok=False, channel=provider.name,
-            error=f"{provider.binary} exited {proc.returncode}" + (f": {detail}" if detail else ""),
+            error=f"{provider.binary} s'est terminé avec le code {proc.returncode}" + (f": {detail}" if detail else ""),
         )
 
     log.info("decision_notification", action=notice.action, symbol=notice.symbol)

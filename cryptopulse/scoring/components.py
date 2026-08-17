@@ -23,6 +23,8 @@ from cryptopulse.core.types import Timeframe
 from cryptopulse.features.pipeline import AssetFeatures, Bias
 from cryptopulse.features.stats import clamp01, scale
 from cryptopulse.features.structure import StructureTrend
+from cryptopulse.i18n import money, mult, num, pct
+from cryptopulse.i18n import reasons as R
 
 __all__ = ["ComponentScore", "score_volume", "score_momentum", "score_structure", "score_breakout",
            "score_volatility", "score_orderflow", "score_mtf", "score_liquidity"]
@@ -78,7 +80,7 @@ def score_volume(af: AssetFeatures, cfg: ScoringSettings) -> ComponentScore:
 
     if f.rvol is None and f.volume_acceleration_pct is None:
         cs.available = False
-        cs.reasons.append("volume features unavailable (insufficient history)")
+        cs.reasons.append(R.VOLUME_UNAVAILABLE())
         return cs
 
     level = 0.0
@@ -87,25 +89,25 @@ def score_volume(af: AssetFeatures, cfg: ScoringSettings) -> ComponentScore:
         level = scale(f.rvol, 1.0, 3.5)
         cs.detail["rvol"] = round(f.rvol, 3)
         if f.rvol >= 2.0:
-            cs.reasons.append(f"RVOL {f.rvol:.2f}x vs 50-bar average")
+            cs.reasons.append(R.RVOL_HIGH(rvol=mult(f.rvol), bars=50))
         elif f.rvol >= 1.3:
-            cs.reasons.append(f"volume mildly elevated (RVOL {f.rvol:.2f}x)")
+            cs.reasons.append(R.RVOL_MILD(rvol=mult(f.rvol)))
         else:
-            cs.caveats.append(f"volume not elevated (RVOL {f.rvol:.2f}x)")
+            cs.caveats.append(R.RVOL_LOW(rvol=mult(f.rvol)))
 
     accel = 0.0
     if f.volume_acceleration_pct is not None:
         accel = scale(f.volume_acceleration_pct, 0.0, 90.0)
         cs.detail["volume_acceleration_pct"] = round(f.volume_acceleration_pct, 2)
         if f.volume_acceleration_pct >= 25:
-            cs.reasons.append(f"volume accelerating (+{f.volume_acceleration_pct:.0f}% vs 12-bar mean)")
+            cs.reasons.append(R.VOLUME_ACCELERATING(change=pct(f.volume_acceleration_pct), bars=12))
 
     trend = 0.0
     if f.rvol_slope is not None:
         trend = scale(f.rvol_slope, 0.0, 0.45)
         cs.detail["rvol_slope"] = round(f.rvol_slope, 4)
         if f.rvol_slope > 0.1:
-            cs.reasons.append("RVOL rising bar over bar, not merely high")
+            cs.reasons.append(R.RVOL_RISING())
     if f.volume_zscore is not None:
         cs.detail["volume_zscore"] = round(f.volume_zscore, 2)
 
@@ -134,9 +136,9 @@ def score_momentum(af: AssetFeatures, cfg: ScoringSettings) -> ComponentScore:
         parts.append(scale(f.roc3, 0.0, 3.0))
         cs.detail["roc3_pct"] = round(f.roc3, 3)
         if f.roc3 > 0.5:
-            cs.reasons.append(f"price +{f.roc3:.2f}% over last 3 bars")
+            cs.reasons.append(R.PRICE_ROC_UP(change=pct(f.roc3, 2), bars=3))
         elif f.roc3 < 0:
-            cs.caveats.append(f"price {f.roc3:.2f}% over last 3 bars")
+            cs.caveats.append(R.PRICE_ROC_DOWN(change=pct(f.roc3, 2), bars=3))
 
     if f.macd_hist is not None:
         rising = f.macd_hist_prev is not None and f.macd_hist > f.macd_hist_prev
@@ -145,7 +147,7 @@ def score_momentum(af: AssetFeatures, cfg: ScoringSettings) -> ComponentScore:
             v += 0.6
         if rising:
             v += 0.4
-            cs.reasons.append("MACD histogram expanding")
+            cs.reasons.append(R.MACD_EXPANDING())
         parts.append(clamp01(v))
         cs.detail["macd_hist"] = round(f.macd_hist, 8)
 
@@ -160,21 +162,21 @@ def score_momentum(af: AssetFeatures, cfg: ScoringSettings) -> ComponentScore:
         # 50-68 is the constructive band. Below 45 lacks push, above 78 is stretched.
         if 50 <= f.rsi14 <= 68:
             parts.append(1.0)
-            cs.reasons.append(f"RSI {f.rsi14:.0f} in constructive band")
+            cs.reasons.append(R.RSI_CONSTRUCTIVE(rsi=num(f.rsi14, 0)))
         elif f.rsi14 > 78:
             parts.append(0.2)
-            cs.caveats.append(f"RSI {f.rsi14:.0f} stretched")
+            cs.caveats.append(R.RSI_STRETCHED(rsi=num(f.rsi14, 0)))
         else:
             parts.append(scale(f.rsi14, 35.0, 50.0) * 0.6)
 
     if not parts:
         cs.available = False
-        cs.reasons.append("momentum features unavailable")
+        cs.reasons.append(R.MOMENTUM_UNAVAILABLE())
         return cs
 
     cs.points = cs.max_points * clamp01(sum(parts) / len(parts))
     if not cs.reasons:
-        cs.caveats.append("momentum unremarkable on every measure checked")
+        cs.caveats.append(R.MOMENTUM_FLAT())
     return cs
 
 
@@ -190,7 +192,7 @@ def score_structure(af: AssetFeatures, cfg: ScoringSettings) -> ComponentScore:
     st = f.structure
     if st is None or st.notes == ["INSUFFICIENT_HISTORY"]:
         cs.available = False
-        cs.reasons.append("structure unavailable (insufficient history)")
+        cs.reasons.append(R.STRUCTURE_UNAVAILABLE())
         return cs
 
     parts: list[float] = []
@@ -204,9 +206,9 @@ def score_structure(af: AssetFeatures, cfg: ScoringSettings) -> ComponentScore:
     parts.append(trend_value)
     cs.detail["trend"] = st.trend.value
     if st.trend is StructureTrend.UPTREND:
-        cs.reasons.append("higher highs and higher lows on primary timeframe")
+        cs.reasons.append(R.STRUCTURE_UP())
     elif st.trend is StructureTrend.DOWNTREND:
-        cs.caveats.append("lower highs and lower lows — structure is against the setup")
+        cs.caveats.append(R.STRUCTURE_DOWN())
 
     if st.range_position is not None:
         cs.detail["range_position"] = round(st.range_position, 3)
@@ -215,7 +217,7 @@ def score_structure(af: AssetFeatures, cfg: ScoringSettings) -> ComponentScore:
         rp = st.range_position
         parts.append(1.0 if 0.55 <= rp <= 0.90 else (0.5 if rp > 0.90 else scale(rp, 0.15, 0.55)))
         if rp > 0.90:
-            cs.caveats.append("price already at the top of its recent range")
+            cs.caveats.append(R.RANGE_TOP())
 
     if st.nearest_support is not None and st.distance_to_support_atr is not None:
         cs.detail["distance_to_support_atr"] = round(st.distance_to_support_atr, 3)
@@ -223,16 +225,16 @@ def score_structure(af: AssetFeatures, cfg: ScoringSettings) -> ComponentScore:
         parts.append(1.0 - scale(st.distance_to_support_atr, 0.5, 5.0))
         d_sup = st.distance_to_support_atr
         if d_sup <= 3.0:
-            cs.reasons.append(f"support {d_sup:.2f} ATR below — a defined invalidation level")
+            cs.reasons.append(R.SUPPORT_CLOSE(distance=num(d_sup)))
         else:
-            cs.caveats.append(f"nearest support is {d_sup:.1f} ATR away — no tight invalidation level")
+            cs.caveats.append(R.SUPPORT_FAR(distance=num(d_sup, 1)))
 
     if st.fake_breakout:
         parts.append(0.0)
-        cs.caveats.append("recent failed breakout attempt")
+        cs.caveats.append(R.FAILED_BREAKOUT_RECENT())
     if st.in_retest:
         parts.append(1.0)
-        cs.reasons.append("holding a previously broken level (retest)")
+        cs.reasons.append(R.RETEST_HOLDING())
 
     cs.points = cs.max_points * clamp01(sum(parts) / len(parts))
     return cs
@@ -255,13 +257,13 @@ def score_breakout(af: AssetFeatures, cfg: ScoringSettings) -> ComponentScore:
     st = f.structure
     if st is None or st.atr_value is None:
         cs.available = False
-        cs.reasons.append("breakout geometry unavailable (no ATR / structure)")
+        cs.reasons.append(R.BREAKOUT_UNAVAILABLE())
         return cs
 
     if st.broke_out:
         cs.points = cs.max_points * 0.80
         cs.detail["state"] = "broken"
-        cs.reasons.append("level already broken on a closed candle")
+        cs.reasons.append(R.LEVEL_BROKEN())
         return cs
 
     d = st.distance_to_resistance_atr
@@ -270,7 +272,7 @@ def score_breakout(af: AssetFeatures, cfg: ScoringSettings) -> ComponentScore:
         # no measurable trigger, so this scores mid rather than max.
         cs.points = cs.max_points * 0.55
         cs.detail["state"] = "no_overhead_resistance"
-        cs.reasons.append("no mapped resistance overhead in the lookback window")
+        cs.reasons.append(R.NO_RESISTANCE())
         return cs
 
     cs.detail["distance_to_resistance_atr"] = round(d, 3)
@@ -283,9 +285,9 @@ def score_breakout(af: AssetFeatures, cfg: ScoringSettings) -> ComponentScore:
     cs.points = cs.max_points * clamp01(0.75 * proximity + 0.25 * strength)
 
     if d <= cfg.armed_max_distance_atr:
-        cs.reasons.append(f"{d:.2f} ATR below resistance ({st.nearest_resistance.touches}x tested)")
+        cs.reasons.append(R.BELOW_RESISTANCE(distance=num(d), touches=st.nearest_resistance.touches))
     else:
-        cs.caveats.append(f"resistance still {d:.2f} ATR away")
+        cs.caveats.append(R.RESISTANCE_FAR(distance=num(d)))
     return cs
 
 
@@ -305,7 +307,7 @@ def score_volatility(af: AssetFeatures, cfg: ScoringSettings) -> ComponentScore:
     f = af.primary
     if f.compression is None:
         cs.available = False
-        cs.reasons.append("volatility profile unavailable")
+        cs.reasons.append(R.VOLATILITY_UNAVAILABLE())
         return cs
 
     cs.detail["compression_percentile"] = round(f.compression, 3)
@@ -313,23 +315,21 @@ def score_volatility(af: AssetFeatures, cfg: ScoringSettings) -> ComponentScore:
     was_tight = 1.0 - f.compression
     parts = [was_tight]
     if f.compression <= 0.25:
-        cs.reasons.append(f"Bollinger width in the tightest {f.compression * 100:.0f}% of its recent range")
+        cs.reasons.append(R.BB_COMPRESSED(percent=pct(f.compression * 100, 0).lstrip("+")))
 
     if f.volume_acceleration_pct is not None:
         release = scale(f.volume_acceleration_pct, 0.0, 60.0)
         parts.append(release)
         if f.compression <= 0.35 and f.volume_acceleration_pct > 20:
-            cs.reasons.append("compression releasing with volume — expansion setup")
+            cs.reasons.append(R.COMPRESSION_RELEASING())
 
     if f.range_percentile is not None:
         cs.detail["range_percentile"] = round(f.range_percentile, 3)
 
     cs.points = cs.max_points * clamp01(sum(parts) / len(parts))
     if not cs.reasons:
-        text = (
-            f"Bollinger width at the {f.compression * 100:.0f}th percentile of its recent range "
-            f"({'no compression to release' if f.compression > 0.6 else 'partial compression'})"
-        )
+        pctile = num(f.compression * 100, 0)
+        text = R.BB_NONE(percentile=pctile) if f.compression > 0.6 else R.BB_PARTIAL(percentile=pctile)
         (cs.caveats if f.compression > 0.6 else cs.reasons).append(text)
     return cs
 
@@ -349,18 +349,18 @@ def score_orderflow(af: AssetFeatures, cfg: ScoringSettings) -> ComponentScore:
     cs = _mk("orderflow", cfg.w_orderflow)
     if af.order_book_imbalance is None:
         cs.available = False
-        cs.reasons.append("order book not fetched for this asset (DATA_UNAVAILABLE)")
+        cs.reasons.append(R.BOOK_UNAVAILABLE())
         return cs
 
     imb = af.order_book_imbalance
     cs.detail["imbalance"] = round(imb, 4)
     cs.points = cs.max_points * scale(imb, -0.15, 0.45)
     if imb > 0.15:
-        cs.reasons.append(f"bid-side depth dominant ({imb:+.0%} imbalance within 0.5% of mid)")
+        cs.reasons.append(R.BID_DOMINANT(imbalance=pct(imb * 100, 0)))
     elif imb < -0.15:
-        cs.caveats.append(f"ask-side depth dominant ({imb:+.0%}) — sellers stacked above")
+        cs.caveats.append(R.ASK_DOMINANT(imbalance=pct(imb * 100, 0)))
     else:
-        cs.reasons.append("order book roughly balanced")
+        cs.reasons.append(R.BOOK_BALANCED())
 
     if af.spread_bps is not None:
         cs.detail["spread_bps"] = round(af.spread_bps, 2)
@@ -395,7 +395,7 @@ def score_mtf(af: AssetFeatures, cfg: ScoringSettings) -> ComponentScore:
     known = {tf: f for tf, f in af.timeframes.items() if f.bias is not Bias.UNKNOWN}
     if len(known) < 2:
         cs.available = False
-        cs.reasons.append("fewer than two timeframes available")
+        cs.reasons.append(R.MTF_TOO_FEW())
         return cs
 
     total_w = 0.0
@@ -415,11 +415,11 @@ def score_mtf(af: AssetFeatures, cfg: ScoringSettings) -> ComponentScore:
     bulls = [tf.value for tf, f in known.items() if f.bias is Bias.BULLISH]
     bears = [tf.value for tf, f in known.items() if f.bias is Bias.BEARISH]
     if bulls:
-        cs.reasons.append("bullish on " + ", ".join(sorted(bulls)))
+        cs.reasons.append(R.MTF_BULLISH(timeframes=", ".join(sorted(bulls))))
     if bears:
-        cs.caveats.append("bearish on " + ", ".join(sorted(bears)))
+        cs.caveats.append(R.MTF_BEARISH(timeframes=", ".join(sorted(bears))))
     if not bulls and not bears:
-        cs.caveats.append(f"no directional agreement — all {len(known)} timeframes neutral")
+        cs.caveats.append(R.MTF_NEUTRAL(count=len(known)))
     return cs
 
 
@@ -433,12 +433,12 @@ def score_liquidity(af: AssetFeatures, cfg: ScoringSettings, liquidity_fraction:
     cs = _mk("liquidity", cfg.w_liquidity)
     if liquidity_fraction is None:
         cs.available = False
-        cs.reasons.append("liquidity metrics unavailable")
+        cs.reasons.append(R.LIQUIDITY_UNAVAILABLE())
         return cs
     cs.points = cs.max_points * clamp01(liquidity_fraction)
     cs.detail["liquidity_fraction"] = round(liquidity_fraction, 3)
     if af.quote_volume_24h:
-        cs.reasons.append(f"24h quote volume {af.quote_volume_24h:,.0f}")
+        cs.reasons.append(R.LIQUIDITY_VOLUME_24H(volume=money(af.quote_volume_24h)))
     else:
-        cs.reasons.append("liquidity graded without a 24h volume figure")
+        cs.reasons.append(R.LIQUIDITY_NO_VOLUME())
     return cs

@@ -32,7 +32,7 @@ from cryptopulse.scoring.discovery import (
     DiscoveryEngine,
 )
 from cryptopulse.scoring.engine import ScoreEngine
-from tests.conftest import FIXED_NOW_MS, make_series
+from tests.conftest import FIXED_NOW_MS, code, make_series
 
 
 def _asset(closes, volumes=None, *, symbol="TESTUSDT", quote_volume=50_000_000.0) -> AssetFeatures:
@@ -153,7 +153,7 @@ def test_a_token_that_already_ran_cannot_score_well_on_discovery():
         maturity_score=88.0, liquidity_status=LiquidityStatus.EXCELLENT, range_position=0.97,
     )
     assert r.score < 60.0, f"a spent move scored {r.score:.1f} on discovery"
-    assert any("already advanced" in x or "24h range" in x for x in r.risks())
+    assert any(code(x) in {"DISC_ADVANCED", "DISC_RANGE_HIGH"} for x in r.risks())
 
 
 def test_maturity_and_range_both_have_to_be_early():
@@ -185,8 +185,8 @@ def test_an_unsupplied_input_scores_zero_and_says_so():
     by = {c.name: c for c in r.components}
     assert by["earliness"].available is False
     assert by["tradeability"].available is False
-    assert any("DATA_UNAVAILABLE" in x for x in by["earliness"].caveats)
-    assert any("DATA_UNAVAILABLE" in x for x in by["tradeability"].caveats)
+    assert any(code(x) == "DISC_MATURITY_UNKNOWN" for x in by["earliness"].caveats)
+    assert any(code(x) == "DISC_NO_LIQUIDITY" for x in by["tradeability"].caveats)
     assert by["earliness"].points == 0.0
 
 
@@ -218,7 +218,7 @@ def test_the_discovery_score_is_never_presented_as_a_probability():
     ).to_dict()
 
     assert d["discovery_label"].endswith("/100")
-    assert "not a probability" in d["disclaimer"]
+    assert "ni une probabilité" in d["disclaimer"]
     assert d["engine_version"] == DISCOVERY_ENGINE_VERSION
     assert d["weights_fingerprint"]
 
@@ -295,7 +295,7 @@ async def test_the_budget_is_enforced_before_the_work_starts():
     result = await deep.run([_candidate(f"T{i}USDT") for i in range(30)], max_symbols=4)
 
     assert result.examined == 4
-    assert any("not analysed rather than analysed badly" in n for n in result.notes)
+    assert any("n'ont pas été analysés plutôt qu'analysés mal" in n for n in result.notes)
 
 
 async def test_one_failing_symbol_does_not_fail_the_search():

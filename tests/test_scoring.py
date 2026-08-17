@@ -13,7 +13,7 @@ from cryptopulse.scoring.components import score_orderflow, score_volume
 from cryptopulse.scoring.engine import ScoreEngine
 from cryptopulse.scoring.pump_maturity import compute_pump_maturity
 from cryptopulse.scoring.states import SetupState
-from tests.conftest import FIXED_NOW_MS, make_series
+from tests.conftest import FIXED_NOW_MS, code, make_series
 
 
 def _asset(closes, volumes=None, *, symbol="TESTUSDT", quote_volume=50_000_000.0, tfs=None) -> AssetFeatures:
@@ -160,7 +160,7 @@ def test_missing_order_book_scores_zero_and_is_flagged_unavailable():
     cs = score_orderflow(af, CryptoPulseSettings().scoring)
     assert cs.points == 0.0
     assert cs.available is False
-    assert "DATA_UNAVAILABLE" in " ".join(cs.reasons)
+    assert any(code(r) == "BOOK_UNAVAILABLE" for r in cs.reasons)
 
 
 def test_bullish_order_book_scores_higher_than_bearish():

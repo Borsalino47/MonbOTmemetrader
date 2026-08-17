@@ -235,14 +235,18 @@ def build_performance(
 
     if synthetic_count:
         notes.append(
-            f"{synthetic_count} of {len(rows)} settled signals came from the SYNTHETIC provider. "
-            "Those measure the pipeline, not the strategy."
+            f"{synthetic_count} signal(s) réglé(s) sur {len(rows)} proviennent du fournisseur "
+            "SYNTHÉTIQUE. Ils mesurent le fonctionnement du pipeline, pas la stratégie."
         )
     if use_net:
-        notes.append("Returns are net of the modelled round-trip cost (fees + slippage + half-spread).")
+        notes.append(
+            "Les rendements sont nets du coût aller-retour modélisé "
+            "(frais + glissement + demi-écart achat/vente)."
+        )
     if len(rows) < MIN_SAMPLE:
         notes.append(
-            f"Only {len(rows)} settled signals. Below {MIN_SAMPLE} nothing here should be read as a finding."
+            f"Seulement {len(rows)} signal(x) réglé(s). En dessous de {MIN_SAMPLE}, "
+            "rien ici ne doit être lu comme un résultat."
         )
 
     def group(field_name: str, keyfn=None) -> list[Bucket]:
@@ -387,22 +391,22 @@ def build_horizon_performance(
     notes: list[str] = []
     if synthetic_count:
         notes.append(
-            f"{synthetic_count} of {len(rows)} horizon windows came from the SYNTHETIC provider. "
-            "Those measure the pipeline, not the market."
+            f"{synthetic_count} fenêtre(s) sur {len(rows)} proviennent du fournisseur SYNTHÉTIQUE. "
+            "Elles mesurent le fonctionnement du pipeline, pas le marché."
         )
     notes.append(
-        "A horizon counts as a success when the change from entry, after the modelled "
-        "round-trip cost, is above zero. Flat is not a win."
+        "Une fenêtre est réussie lorsque la variation depuis l'entrée, après le coût "
+        "aller-retour modélisé, dépasse zéro. Stable n'est pas gagnant."
         if use_net
-        else "Changes are gross: no fee, spread or slippage is deducted."
+        else "Les variations sont brutes : ni frais, ni écart, ni glissement ne sont déduits."
     )
 
     overall = [_horizon_bucket("overall", h, by_horizon.get(h, []), use_net).to_dict() for h in horizons]
     total_graded = sum(b["n"] for b in overall)
     if total_graded < MIN_SAMPLE:
         notes.append(
-            f"Only {total_graded} graded horizon windows in total. Below {MIN_SAMPLE} "
-            "nothing here should be read as a finding."
+            f"Seulement {total_graded} fenêtre(s) évaluée(s) au total. En dessous de "
+            f"{MIN_SAMPLE}, rien ici ne doit être lu comme un résultat."
         )
 
     return {
@@ -421,10 +425,10 @@ def build_horizon_performance(
         # before the engine existed are absent rather than counted as zeros.
         "by_explosion_band": slice_by("explosion_score", _explosion_band),
         "explosion_note": (
-            f"The {EXPLOSION_CLAIM_HORIZON} row of this table is the explosion score's own "
-            "scorecard: it is the only window the engine makes a claim about. A high band "
-            "that does not beat a low band means the weights are wrong, and no other table "
-            "here can show that."
+            f"La ligne {EXPLOSION_CLAIM_HORIZON} de ce tableau est le bulletin du score "
+            "d'explosion : c'est la seule fenêtre sur laquelle le moteur avance une "
+            "affirmation. Une tranche haute qui ne bat pas une tranche basse signifie que "
+            "les pondérations sont fausses, et aucun autre tableau ici ne peut le montrer."
         ),
         "return_basis": "net_change_pct" if use_net else "change_pct",
         "min_sample": MIN_SAMPLE,

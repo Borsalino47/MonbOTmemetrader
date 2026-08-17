@@ -117,7 +117,7 @@ def summarise(episodes: list[PumpEpisode]) -> PumpStats:
     for threshold in SIZE_BUCKETS:
         count = sum(1 for e in episodes if e.reached(threshold))
         if count:
-            by_size[f"{threshold:.0f}%+"] = count
+            by_size[f"{threshold:.0f} %+"] = count
 
     return PumpStats(
         n=len(episodes),
@@ -226,7 +226,7 @@ def compare_to_past(
     report = SimilarityReport(examined=len(episodes), threshold=threshold)
 
     if not episodes:
-        report.notes.append("no past episodes to compare against")
+        report.notes.append("Aucun épisode passé auquel se comparer")
         return report
 
     matched: list[PumpEpisode] = []
@@ -241,14 +241,16 @@ def compare_to_past(
 
     if report.not_comparable:
         report.notes.append(
-            f"{report.not_comparable} past episode(s) lacked enough recorded context to compare."
+            f"{report.not_comparable} épisode(s) passé(s) n'ont pas assez de contexte "
+            "enregistré pour être comparés."
         )
 
     if report.insufficient_sample:
         report.notes.append(
-            f"Only {report.comparable} comparable setup(s), below the {MIN_SAMPLE} needed. "
-            "No rate is shown: a percentage over a handful of observations is not evidence. "
-            "This is the normal case on a token with a few weeks of history."
+            f"Seulement {report.comparable} setup(s) comparable(s), en dessous des "
+            f"{MIN_SAMPLE} nécessaires. Aucun taux n'est affiché : un pourcentage sur une "
+            "poignée d'observations n'est pas une preuve. C'est le cas normal sur un token "
+            "qui n'a que quelques semaines d'historique."
         )
         return report
 
@@ -257,13 +259,13 @@ def compare_to_past(
     for t in SIZE_BUCKETS:
         share = sum(1 for e in matched if e.reached(t)) / len(matched)
         if share > 0:
-            report.reached[f"{t:.0f}%+"] = round(share, 4)
+            report.reached[f"{t:.0f} %+"] = round(share, 4)
 
     report.median_gain_pct = float(np.median(gains))
     report.median_minutes_to_peak = int(np.median([e.minutes_to_peak for e in matched]))
     report.median_drawdown_after_pct = float(np.mean(drawdowns)) if drawdowns else None
     report.notes.append(
-        f"{report.comparable} past setups on this token resembled the current one. "
-        "This describes what followed them; it is not a probability."
+        f"{report.comparable} setups passés sur ce token ressemblaient à celui du moment. "
+        "Ceci décrit ce qui les a suivis ; ce n'est pas une probabilité."
     )
     return report

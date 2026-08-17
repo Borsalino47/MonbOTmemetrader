@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 
 from cryptopulse.config.settings import RiskSettings
 from cryptopulse.features.pipeline import AssetFeatures
+from cryptopulse.i18n import num, pct
+from cryptopulse.i18n import reasons as R
 from cryptopulse.risk.liquidity import LiquidityAssessment, LiquidityStatus
 
 __all__ = ["SafetyAssessment", "assess_cex_safety", "DexSafetyInputs", "dex_safety"]
@@ -54,13 +56,13 @@ def assess_cex_safety(af: AssetFeatures, liq: LiquidityAssessment, cfg: RiskSett
     if liq.status is LiquidityStatus.DANGEROUS:
         score -= 55.0
         hard_veto = True
-        reasons.append("liquidity DANGEROUS — hard veto")
+        reasons.append(R.SAF_LIQ_DANGEROUS())
     elif liq.status is LiquidityStatus.POOR:
         score -= 25.0
-        reasons.append("poor liquidity")
+        reasons.append(R.SAF_LIQ_POOR())
     elif liq.status is LiquidityStatus.UNKNOWN:
         score -= 15.0
-        reasons.append("liquidity could not be assessed")
+        reasons.append(R.SAF_LIQ_UNKNOWN())
 
     detail["bars"] = f.bars
 
@@ -68,12 +70,12 @@ def assess_cex_safety(af: AssetFeatures, liq: LiquidityAssessment, cfg: RiskSett
     # anything you intend to exit.
     if f.provenance and f.provenance.note == "GAPS":
         score -= 20.0
-        reasons.append("gaps in the candle stream (pair does not trade continuously)")
+        reasons.append(R.SAF_GAPS())
 
     # Insufficient history: we cannot judge what we cannot see.
     if f.bars < 60:
         score -= 20.0
-        reasons.append(f"only {f.bars} bars of history")
+        reasons.append(R.SAF_SHORT_HISTORY(bars=f.bars))
     elif f.bars < 120:
         score -= 8.0
 
@@ -82,23 +84,23 @@ def assess_cex_safety(af: AssetFeatures, liq: LiquidityAssessment, cfg: RiskSett
         detail["atr_pct"] = round(f.atr_pct, 3)
         if f.atr_pct > 8.0:
             score -= 20.0
-            reasons.append(f"extreme volatility (ATR {f.atr_pct:.1f}% of price per bar)")
+            reasons.append(R.SAF_VOL_EXTREME(atr=pct(f.atr_pct, 1).lstrip("+")))
         elif f.atr_pct > 4.0:
             score -= 8.0
-            reasons.append(f"elevated volatility (ATR {f.atr_pct:.1f}% of price)")
+            reasons.append(R.SAF_VOL_HIGH(atr=pct(f.atr_pct, 1).lstrip("+")))
 
     # Wide spread is both a liquidity and a safety issue.
     if af.spread_bps is not None and af.spread_bps >= cfg.spread_dangerous_bps:
         score -= 20.0
-        reasons.append(f"spread {af.spread_bps:.0f} bps")
+        reasons.append(R.SAF_SPREAD(spread=num(af.spread_bps, 0)))
 
     score = float(max(0.0, min(100.0, score)))
     if score <= cfg.safety_hard_veto_floor:
         hard_veto = True
-        reasons.append(f"safety score {score:.0f} at or below the {cfg.safety_hard_veto_floor:.0f} floor — hard veto")
+        reasons.append(R.SAF_BELOW_FLOOR(score=num(score, 0), floor=num(cfg.safety_hard_veto_floor, 0)))
 
     if not reasons:
-        reasons.append("no market-quality defects detected")
+        reasons.append(R.SAF_CLEAN())
 
     return SafetyAssessment(score=score, hard_veto=hard_veto, reasons=reasons, detail=detail)
 

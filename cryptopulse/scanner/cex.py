@@ -178,7 +178,8 @@ class CexScanner(Scanner):
         synthetic = is_synthetic(self.provider)
         if synthetic:
             notes.append(
-                "SYNTHETIC DATA: the active provider generates candles; nothing in this report is market data."
+                "DONNÉES SYNTHÉTIQUES : le fournisseur actif génère les bougies ; rien "
+                "dans ce rapport n'est une donnée de marché."
             )
 
         health = await self.provider.health()
@@ -266,7 +267,7 @@ class CexScanner(Scanner):
                 veto_reason=(
                     "liquidity gate: a fast move here could not be exited"
                     if result.liquidity.veto
-                    else "safety gate: this asset is flagged and a fast move is not an opportunity"
+                    else "filtre de sécurité : cet actif est signalé, et un mouvement rapide n'y est pas une opportunité"
                     if result.safety.hard_veto
                     else None
                 ),

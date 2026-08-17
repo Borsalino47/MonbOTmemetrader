@@ -78,6 +78,8 @@ from dataclasses import dataclass
 from cryptopulse.core.logging import get_logger
 from cryptopulse.core.types import Timeframe
 from cryptopulse.features.pipeline import AssetFeatures, TimeframeFeatures
+from cryptopulse.i18n import mult, num, pct, signed
+from cryptopulse.i18n import reasons as R
 from cryptopulse.scoring.components import ComponentScore
 
 log = get_logger("scoring.explosion")
@@ -167,9 +169,10 @@ class ExplosionResult:
             "why": self.why(),
             "risks": self.risks(),
             "disclaimer": (
-                f"A ranking of how likely a move is within {self.horizon_minutes} minutes, "
-                "not a probability and not advice. These weights have never been validated; "
-                "the 15m horizon table is where that validation will eventually happen."
+                f"Un classement de la probabilité d'un mouvement dans les "
+                f"{self.horizon_minutes} minutes, ni une probabilité chiffrée ni un conseil. "
+                "Ces pondérations n'ont jamais été validées ; c'est le tableau de la fenêtre "
+                "15 min qui le fera un jour."
             ),
         }
 
@@ -182,7 +185,7 @@ class ExplosionEngine:
         if abs(total - 100.0) > 1e-6:
             raise ValueError(
                 f"explosion weights must sum to 100, got {total}. "
-                "The score is presented on a 0-100 scale and must stay on it."
+                "Le score est présenté sur une échelle de 0 à 100 et doit y rester."
             )
         self.weights_fingerprint = self._fingerprint()
 
@@ -275,7 +278,7 @@ def _volume_burst(short: TimeframeFeatures | None, mid: TimeframeFeatures | None
 
     if rvol_5m is None and rvol_15m is None:
         c.available = False
-        c.caveats.append("DATA_UNAVAILABLE: no relative volume on 5m or 15m")
+        c.caveats.append(R.EXP_NO_RVOL())
         return c
 
     # The 5m reading carries most of the weight: it is the one that can change
@@ -283,25 +286,25 @@ def _volume_burst(short: TimeframeFeatures | None, mid: TimeframeFeatures | None
     if rvol_5m is not None:
         if rvol_5m >= 1.5:
             c.points += min(max_pts * 0.6, (rvol_5m - 1.0) * max_pts * 0.30)
-            c.reasons.append(f"5m volume {rvol_5m:.1f}x its own average")
+            c.reasons.append(R.EXP_TF_VOLUME_HIGH(timeframe="5 min", rvol=mult(rvol_5m, 1)))
         elif rvol_5m < 0.7:
-            c.caveats.append(f"5m volume below average ({rvol_5m:.1f}x) — nothing is arriving")
+            c.caveats.append(R.EXP_TF_VOLUME_LOW(timeframe="5 min", rvol=mult(rvol_5m, 1)))
 
     if rvol_15m is not None:
         if rvol_15m >= 1.3:
             c.points += min(max_pts * 0.4, (rvol_15m - 1.0) * max_pts * 0.25)
-            c.reasons.append(f"15m volume {rvol_15m:.1f}x its own average")
+            c.reasons.append(R.EXP_TF_VOLUME_HIGH(timeframe="15 min", rvol=mult(rvol_15m, 1)))
         elif rvol_15m < 0.8:
-            c.caveats.append(f"15m volume below average ({rvol_15m:.1f}x)")
+            c.caveats.append(R.EXP_TF_VOLUME_LOW(timeframe="15 min", rvol=mult(rvol_15m, 1)))
 
     # A burst that is already fading is a worse sign than a smaller one still
     # building, so this reads the slope rather than only the level.
     if short is not None and short.rvol_slope is not None and short.rvol_slope < 0 and c.points > 0:
-        c.caveats.append("5m relative volume already falling — the burst may have passed")
+        c.caveats.append(R.EXP_RVOL_FALLING())
 
     c.points = min(c.points, max_pts)
     if c.points > 0 and not c.reasons:
-        c.reasons.append("volume elevated on the short timeframes")
+        c.reasons.append(R.EXP_VOLUME_ELEVATED())
     return c
 
 
@@ -312,7 +315,7 @@ def _thrust(short: TimeframeFeatures | None, mid: TimeframeFeatures | None) -> C
 
     if short is None and mid is None:
         c.available = False
-        c.caveats.append("DATA_UNAVAILABLE: no short-timeframe price history")
+        c.caveats.append(R.EXP_NO_SHORT_HISTORY())
         return c
 
     roc_5m = short.roc3 if short else None       # last 15 minutes of 5m bars
@@ -321,31 +324,31 @@ def _thrust(short: TimeframeFeatures | None, mid: TimeframeFeatures | None) -> C
 
     if roc_5m is None and roc_15m is None:
         c.available = False
-        c.caveats.append("DATA_UNAVAILABLE: recent price change could not be computed")
+        c.caveats.append(R.EXP_NO_ROC())
         return c
 
     if roc_5m is not None:
         if roc_5m > 0.3:
             c.points += min(max_pts * 0.5, roc_5m * max_pts * 0.20)
-            c.reasons.append(f"price {roc_5m:+.2f}% over the last three 5m bars")
+            c.reasons.append(R.EXP_ROC_UP(change=pct(roc_5m, 2)))
         elif roc_5m < -0.3:
-            c.caveats.append(f"price falling ({roc_5m:+.2f}% on 5m) — thrust is downward")
+            c.caveats.append(R.EXP_ROC_DOWN(change=pct(roc_5m, 2)))
 
     if roc_15m is not None and roc_15m > 0.4:
         c.points += min(max_pts * 0.3, roc_15m * max_pts * 0.12)
-        c.reasons.append(f"last 15m bar {roc_15m:+.2f}%")
+        c.reasons.append(R.EXP_LAST_BAR(change=pct(roc_15m, 2)))
 
     # Acceleration: is the newest bar carrying more than the average of the three?
     if roc_5m is not None and roc_5m_1 is not None and roc_5m > 0:
         if roc_5m_1 > roc_5m / 3.0:
             c.points += max_pts * 0.2
-            c.reasons.append("the move is speeding up, not fading")
+            c.reasons.append(R.EXP_SPEEDING_UP())
         else:
-            c.caveats.append("the newest bar is slower than the three before it")
+            c.caveats.append(R.EXP_SLOWING())
 
     c.points = min(c.points, max_pts)
     if c.points > 0 and not c.reasons:
-        c.reasons.append("price moving on the short timeframes")
+        c.reasons.append(R.EXP_PRICE_MOVING())
     return c
 
 
@@ -370,7 +373,7 @@ def _proximity(short: TimeframeFeatures | None, mid: TimeframeFeatures | None) -
 
     if st is None:
         c.available = False
-        c.caveats.append("DATA_UNAVAILABLE: no measurable resistance on 5m or 15m")
+        c.caveats.append(R.EXP_NO_RESISTANCE())
         return c
 
     d = st.distance_to_resistance_atr
@@ -378,22 +381,22 @@ def _proximity(short: TimeframeFeatures | None, mid: TimeframeFeatures | None) -
 
     if st.broke_out and not st.fake_breakout:
         c.points = max_pts
-        c.reasons.append(f"already through the {scale} resistance — the move is under way")
+        c.reasons.append(R.EXP_THROUGH_RESISTANCE(timeframe=scale))
     elif d <= 0.5:
         c.points = max_pts * 0.9
-        c.reasons.append(f"{d:.2f} ATR under the {scale} resistance — reachable within the window")
+        c.reasons.append(R.EXP_NEAR_RESISTANCE(distance=num(d), timeframe=scale))
     elif d <= 1.5:
         c.points = max_pts * (1.5 - d) / 1.0 * 0.6 + max_pts * 0.2
-        c.reasons.append(f"{d:.2f} ATR under the {scale} resistance")
+        c.reasons.append(R.EXP_UNDER_RESISTANCE(distance=num(d), timeframe=scale))
     elif d <= 3.0:
         c.points = max_pts * 0.1
-        c.caveats.append(f"{d:.2f} ATR from resistance — reachable, but not in fifteen minutes")
+        c.caveats.append(R.EXP_RESISTANCE_REACHABLE(distance=num(d)))
     else:
-        c.caveats.append(f"{d:.2f} ATR from resistance — nothing can happen here within the window")
+        c.caveats.append(R.EXP_RESISTANCE_TOO_FAR(distance=num(d)))
 
     if st.fake_breakout:
         c.points *= 0.4
-        c.caveats.append("the last breakout failed — this level has already rejected price once")
+        c.caveats.append(R.EXP_FAILED_BREAKOUT())
 
     return c
 
@@ -406,23 +409,22 @@ def _compression(mid: TimeframeFeatures | None, short: TimeframeFeatures | None)
     f = mid if (mid is not None and mid.compression is not None) else short
     if f is None or f.compression is None:
         c.available = False
-        c.caveats.append("DATA_UNAVAILABLE: volatility compression could not be measured")
+        c.caveats.append(R.EXP_NO_COMPRESSION())
         return c
 
     # 0 = tightest in the lookback, 1 = widest.
     if f.compression <= 0.30:
         c.points = max_pts * (1.0 - f.compression / 0.30) * 0.75 + max_pts * 0.25
         c.reasons.append(
-            f"{f.timeframe.value} range compressed ({f.compression:.2f}) — coiled rather than spent"
+            R.EXP_RANGE_COMPRESSED(timeframe=f.timeframe.value, value=num(f.compression))
         )
     elif f.compression >= 0.85:
         c.caveats.append(
-            f"{f.timeframe.value} range already at its widest ({f.compression:.2f}) — "
-            "the expansion has happened"
+            R.EXP_RANGE_WIDEST(timeframe=f.timeframe.value, value=num(f.compression))
         )
     else:
         c.points = max_pts * 0.2
-        c.reasons.append(f"{f.timeframe.value} range neither compressed nor stretched")
+        c.reasons.append(R.EXP_RANGE_NEUTRAL(timeframe=f.timeframe.value))
     return c
 
 
@@ -439,23 +441,23 @@ def _book_pressure(af: AssetFeatures) -> ComponentScore:
 
     if af.order_book_imbalance is None:
         c.available = False
-        c.caveats.append("no order book fetched for this symbol — pressure unknown")
+        c.caveats.append(R.EXP_NO_BOOK())
         return c
 
     imb = af.order_book_imbalance
     if imb > 0.15:
         c.points += min(max_pts * 0.7, imb * max_pts * 1.4)
-        c.reasons.append(f"resting bids outweigh asks ({imb:+.2f})")
+        c.reasons.append(R.EXP_BIDS_OUTWEIGH(imbalance=signed(imb)))
     elif imb < -0.15:
-        c.caveats.append(f"resting asks outweigh bids ({imb:+.2f}) — the book leans against a rise")
+        c.caveats.append(R.EXP_ASKS_OUTWEIGH(imbalance=signed(imb)))
 
     if af.spread_bps is None:
-        c.caveats.append("spread unknown")
+        c.caveats.append(R.EXP_SPREAD_UNKNOWN())
     elif af.spread_bps <= 5.0:
         c.points += max_pts * 0.3
-        c.reasons.append(f"spread {af.spread_bps:.1f} bps — a fast move would not be eaten by it")
+        c.reasons.append(R.EXP_SPREAD_OK(spread=num(af.spread_bps, 1)))
     elif af.spread_bps > 25.0:
-        c.caveats.append(f"spread {af.spread_bps:.0f} bps — a 15-minute move would largely be cost")
+        c.caveats.append(R.EXP_SPREAD_COSTLY(spread=num(af.spread_bps, 0)))
 
     c.points = min(c.points, max_pts)
     return c
@@ -472,30 +474,27 @@ def _earliness(
 
     if maturity is None:
         c.available = False
-        c.caveats.append("DATA_UNAVAILABLE: pump maturity unknown")
+        c.caveats.append(R.EXP_MATURITY_UNKNOWN())
     else:
         if maturity <= 35.0:
             c.points += max_pts * 0.7
-            c.reasons.append(f"move barely started (maturity {maturity:.0f}/100)")
+            c.reasons.append(R.EXP_BARELY_STARTED(maturity=num(maturity, 0)))
         elif maturity <= 60.0:
             c.points += max_pts * 0.3
-            c.reasons.append(f"move under way but not extended (maturity {maturity:.0f}/100)")
+            c.reasons.append(R.EXP_UNDER_WAY(maturity=num(maturity, 0)))
         else:
-            c.caveats.append(
-                f"move already {maturity:.0f}/100 mature — the next fifteen minutes "
-                "are more likely to retrace than extend"
-            )
+            c.caveats.append(R.EXP_ALREADY_MATURE(maturity=num(maturity, 0)))
 
     # Short-timeframe RSI is the fastest available exhaustion reading. It is a
     # caveat rather than a veto: a strong trend runs overbought for many bars.
     f = short if (short is not None and short.rsi14 is not None) else mid
     if f is None or f.rsi14 is None:
-        c.caveats.append("short-timeframe RSI unavailable")
+        c.caveats.append(R.EXP_RSI_UNAVAILABLE())
     elif f.rsi14 >= 80.0:
-        c.caveats.append(f"{f.timeframe.value} RSI {f.rsi14:.0f} — stretched")
+        c.caveats.append(R.EXP_RSI_STRETCHED(timeframe=f.timeframe.value, rsi=num(f.rsi14, 0)))
     elif f.rsi14 <= 70.0:
         c.points += max_pts * 0.3
-        c.reasons.append(f"{f.timeframe.value} RSI {f.rsi14:.0f} — room left before exhaustion")
+        c.reasons.append(R.EXP_RSI_ROOM(timeframe=f.timeframe.value, rsi=num(f.rsi14, 0)))
 
     c.points = min(c.points, max_pts)
     return c

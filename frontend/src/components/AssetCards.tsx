@@ -1,4 +1,5 @@
-import { DASH, maturityColor, num, pct, price, scoreColor, signClass } from '../format';
+import { DASH, maturityColor, mult, num, pct, price, scoreColor, signClass } from '../format';
+import { LIQUIDITY_FR, SETUP_STATE_FR, labelFor } from '../i18n/fr';
 import type { ScoreRow } from '../types';
 import { ExplosionBadge } from './ExplosionBadge';
 import { VerdictBadge } from './VerdictBadge';
@@ -46,7 +47,7 @@ export function AssetCards({ rows, onSelect, expert }: Props) {
                 {num(r.final_score, 0)}<small>/100</small>
                 {r.score_acceleration !== null && Math.abs(r.score_acceleration) >= 1 && (
                   <span className={signClass(r.score_acceleration)} style={{ fontSize: 10, marginLeft: 5 }}>
-                    {r.score_acceleration > 0 ? '▲' : '▼'}{Math.abs(r.score_acceleration).toFixed(0)}
+                    {r.score_acceleration > 0 ? '▲' : '▼'}{num(Math.abs(r.score_acceleration), 0)}
                   </span>
                 )}
               </span>
@@ -64,7 +65,7 @@ export function AssetCards({ rows, onSelect, expert }: Props) {
             <div className="card-strip">
               <Cell k="5m" v={pct(r.metrics?.change_5m_pct)} cls={signClass(r.metrics?.change_5m_pct)} />
               <Cell k="1h" v={pct(r.metrics?.change_1h_pct)} cls={signClass(r.metrics?.change_1h_pct)} />
-              <Cell k="RVOL" v={r.metrics?.rvol ? `${num(r.metrics.rvol, 1)}x` : DASH} />
+              <Cell k="RVOL" v={r.metrics?.rvol ? mult(r.metrics.rvol, 1) : DASH} />
               <Cell
                 k="Maturité"
                 v={num(r.pump_maturity.score, 0)}
@@ -74,8 +75,8 @@ export function AssetCards({ rows, onSelect, expert }: Props) {
 
             {expert && (
               <div className="card-strip expert">
-                <Cell k="Statut" v={r.setup.state} />
-                <Cell k="Liquidité" v={r.liquidity.status} />
+                <Cell k="Statut" v={labelFor(SETUP_STATE_FR, r.setup.state)} />
+                <Cell k="Liquidité" v={labelFor(LIQUIDITY_FR, r.liquidity.status)} />
                 <Cell k="Sécurité" v={num(r.safety.score, 0)} />
                 <Cell
                   k="Confiance"

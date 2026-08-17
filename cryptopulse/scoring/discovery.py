@@ -57,7 +57,9 @@ from dataclasses import dataclass
 from cryptopulse.config.settings import CryptoPulseSettings
 from cryptopulse.core.logging import get_logger
 from cryptopulse.features.pipeline import AssetFeatures
-from cryptopulse.risk.liquidity import LiquidityStatus
+from cryptopulse.i18n import mult, num, pct
+from cryptopulse.i18n import reasons as R
+from cryptopulse.risk.liquidity import LIQUIDITY_LABEL_FR, LiquidityStatus
 from cryptopulse.scoring.components import ComponentScore
 
 log = get_logger("scoring.discovery")
@@ -112,8 +114,9 @@ class DiscoveryResult:
             "why": self.why(),
             "risks": self.risks(),
             "disclaimer": (
-                "A ranking of how much this token's behaviour has changed, not a probability "
-                "and not advice. These weights have never been validated against outcomes."
+                "Un classement de l'ampleur du changement de comportement de ce token, ni "
+                "une probabilité ni un conseil. Ces pondérations n'ont jamais été validées "
+                "contre des résultats réels."
             ),
         }
 
@@ -127,7 +130,7 @@ class DiscoveryEngine:
         if abs(total - 100.0) > 1e-6:
             raise ValueError(
                 f"discovery weights must sum to 100, got {total}. "
-                "The score is presented on a 0-100 scale and must stay on it."
+                "Le score est présenté sur une échelle de 0 à 100 et doit y rester."
             )
         self.weights_fingerprint = self._fingerprint()
 
@@ -182,25 +185,25 @@ def _anomaly(af: AssetFeatures, excess: float | None) -> ComponentScore:
 
     if f.rvol is None:
         c.available = False
-        c.caveats.append("DATA_UNAVAILABLE: relative volume could not be computed")
+        c.caveats.append(R.DISC_NO_RVOL())
     else:
         # RVOL is already self-relative: 1.0 is this token's own normal.
         if f.rvol >= 1.3:
             gain = min(max_pts * 0.7, (f.rvol - 1.0) * max_pts * 0.35)
             c.points += gain
-            c.reasons.append(f"volume {f.rvol:.1f}x this token's own recent average")
+            c.reasons.append(R.DISC_RVOL_HIGH(rvol=mult(f.rvol, 1)))
         elif f.rvol < 0.8:
-            c.caveats.append(f"volume below its own average ({f.rvol:.1f}x) — nothing is happening")
+            c.caveats.append(R.DISC_RVOL_LOW(rvol=mult(f.rvol, 1)))
 
     if excess is None:
-        c.caveats.append("no venue-wide comparison yet (needs two ticker readings)")
+        c.caveats.append(R.DISC_NO_VENUE_COMPARE())
     elif excess > 0:
         c.points += min(max_pts * 0.3, excess * max_pts * 0.06)
-        c.reasons.append(f"activity {excess:+.2f}% above the same moment yesterday")
+        c.reasons.append(R.DISC_EXCESS_VS_YESTERDAY(change=pct(excess, 2)))
 
     c.points = min(c.points, max_pts)
     if c.points > 0 and not c.reasons:
-        c.reasons.append("activity above this token's normal level")
+        c.reasons.append(R.DISC_ABOVE_NORMAL())
     return c
 
 
@@ -212,26 +215,26 @@ def _acceleration(af: AssetFeatures) -> ComponentScore:
 
     if f.rvol_slope is None and f.volume_acceleration_pct is None:
         c.available = False
-        c.caveats.append("DATA_UNAVAILABLE: not enough bars to measure acceleration")
+        c.caveats.append(R.DISC_NO_ACCEL_BARS())
         return c
 
     if f.rvol_slope is not None:
         if f.rvol_slope > 0:
             c.points += min(max_pts * 0.6, f.rvol_slope * max_pts * 2.0)
-            c.reasons.append("relative volume still rising")
+            c.reasons.append(R.DISC_RVOL_RISING())
         else:
-            c.caveats.append("relative volume already falling — the surge may be over")
+            c.caveats.append(R.DISC_RVOL_FALLING())
 
     if f.volume_acceleration_pct is not None:
         if f.volume_acceleration_pct > 15.0:
             c.points += min(max_pts * 0.4, f.volume_acceleration_pct / 100.0 * max_pts * 0.5)
-            c.reasons.append(f"volume accelerating ({f.volume_acceleration_pct:+.0f}%)")
+            c.reasons.append(R.DISC_VOL_ACCEL(change=pct(f.volume_acceleration_pct, 0)))
         elif f.volume_acceleration_pct < -15.0:
-            c.caveats.append(f"volume decelerating ({f.volume_acceleration_pct:+.0f}%)")
+            c.caveats.append(R.DISC_VOL_DECEL(change=pct(f.volume_acceleration_pct, 0)))
 
     c.points = min(c.points, max_pts)
     if c.points > 0 and not c.reasons:
-        c.reasons.append("activity building rather than fading")
+        c.reasons.append(R.DISC_BUILDING())
     return c
 
 
@@ -247,23 +250,23 @@ def _precedence(af: AssetFeatures, excess: float | None) -> ComponentScore:
 
     volume_up = (f.rvol is not None and f.rvol >= 1.3) or (excess is not None and excess > 1.0)
     if not volume_up:
-        c.caveats.append("volume is not elevated, so nothing is leading anything")
+        c.caveats.append(R.DISC_NOT_ELEVATED())
         return c
 
     if f.roc1 is None:
         c.available = False
-        c.caveats.append("DATA_UNAVAILABLE: recent price change unknown")
+        c.caveats.append(R.DISC_NO_ROC())
         return c
 
     move = abs(f.roc1)
     if move < 0.25:
         c.points = max_pts
-        c.reasons.append("volume elevated while price is still flat — activity is leading price")
+        c.reasons.append(R.DISC_VOLUME_LEADS())
     elif move < 0.75:
         c.points = max_pts * 0.55
-        c.reasons.append("volume elevated with price only just beginning to move")
+        c.reasons.append(R.DISC_VOLUME_LEADS_MILD())
     else:
-        c.caveats.append(f"price already moving {f.roc1:+.2f}% — the volume is not ahead of it")
+        c.caveats.append(R.DISC_PRICE_AHEAD(change=pct(f.roc1, 2)))
     return c
 
 
@@ -275,18 +278,18 @@ def _compression(af: AssetFeatures) -> ComponentScore:
 
     if f.compression is None:
         c.available = False
-        c.caveats.append("DATA_UNAVAILABLE: volatility compression could not be measured")
+        c.caveats.append(R.DISC_NO_COMPRESSION())
         return c
 
     # 0 = tightest in the lookback, 1 = widest.
     if f.compression <= 0.35:
         c.points = max_pts * (1.0 - f.compression / 0.35) * 0.8 + max_pts * 0.2
-        c.reasons.append(f"volatility compressed ({f.compression:.2f}) — coiled rather than spent")
+        c.reasons.append(R.DISC_COMPRESSED(value=num(f.compression)))
     elif f.compression >= 0.8:
-        c.caveats.append(f"volatility already wide ({f.compression:.2f}) — the expansion has happened")
+        c.caveats.append(R.DISC_EXPANDED(value=num(f.compression)))
     else:
         c.points = max_pts * 0.25
-        c.reasons.append("volatility neither compressed nor stretched")
+        c.reasons.append(R.DISC_VOL_NEUTRAL())
     return c
 
 
@@ -297,24 +300,24 @@ def _earliness(maturity: float | None, range_position: float | None) -> Componen
 
     if maturity is None:
         c.available = False
-        c.caveats.append("DATA_UNAVAILABLE: pump maturity unknown")
+        c.caveats.append(R.DISC_MATURITY_UNKNOWN())
     else:
         if maturity <= 30.0:
             c.points += max_pts * 0.7
-            c.reasons.append(f"move barely started (maturity {maturity:.0f}/100)")
+            c.reasons.append(R.DISC_BARELY_STARTED(maturity=num(maturity, 0)))
         elif maturity <= 55.0:
             c.points += max_pts * 0.35
-            c.reasons.append(f"move under way but not extended (maturity {maturity:.0f}/100)")
+            c.reasons.append(R.DISC_UNDER_WAY(maturity=num(maturity, 0)))
         else:
-            c.caveats.append(f"move already advanced (maturity {maturity:.0f}/100) — not an early find")
+            c.caveats.append(R.DISC_ADVANCED(maturity=num(maturity, 0)))
 
     if range_position is None:
-        c.caveats.append("24h range position unknown")
+        c.caveats.append(R.DISC_RANGE_UNKNOWN())
     elif range_position <= 0.7:
         c.points += max_pts * 0.3 * (1.0 - range_position / 0.7)
-        c.reasons.append(f"at {range_position:.0%} of the 24h range, with room above")
+        c.reasons.append(R.DISC_RANGE_ROOM(position=pct(range_position * 100, 0).lstrip("+")))
     else:
-        c.caveats.append(f"already at {range_position:.0%} of the 24h range")
+        c.caveats.append(R.DISC_RANGE_HIGH(position=pct(range_position * 100, 0).lstrip("+")))
 
     c.points = min(c.points, max_pts)
     return c
@@ -327,7 +330,7 @@ def _tradeability(af: AssetFeatures, status: LiquidityStatus | None) -> Componen
 
     if status is None:
         c.available = False
-        c.caveats.append("DATA_UNAVAILABLE: liquidity not assessed")
+        c.caveats.append(R.DISC_NO_LIQUIDITY())
     else:
         share = {
             LiquidityStatus.EXCELLENT: 1.0,
@@ -339,18 +342,18 @@ def _tradeability(af: AssetFeatures, status: LiquidityStatus | None) -> Componen
         }.get(status, 0.0)
         c.points += max_pts * 0.7 * share
         if share >= 0.55:
-            c.reasons.append(f"liquidity {status.value.lower()}")
+            c.reasons.append(R.DISC_LIQUIDITY_OK(status=LIQUIDITY_LABEL_FR[status]))
         else:
-            c.caveats.append(f"liquidity {status.value.lower()} — a move here may not be tradeable")
+            c.caveats.append(R.DISC_LIQUIDITY_POOR(status=LIQUIDITY_LABEL_FR[status]))
 
     spread = af.spread_bps
     if spread is None:
-        c.caveats.append("spread unknown")
+        c.caveats.append(R.DISC_SPREAD_UNKNOWN())
     elif spread <= 20.0:
         c.points += max_pts * 0.3
-        c.reasons.append(f"spread {spread:.0f} bps")
+        c.reasons.append(R.DISC_SPREAD_OK(spread=num(spread, 0)))
     else:
-        c.caveats.append(f"spread {spread:.0f} bps will eat a small move")
+        c.caveats.append(R.DISC_SPREAD_WIDE(spread=num(spread, 0)))
 
     c.points = min(c.points, max_pts)
     return c

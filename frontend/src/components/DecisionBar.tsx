@@ -1,3 +1,4 @@
+import { num } from '../format';
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import type { AssetDetail, Decision, Validation } from '../types';
@@ -127,7 +128,7 @@ export function DecisionBar({ data, symbol }: { data: AssetDetail | null; symbol
               <span className="decision-hist-label">{LABELS[v.decision]}</span>
               <span className="decision-hist-meta">
                 {v.decided_at ? new Date(v.decided_at).toLocaleDateString('fr-FR') : ''}
-                {v.final_score !== null && ` · ${v.final_score.toFixed(0)}/100`}
+                {v.final_score !== null && ` · ${num(v.final_score, 0)}/100`}
               </span>
             </div>
           ))}

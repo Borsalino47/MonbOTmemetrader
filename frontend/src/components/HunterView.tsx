@@ -167,7 +167,7 @@ export function HunterView({ onSelect }: { onSelect: (symbol: string) => void })
               />
               <Cell
                 k="Position 24h"
-                v={c.range_position_24h === null ? DASH : `${(c.range_position_24h * 100).toFixed(0)}%`}
+                v={c.range_position_24h === null ? DASH : `${num(c.range_position_24h * 100, 0)} %`}
               />
               <Cell
                 k="Spread"

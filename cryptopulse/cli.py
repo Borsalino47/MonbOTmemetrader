@@ -74,20 +74,23 @@ async def cmd_doctor(args) -> int:
     # provider names the symbol it is certain to have rather than the CLI guessing.
     ref = provider.reference_symbol
     checks: list[tuple[str, bool, str]] = []
-    print(f"\nCRYPTO PULSE AI — provider doctor\nprovider: {provider.name}  reference: {ref}\n" + "-" * 68)
+    print(
+        f"\nCRYPTO PULSE AI — diagnostic du fournisseur\n"
+        f"fournisseur : {provider.name}  référence : {ref}\n" + "-" * 68
+    )
 
     def record(name: str, ok: bool, detail: str = "") -> None:
         checks.append((name, ok, detail))
-        print(f"  [{'PASS' if ok else 'FAIL'}] {name}" + (f" — {detail}" if detail else ""))
+        print(f"  [{'OK  ' if ok else 'ÉCHEC'}] {name}" + (f" — {detail}" if detail else ""))
 
     # 1. connectivity
     unreachable = False
     try:
         health = await provider.health()
-        record("health/ping", health.available, health.detail or f"{health.latency_ms:.0f} ms")
+        record("joignabilité du fournisseur", health.available, health.detail or f"{health.latency_ms:.0f} ms")
         unreachable = not health.available
     except Exception as exc:
-        record("health/ping", False, f"{type(exc).__name__}: {exc}")
+        record("joignabilité du fournisseur", False, f"{type(exc).__name__} : {exc}")
         unreachable = True
 
     if unreachable:
@@ -110,9 +113,9 @@ async def cmd_doctor(args) -> int:
     try:
         symbols = await provider.list_symbols(settings.scanner.quote_asset)
         ok = len(symbols) > 50 and all(s.quote == settings.scanner.quote_asset.upper() for s in symbols)
-        record("exchangeInfo → symbols", ok, f"{len(symbols)} {settings.scanner.quote_asset} pairs")
+        record("liste des paires", ok, f"{len(symbols)} paires en {settings.scanner.quote_asset}")
     except Exception as exc:
-        record("exchangeInfo → symbols", False, f"{type(exc).__name__}: {exc}")
+        record("liste des paires", False, f"{type(exc).__name__} : {exc}")
 
     # 3. tickers
     tickers = {}
@@ -121,13 +124,14 @@ async def cmd_doctor(args) -> int:
         t = tickers.get(ref)
         ok = t is not None and t.last_price > 0 and t.quote_volume_24h > 0 and t.low_24h <= t.last_price <= t.high_24h
         detail = (
-            f"BTC {t.last_price:,.2f}, 24h range {t.low_24h:,.2f}-{t.high_24h:,.2f}, vol {t.quote_volume_24h:,.0f}"
+            f"BTC {t.last_price:,.2f}, plage 24 h {t.low_24h:,.2f}-{t.high_24h:,.2f}, "
+            f"volume {t.quote_volume_24h:,.0f}"
             if t
-            else f"no {ref} row"
+            else f"aucune ligne {ref}"
         )
-        record("ticker/24hr consistency (low <= last <= high)", ok, detail)
+        record("cohérence du ticker 24 h (bas <= dernier <= haut)", ok, detail)
     except Exception as exc:
-        record("ticker/24hr consistency", False, f"{type(exc).__name__}: {exc}")
+        record("cohérence du ticker 24 h", False, f"{type(exc).__name__} : {exc}")
 
     # 4. klines — the field-order check that matters most
     try:
@@ -138,7 +142,7 @@ async def cmd_doctor(args) -> int:
 
         ordered = bool((series.open_time_ms[1:] > series.open_time_ms[:-1]).all()) if n > 1 else True
         checks_ok &= ordered
-        details.append(f"{n} candles, ascending={ordered}")
+        details.append(f"{n} bougies, ordre croissant={ordered}")
 
         # If field indices were wrong, high/low invariants would break immediately.
         invariant = bool(
@@ -149,12 +153,12 @@ async def cmd_doctor(args) -> int:
             and (series.low <= series.close).all()
         )
         checks_ok &= invariant
-        details.append(f"OHLC invariants={invariant}")
+        details.append(f"invariants OHLC={invariant}")
 
         spacing = bool(((series.open_time_ms[1:] - series.open_time_ms[:-1]) == Timeframe.M5.ms).all()) if n > 1 else True
-        details.append(f"5m spacing={spacing}")
+        details.append(f"espacement 5 min={spacing}")
 
-        record("klines field mapping + invariants", checks_ok, "; ".join(details))
+        record("correspondance des champs de bougies + invariants", checks_ok, " ; ".join(details))
 
         # 5. the open-candle rule
         closed = series.closed()
@@ -162,10 +166,10 @@ async def cmd_doctor(args) -> int:
         now = SYSTEM_CLOCK.now_ms()
         ok = closed.last_close_time_ms <= now
         record(
-            "in-progress candle excluded",
+            "bougie en cours exclue",
             ok,
-            f"dropped {dropped} forming candle(s); newest closed bar ended "
-            f"{(now - closed.last_close_time_ms) / 1000:.0f}s ago",
+            f"{dropped} bougie(s) en formation écartée(s) ; la dernière bougie close "
+            f"s'est terminée il y a {(now - closed.last_close_time_ms) / 1000:.0f} s",
         )
 
         # 6. cross-check klines against the ticker
@@ -174,9 +178,9 @@ async def cmd_doctor(args) -> int:
             kline_close = closed.last_close
             drift = abs(kline_close - last) / last * 100
             ok = drift < 2.0
-            record("kline close agrees with ticker price", ok, f"{drift:.3f}% apart")
+            record("clôture des bougies cohérente avec le prix du ticker", ok, f"{drift:.3f} % d'écart")
     except Exception as exc:
-        record("klines", False, f"{type(exc).__name__}: {exc}")
+        record("bougies", False, f"{type(exc).__name__} : {exc}")
 
     # 7. order book
     try:
@@ -188,9 +192,13 @@ async def cmd_doctor(args) -> int:
             and book.spread_bps is not None
             and book.spread_bps >= 0
         )
-        record("depth → bid < ask, spread >= 0", ok, f"spread {book.spread_bps:.2f} bps, imbalance {book.imbalance():+.3f}")
+        record(
+            "carnet d'ordres : achat < vente, écart >= 0",
+            ok,
+            f"écart {book.spread_bps:.2f} pdb, déséquilibre {book.imbalance():+.3f}",
+        )
     except Exception as exc:
-        record("depth", False, f"{type(exc).__name__}: {exc}")
+        record("carnet d'ordres", False, f"{type(exc).__name__} : {exc}")
 
     await provider.close()
     return _summarise(checks)
@@ -227,18 +235,18 @@ async def _diagnose_egress(host: str) -> list[str]:
 
     import httpx
 
-    out: list[str] = ["", "-" * 68, "NETWORK DIAGNOSIS", "-" * 68]
+    out: list[str] = ["", "-" * 68, "DIAGNOSTIC RÉSEAU", "-" * 68]
 
     # 1. Name resolution.
     try:
         await asyncio.to_thread(socket.getaddrinfo, host, 443)
-        out.append(f"  DNS            resolves {host}")
+        out.append(f"  DNS            résout {host}")
     except OSError as exc:
         out += [
-            f"  DNS            FAILS for {host}: {exc}",
+            f"  DNS            ÉCHOUE pour {host} : {exc}",
             "",
-            "  The host does not resolve, so nothing else can be diagnosed.",
-            "  Fix the container's resolver before looking at anything else.",
+            "  Le nom d'hôte ne se résout pas : rien d'autre ne peut être diagnostiqué.",
+            "  Corrigez le résolveur DNS de la machine avant de regarder autre chose.",
         ]
         return out
 
@@ -267,71 +275,73 @@ async def _diagnose_egress(host: str) -> list[str]:
 
     if transport_error is not None:
         tls_intercepted = "CERTIFICATE_VERIFY_FAILED" in transport_error or "self-signed" in transport_error
-        out.append(f"  direct request FAILS: {transport_error}")
+        out.append(f"  requête directe ÉCHOUE : {transport_error}")
         if tls_intercepted:
             out += [
                 "",
-                "  TLS verification failed against a self-signed chain, which means a",
-                "  proxy is intercepting and re-terminating TLS. So there IS a gateway",
-                "  in front of this host, and the refusal is almost certainly its egress",
-                "  policy rather than a network fault.",
+                "  La vérification TLS a échoué sur une chaîne auto-signée : un proxy",
+                "  intercepte et re-termine le TLS. Il y a donc bien une passerelle devant",
+                "  cet hôte, et le refus vient presque certainement de sa politique de",
+                "  sortie, pas d'une panne réseau.",
                 "",
-                "  Point the CA bundle at the gateway's certificate and re-run, e.g.",
-                "  SSL_CERT_FILE=/path/to/ca-bundle.crt, then follow whatever host",
-                "  allowlist that gateway enforces.",
+                "  Pointez le bundle de certificats sur celui de la passerelle et relancez,",
+                "  par exemple SSL_CERT_FILE=/chemin/vers/ca-bundle.crt, puis respectez la",
+                "  liste d'hôtes autorisés que cette passerelle impose.",
             ]
         else:
             out += [
                 "",
-                "  DNS resolves but no response came back at all. That is a firewall",
-                "  or a missing route rather than a policy refusal — a policy would",
-                "  answer with a status code. Check egress firewall rules.",
+                "  Le DNS résout mais aucune réponse n'est revenue. C'est un pare-feu ou",
+                "  une route manquante, pas un refus de politique — une politique répondrait",
+                "  avec un code de statut. Vérifiez les règles du pare-feu sortant.",
             ]
         return out
 
-    out.append(f"  direct request HTTP {status}" + (f"  x-deny-reason: {deny_reason}" if deny_reason else ""))
+    out.append(f"  requête directe HTTP {status}" + (f"  x-deny-reason : {deny_reason}" if deny_reason else ""))
 
     if status == 200:
         out += [
             "",
-            "  The host is reachable when the local proxy is bypassed, so the",
-            "  network is fine and the failure is in the proxy configuration.",
-            "  Check HTTPS_PROXY and whether that proxy allows this host.",
+            "  L'hôte est joignable lorsque le proxy local est contourné : le réseau va",
+            "  bien et la panne est dans la configuration du proxy. Vérifiez HTTPS_PROXY",
+            "  et si ce proxy autorise cet hôte.",
         ]
         return out
 
     if deny_reason or "allowlist" in body.lower():
         out += [
             "",
-            "  A sandbox egress gateway refused this host — the request never",
-            "  reached the provider. This is an environment setting, not a fault",
-            "  in the connector and not a problem with the venue or chain.",
+            "  Une passerelle de sortie a refusé cet hôte — la requête n'a jamais atteint",
+            "  le fournisseur. C'est un réglage d'environnement, pas un défaut du",
+            "  connecteur ni un problème de la plateforme ou de la chaîne.",
             "",
-            "  If you are on Claude Code on the web: open claude.ai/code, click the",
-            "  cloud icon above the message box, hover your environment and open its",
-            "  settings, set Network access to Custom, and add these to",
-            "  Allowed domains (keep 'Also include default list of common package",
-            "  managers' checked so pip and npm keep working):",
+            "  Sur Claude Code sur le web : ouvrez claude.ai/code, cliquez sur l'icône",
+            "  nuage au-dessus de la zone de message, survolez votre environnement et",
+            "  ouvrez ses réglages, passez « Network access » sur « Custom », puis ajoutez",
+            "  ceci aux domaines autorisés (laissez cochée l'option qui inclut la liste par",
+            "  défaut des gestionnaires de paquets, pour que pip et npm continuent de",
+            "  fonctionner) :",
             "",
         ] + [f"      {h}" for h in _hosts_to_allow(host)] + [
             "",
-            "  Then start a NEW session — a running session keeps the policy it",
-            "  started with. Full reference: code.claude.com/docs/en/cloud-environments",
+            "  Démarrez ensuite une NOUVELLE session — une session en cours conserve la",
+            "  politique avec laquelle elle a démarré.",
+            "  Référence : code.claude.com/docs/en/cloud-environments",
         ]
         return out
 
     if status in (403, 451):
         out += [
             "",
-            f"  The venue itself answered {status} with no sandbox deny header, which",
-            "  usually means the source IP's region is restricted. Run from a",
-            "  permitted region, or point the connector at the venue for your",
-            "  jurisdiction (US users: api.binance.us, a different API contract",
-            "  this connector does not implement).",
+            f"  La plateforme elle-même a répondu {status} sans en-tête de refus de",
+            "  passerelle, ce qui signifie en général que la région de l'adresse IP est",
+            "  restreinte. Lancez depuis une région autorisée, ou pointez le connecteur",
+            "  sur la plateforme de votre juridiction (aux États-Unis : api.binance.us,",
+            "  un contrat d'API différent que ce connecteur n'implémente pas).",
         ]
         return out
 
-    out += ["", f"  Unexpected status {status}. Body: {body[:120]}"]
+    out += ["", f"  Statut inattendu {status}. Corps : {body[:120]}"]
     return out
 
 
@@ -340,9 +350,12 @@ def _summarise(checks) -> int:
     total = len(checks)
     print("-" * 68)
     if passed == total:
-        print(f"LIVE VERIFIED — {passed}/{total} checks passed against the real API.\n")
+        print(f"FLUX LIVE VÉRIFIÉ — {passed}/{total} contrôles réussis contre la vraie API.\n")
         return 0
-    print(f"NOT VERIFIED — {passed}/{total} checks passed. Fix the failures above before trusting this feed.\n")
+    print(
+        f"NON VÉRIFIÉ — {passed}/{total} contrôles réussis. Corrigez les échecs ci-dessus "
+        "avant de faire confiance à ce flux.\n"
+    )
     return 1
 
 

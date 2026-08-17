@@ -300,10 +300,10 @@ export default function App() {
             Mes positions
           </button>
           <button className={tab === 'alerts' ? 'active' : ''} onClick={() => setTab('alerts')}>
-            Alerts{alerts.length > 0 ? ` (${alerts.length})` : ''}
+            Alertes{alerts.length > 0 ? ` (${alerts.length})` : ''}
           </button>
           <button className={tab === 'verification' ? 'active' : ''} onClick={() => setTab('verification')}>
-            Verification
+            Vérification
           </button>
           <button className={tab === 'performance' ? 'active' : ''} onClick={() => setTab('performance')}>
             Performance
@@ -349,7 +349,7 @@ export default function App() {
             </span>
           </div>
           <div className="stat">
-            <span className="k">Data</span>
+            <span className="k">Données</span>
             <span className={`v ${isDemo ? 'bad' : 'ok'}`} title={health?.data_mode_detail ?? ''}>
               <span className={`dot ${isDemo ? 'bad' : 'ok'}`} />
               {health?.data_mode ?? '—'}
@@ -360,27 +360,27 @@ export default function App() {
             <span className={`v ${isDemo ? 'warn' : 'ok'}`}>{health?.provider ?? '—'}</span>
           </div>
           <div className="stat">
-            <span className="k">Last update</span>
+            <span className="k">Dernière mise à jour</span>
             <span className="v">{last ? clock(last.finished_at_ms) : '—'}</span>
           </div>
           <div className="stat">
-            <span className="k">Scan age</span>
+            <span className="k">Âge du scan</span>
             <span className={`v ${isStale ? 'bad' : ''}`}>{last ? age(last.age_seconds) : '—'}</span>
           </div>
           <div className="stat">
-            <span className="k">Data age</span>
+            <span className="k">Âge des données</span>
             <span className={`v ${isStale ? 'bad' : ''}`}>{age(dataAge)}</span>
           </div>
           <div className="stat">
-            <span className="k">Scanned</span>
+            <span className="k">Analysés</span>
             <span className="v">{last ? `${last.succeeded}/${last.scanned}` : '—'}</span>
           </div>
           <div className="stat">
-            <span className="k">Failed</span>
+            <span className="k">Échecs</span>
             <span className={`v ${last && last.failed > 0 ? 'warn' : ''}`}>{last?.failed ?? '—'}</span>
           </div>
           <div className="stat">
-            <span className="k">Regime</span>
+            <span className="k">Régime de marché</span>
             <span className="v">{health?.market_regime?.trend ?? '—'}</span>
           </div>
           <div className="stat">
@@ -395,7 +395,7 @@ export default function App() {
             {mode === 'simple' ? 'Simple' : 'Expert'}
           </button>
           <button className="action" onClick={runScan} disabled={scanning}>
-            {scanning ? 'Scanning…' : 'Scan now'}
+            {scanning ? 'Analyse…' : 'Lancer un scan'}
           </button>
         </div>
         )}
@@ -458,7 +458,7 @@ export default function App() {
         {feed && (
           <FeedBadge feed={feed} onRetry={retryVerification} busy={verifying} />
         )}
-        {error && <div className="error-box">Error: {error}</div>}
+        {error && <div className="error-box">Erreur : {error}</div>}
 
         {tab === 'home' && (
           <HomeView
@@ -478,7 +478,7 @@ export default function App() {
         {noScanYet && (tab === 'scanner' || tab === 'home') && (
           <div className="table-wrap">
             <div className="empty">
-              No scan has completed yet. Press <strong>Scan now</strong>, or wait for the background loop
+              No scan has completed yet. Press <strong>Lancer un scan</strong>, or wait for the background loop
               ({health?.scan_interval_seconds ?? '—'}s interval).
             </div>
           </div>
@@ -501,13 +501,13 @@ export default function App() {
 
             <div className={`toolbar ${showFilters ? 'open' : ''}`}>
               <div className="filter">
-                <label>Opportunity ≥</label>
+                <label>Opportunité ≥</label>
                 <input type="range" min={0} max={100} value={minScore}
                        onChange={(e) => setMinScore(Number(e.target.value))} />
                 <span className="val">{minScore}</span>
               </div>
               <div className="filter">
-                <label>Maturity ≤</label>
+                <label>Maturité ≤</label>
                 <input type="range" min={0} max={100} value={maxMaturity}
                        onChange={(e) => setMaxMaturity(Number(e.target.value))} />
                 <span className="val">{maxMaturity}</span>
@@ -519,38 +519,38 @@ export default function App() {
                 <span className="val">{minRvol}x</span>
               </div>
               <div className="filter">
-                <label>Status</label>
+                <label>État</label>
                 <select value={stateFilter} onChange={(e) => setStateFilter(e.target.value)}>
-                  <option value="">All</option>
-                  <option value="ARMED">ARMED</option>
-                  <option value="BREAKOUT">BREAKOUT</option>
+                  <option value="">Tous</option>
+                  <option value="ARMED">PRÊT</option>
+                  <option value="BREAKOUT">CASSURE</option>
                   <option value="RETEST">RETEST</option>
                   <option value="CONTINUATION">CONTINUATION</option>
-                  <option value="ARMED,BREAKOUT,RETEST,CONTINUATION">Actionable</option>
-                  <option value="WATCH">WATCH</option>
-                  <option value="OBSERVE">OBSERVE</option>
+                  <option value="ARMED,BREAKOUT,RETEST,CONTINUATION">Actionnables</option>
+                  <option value="WATCH">SURVEILLER</option>
+                  <option value="OBSERVE">OBSERVER</option>
                 </select>
               </div>
               <div className="filter">
-                <label>Liquidity ≥</label>
+                <label>Liquidité ≥</label>
                 <select value={minLiquidity} onChange={(e) => setMinLiquidity(e.target.value)}>
-                  <option value="">Any</option>
+                  <option value="">Toutes</option>
                   <option value="ACCEPTABLE">ACCEPTABLE</option>
-                  <option value="GOOD">GOOD</option>
-                  <option value="EXCELLENT">EXCELLENT</option>
+                  <option value="GOOD">BONNE</option>
+                  <option value="EXCELLENT">EXCELLENTE</option>
                 </select>
               </div>
               <div className="filter">
-                <label>Search</label>
+                <label>Rechercher</label>
                 <input type="text" value={search} placeholder="BTC…"
                        onChange={(e) => setSearch(e.target.value)} style={{ width: 90 }} />
               </div>
               <label className="filter check">
                 <input type="checkbox" checked={hideVetoed} onChange={(e) => setHideVetoed(e.target.checked)} />
-                <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>Hide vetoed</span>
+                <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>Masquer les vetos</span>
               </label>
               <span className="only-wide" style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-faint)' }}>
-                {filtered.length} of {rows.length}
+                {filtered.length} sur {rows.length}
               </span>
             </div>
 
@@ -586,11 +586,12 @@ export default function App() {
         )}
 
         <div className="disclaimer">
-          <strong>Opportunity Score is a 0–100 ranking, not a probability.</strong>{' '}
-          A score of 84 means this setup ranks above one scoring 60 under the current fixed weights
-          ({health?.engine_version ?? 'SCORE_ENGINE_V1'}). It does not mean an 84% chance of anything.
-          The weighting is a starting hypothesis and has not been statistically validated against outcomes.
-          Paper mode is {health?.paper_mode ? 'ON — no order is ever placed' : 'OFF'}.
+          <strong>Le score d’opportunité est un classement sur 100, pas une probabilité.</strong>{' '}
+          Un score de 84 signifie que ce setup se classe au-dessus d’un setup à 60 selon les pondérations
+          fixes actuelles ({health?.engine_version ?? 'SCORE_ENGINE_V1'}). Cela ne veut pas dire
+          « 84 % de chances » de quoi que ce soit. Ces pondérations sont une hypothèse de départ et
+          n’ont jamais été validées statistiquement contre des résultats réels.
+          Mode papier : {health?.paper_mode ? 'ACTIF — aucun ordre n’est jamais passé' : 'INACTIF'}.
         </div>
       </main>
 

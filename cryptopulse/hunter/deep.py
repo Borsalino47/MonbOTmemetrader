@@ -131,7 +131,7 @@ class DeepScanner:
         if len(candidates) > max_symbols:
             report.notes.append(
                 f"{len(candidates)} candidates offered, {max_symbols} examined — the rest "
-                "were not analysed rather than analysed badly."
+                "n'ont pas été analysés plutôt qu'analysés mal."
             )
 
         # What the classic scan already produced this cycle, free to reuse.

@@ -166,7 +166,7 @@ async def test_a_missing_candle_is_reported_as_a_feed_gap_not_matched_to_a_neigh
     off_grid.timestamp_ms += 1  # one millisecond off the grid: no exact match
     results = _tracker()._track_one(off_grid, series)
     assert all(r.status is HorizonStatus.UNRESOLVABLE for r in results)
-    assert all("feed gap" in (r.note or "") for r in results)
+    assert all("trou dans le flux" in (r.note or "") for r in results)
 
 
 async def test_max_gain_and_drawdown_bracket_the_final_change():
@@ -292,7 +292,7 @@ def test_small_horizon_samples_are_flagged():
     b = next(x for x in perf["overall"] if x["horizon"] == "15m")
     assert b["n"] == MIN_SAMPLE - 1
     assert b["insufficient_sample"] is True
-    assert any("nothing here should be read as a finding" in n for n in perf["notes"])
+    assert any("ne doit être lu comme un résultat" in n for n in perf["notes"])
 
 
 def test_horizon_stats_slice_by_score_band_and_provider():
@@ -311,7 +311,7 @@ def test_horizon_stats_slice_by_score_band_and_provider():
 def test_synthetic_horizon_rows_are_called_out():
     perf = build_horizon_performance([_row("1h", 1.0, synthetic=True)])
     assert perf["synthetic_count"] == 1
-    assert any("SYNTHETIC" in n for n in perf["notes"])
+    assert any("SYNTHÉTIQUE" in n for n in perf["notes"])
 
 
 def test_gross_basis_is_available_and_labelled():
@@ -321,7 +321,7 @@ def test_gross_basis_is_available_and_labelled():
     assert net["return_basis"] == "net_change_pct"
     assert gross["return_basis"] == "change_pct"
     assert gross["overall"][1]["avg_change_pct"] == pytest.approx(0.3)
-    assert any("no fee, spread or slippage" in n for n in gross["notes"])
+    assert any("ni frais, ni écart, ni glissement" in n for n in gross["notes"])
 
 
 def test_costs_are_deducted_symmetrically_from_the_criterion():

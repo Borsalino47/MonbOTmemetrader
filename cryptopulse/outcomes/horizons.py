@@ -241,7 +241,7 @@ class HorizonTracker:
             note = (
                 f"signal bar predates the deepest fetchable history ({MAX_FETCH_BARS} bars)"
                 if sig.timestamp_ms < oldest
-                else "the signal's candle is missing from the provider's series (feed gap)"
+                else "la bougie du signal est absente de la série du fournisseur (trou dans le flux)"
             )
             return [
                 HorizonResult(sig.id, sig.symbol, h.name, HorizonStatus.UNRESOLVABLE, note=note)
@@ -261,7 +261,7 @@ class HorizonTracker:
             return [
                 HorizonResult(
                     sig.id, sig.symbol, h.name, HorizonStatus.UNRESOLVABLE,
-                    note="entry price is not positive",
+                    note="le prix d'entrée n'est pas positif",
                 )
                 for h in HORIZONS
             ]

@@ -22,7 +22,7 @@ from cryptopulse.hunter.discovery import (
     SnapshotMemory,
     prescan,
 )
-from tests.conftest import FIXED_NOW_MS
+from tests.conftest import FIXED_NOW_MS, code
 
 
 def _ticker(
@@ -81,7 +81,7 @@ def test_a_small_accelerating_token_outranks_a_large_quiet_one():
 
     small = report.candidates[0]
     assert small.volume_excess_vs_yesterday > 5.0
-    assert any("above the same moment yesterday" in r for r in small.reasons)
+    assert any(code(r) == "HUNT_VOLUME_VS_YESTERDAY" for r in small.reasons)
 
 
 def test_ranking_is_not_a_volume_ordering():
@@ -109,8 +109,8 @@ def test_the_first_reading_reports_no_acceleration_rather_than_zero():
     assert c.volume_excess_vs_yesterday is None
     assert c.trade_excess_vs_yesterday is None
     assert c.seconds_since_previous is None
-    assert any("no previous reading" in x for x in c.caveats)
-    assert any("no previous snapshot" in n for n in report.notes)
+    assert any(x.code == "HUNT_NO_PREVIOUS" for x in c.caveats)
+    assert any("aucun instantané précédent" in n for n in report.notes)
 
 
 def test_readings_too_close_together_produce_no_delta():
@@ -144,7 +144,7 @@ def test_volume_rising_while_price_is_flat_is_called_out():
     before = {"AAAUSDT": _ticker("AAAUSDT", price=100.0, volume=1_000_000.0)}
     after = {"AAAUSDT": _ticker("AAAUSDT", price=100.05, volume=1_150_000.0)}
     c = _two_readings(before, after).candidates[0]
-    assert any("still flat" in r for r in c.reasons)
+    assert any(r.code == "HUNT_ACTIVITY_FLAT_PRICE" for r in c.reasons)
 
 
 # --------------------------------------------------------------------------- #
@@ -159,14 +159,14 @@ def test_a_token_that_already_ran_is_penalised_not_promoted():
 
     by = {c.symbol: c for c in report.candidates}
     assert by["CALMUSDT"].priority > by["SPENTUSDT"].priority
-    assert any("may be spent" in x for x in by["SPENTUSDT"].caveats)
+    assert any(x.code == "HUNT_MOVE_SPENT" for x in by["SPENTUSDT"].caveats)
 
 
 def test_being_pinned_at_the_24h_high_is_a_caveat_not_a_reason():
     at_high = _ticker("AAAUSDT", price=109.8, high=110.0, low=90.0)
     c = prescan({"AAAUSDT": at_high}, _memory(), now_ms=FIXED_NOW_MS).candidates[0]
-    assert any("24h range" in x for x in c.caveats)
-    assert not any("not pinned at the high" in r for r in c.reasons)
+    assert any(x.code == "HUNT_RANGE_HIGH" for x in c.caveats)
+    assert not any(r.code == "HUNT_RANGE_ROOM" for r in c.reasons)
 
 
 # --------------------------------------------------------------------------- #
@@ -219,8 +219,8 @@ def test_a_missing_spread_is_unknown_rather_than_perfect():
         {"AAAUSDT": _ticker("AAAUSDT", bid=None, ask=None)}, _memory(), now_ms=FIXED_NOW_MS
     ).candidates[0]
     assert c.spread_bps is None
-    assert any("spread unknown" in x for x in c.caveats)
-    assert not any("tight spread" in r for r in c.reasons)
+    assert any(x.code == "HUNT_NO_SPREAD" for x in c.caveats)
+    assert not any(r.code == "HUNT_SPREAD_TIGHT" for r in c.reasons)
 
 
 # --------------------------------------------------------------------------- #

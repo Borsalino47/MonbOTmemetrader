@@ -269,4 +269,4 @@ def test_a_scan_that_produced_nothing_does_not_blank_the_screen(client, settings
     body = client.get("/api/scan?limit=5").json()
     assert body["results"], "the journal must still fill the screen"
     assert body["meta"]["source"] == "journal"
-    assert "produced no usable result" in body["meta"]["reason"]
+    assert "aucun résultat exploitable" in body["meta"]["reason"]

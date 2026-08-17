@@ -52,7 +52,7 @@ export function ExplosionPanel({ explosion }: { explosion: Explosion }) {
             <div key={c.name} className={`breakdown-row ${c.points === 0 ? 'zero' : ''} ${c.available ? '' : 'unavailable'}`}>
               <div className="name">{FR[c.name] ?? c.name}</div>
               <div className="bar"><div className="fill" style={{ width: `${(c.points / c.max_points) * 100}%` }} /></div>
-              <div className="pts">+{c.points.toFixed(1)} / {c.max_points}</div>
+              <div className="pts">+{num(c.points, 1)} / {c.max_points}</div>
             </div>
           ))}
         </div>

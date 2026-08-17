@@ -165,7 +165,7 @@ def test_one_pass_answers_every_threshold():
     episodes = find_pumps(_series(_with_one_ramp(size=0.25, bars=10)))
     st = summarise(episodes)
     assert st.by_size, "no size breakdown produced"
-    assert all(k.endswith("%+") for k in st.by_size)
+    assert all(k.endswith(" %+") for k in st.by_size)
     # Buckets are cumulative: a 25% move cleared 3, 5, 10 and 20.
     counts = list(st.by_size.values())
     assert counts == sorted(counts, reverse=True)
@@ -181,7 +181,7 @@ def test_timing_resolution_travels_with_the_numbers():
 def test_history_says_so_when_a_token_has_simply_never_accelerated():
     h = build_history(_series(_flat()))
     assert h.episodes == []
-    assert any("not a failure" in n for n in h.notes)
+    assert any("pas un échec" in n for n in h.notes)
     assert h.days_covered > 1.0
 
 
@@ -213,7 +213,7 @@ def test_a_handful_of_matches_produces_no_rate_at_all():
     assert report.median_gain_pct is None
     d = report.to_dict()
     assert d["reached"] == {} and d["median_gain_pct"] is None
-    assert any("not evidence" in n for n in d["notes"])
+    assert any("pas une preuve" in n for n in d["notes"])
 
 
 def test_a_real_sample_produces_rates_with_their_count():
@@ -224,10 +224,10 @@ def test_a_real_sample_produces_rates_with_their_count():
     )
     assert report.comparable >= MIN_SAMPLE
     assert report.insufficient_sample is False
-    assert report.reached["3%+"] == 1.0
-    assert 0.0 < report.reached["5%+"] < 1.0
+    assert report.reached["3 %+"] == 1.0
+    assert 0.0 < report.reached["5 %+"] < 1.0
     assert report.median_gain_pct is not None
-    assert "not a probability" in " ".join(report.notes)
+    assert "pas une probabilité" in " ".join(report.notes)
 
 
 def test_dissimilar_setups_are_excluded_and_counted():
@@ -255,10 +255,10 @@ def test_episodes_without_recorded_context_are_reported_not_dropped_silently():
     )
     report = compare_to_past(SetupFingerprint(rvol=2.0, atr_pct=1.0), [bare])
     assert report.not_comparable == 1
-    assert any("lacked enough recorded context" in n for n in report.notes)
+    assert any("pas assez de contexte" in n for n in report.notes)
 
 
 def test_nothing_to_compare_against_says_so():
     report = compare_to_past(SetupFingerprint(rvol=2.0, atr_pct=1.0), [])
     assert report.comparable == 0
-    assert any("no past episodes" in n for n in report.notes)
+    assert any("Aucun épisode passé" in n for n in report.notes)

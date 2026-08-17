@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
-import { DASH, num, pct, price } from '../format';
+import { DASH, mult, num, pct, price } from '../format';
 import type { PumpEpisode, PumpResponse } from '../types';
 
 /** This token's own accelerations, and whether the present resembles them.
@@ -111,7 +111,7 @@ export function PumpPanel({ symbol }: { symbol: string }) {
                 k="RVOL au départ"
                 v={stats.median_rvol_at_start === null
                   ? DASH
-                  : `${num(stats.median_rvol_at_start, 1)}x`}
+                  : mult(stats.median_rvol_at_start, 1)}
               />
               <Stat k="Épisodes mesurés" v={String(stats.n)} />
             </div>
@@ -133,13 +133,13 @@ export function PumpPanel({ symbol }: { symbol: string }) {
         <h3>Le moment présent ressemble-t-il à ces départs ?</h3>
 
         <div className="pump-stats">
-          <Stat k="RVOL maintenant" v={now.rvol === null ? DASH : `${num(now.rvol, 1)}x`} />
+          <Stat k="RVOL maintenant" v={now.rvol === null ? DASH : mult(now.rvol, 1)} />
           <Stat k="Volume vs avant" v={pct(now.volume_change_pct)} />
           <Stat
             k="Position dans le range"
             v={now.range_position === null ? DASH : num(now.range_position, 2)}
           />
-          <Stat k="ATR" v={now.atr_pct === null ? DASH : `${num(now.atr_pct)}%`} />
+          <Stat k="ATR" v={now.atr_pct === null ? DASH : `${num(now.atr_pct)}\u202f%`} />
         </div>
 
         <div className="kv" style={{ marginTop: 8 }}>
@@ -165,7 +165,7 @@ export function PumpPanel({ symbol }: { symbol: string }) {
                   <div className="bar">
                     <div className="fill" style={{ width: `${share * 100}%` }} />
                   </div>
-                  <span className="pts">{(share * 100).toFixed(0)}%</span>
+                  <span className="pts">{num(share * 100, 0)} %</span>
                 </div>
               ))}
             </div>
@@ -206,11 +206,11 @@ function EpisodeRow({ e }: { e: PumpEpisode }) {
   return (
     <div className="pump-row">
       <span className="pump-when">{when}</span>
-      <span className="pump-gain pos">+{e.gain_pct.toFixed(1)}%</span>
+      <span className="pump-gain pos">{pct(e.gain_pct, 1)}</span>
       <span className="pump-dur">{hours(e.minutes_to_peak)}</span>
       <span className="pump-px">{price(e.start_price)} → {price(e.peak_price)}</span>
       <span className={`pump-dd ${e.drawdown_after_pct === null ? 'muted' : 'neg'}`}>
-        {e.drawdown_after_pct === null ? DASH : `${e.drawdown_after_pct.toFixed(1)}%`}
+        {pct(e.drawdown_after_pct, 1)}
       </span>
     </div>
   );
@@ -223,7 +223,7 @@ function SizeBars({ by, total }: { by: Record<string, number>; total: number }) 
     <div className="pump-sizes">
       <p className="pump-note" style={{ marginTop: 0 }}>
         Épisodes ayant <em>atteint au moins</em> cette taille. Les paliers se
-        cumulent : un +12% compte dans 3%+, 5%+ et 10%+.
+        cumulent : un +12 % compte dans 3 %+, 5 %+ et 10 %+.
       </p>
       {entries.map(([bucket, n]) => (
         <div className="pump-reached-row" key={bucket}>
@@ -252,5 +252,5 @@ function Stat({ k, v }: { k: string; v: string }) {
 function hours(minutes: number): string {
   if (minutes < 60) return `${minutes} min`;
   const h = minutes / 60;
-  return h < 10 ? `${h.toFixed(1)} h` : `${Math.round(h)} h`;
+  return h < 10 ? `${num(h, 1)}\u202fh` : `${num(Math.round(h), 0)}\u202fh`;
 }

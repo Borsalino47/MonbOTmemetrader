@@ -203,7 +203,10 @@ class OutcomeTracker:
                 label_config=self.label.name, horizon_bars=self.label.horizon_bars,
                 return_pct=None, net_return_pct=None, mfe_atr=None, mae_atr=None,
                 bars_held=None, entry_price=None, exit_price=None,
-                note="no ATR was recorded with the signal, so ATR-scaled barriers cannot be placed",
+                note=(
+                    "aucun ATR n'a été enregistré avec le signal : les barrières calées "
+                    "sur l'ATR ne peuvent pas être posées"
+                ),
             )
 
         # Exact match on the close time the signal was scored at. Resolving
@@ -225,7 +228,7 @@ class OutcomeTracker:
                 label_config=self.label.name, horizon_bars=self.label.horizon_bars,
                 return_pct=None, net_return_pct=None, mfe_atr=None, mae_atr=None,
                 bars_held=None, entry_price=None, exit_price=None,
-                note="the signal's candle is missing from the provider's series (feed gap)",
+                note="la bougie du signal est absente de la série du fournisseur (trou dans le flux)",
             )
 
         idx = int(matches[0])

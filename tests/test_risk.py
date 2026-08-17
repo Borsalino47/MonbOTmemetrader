@@ -61,7 +61,7 @@ def test_unknown_volume_is_unknown_not_zero():
     assert a.status is LiquidityStatus.UNKNOWN
     assert a.fraction is None, "unknown liquidity must not be scored as if it were measured"
     assert a.veto is False, "unknown is not the same as dangerous"
-    assert "DATA_UNAVAILABLE" in " ".join(a.reasons)
+    assert any(r.code == "LIQ_NO_VOLUME_DATA" for r in a.reasons)
 
 
 def test_wide_spread_downgrades_an_otherwise_liquid_asset():

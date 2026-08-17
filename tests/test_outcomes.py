@@ -186,7 +186,7 @@ async def test_timestamp_not_on_a_bar_boundary_is_not_grafted_onto_a_neighbour()
     sig.timestamp_ms += 1234  # no longer any bar's close time
     report = await _tracker(clock).resolve([sig])
     assert report.unresolvable == 1
-    assert "missing" in (report.resolutions[0].note or "")
+    assert "absente de la série" in (report.resolutions[0].note or "")
 
 
 async def test_provider_failure_is_reported_per_symbol_not_raised():
@@ -262,7 +262,7 @@ async def test_performance_computes_rates_with_counts_attached():
 async def test_small_buckets_are_flagged_insufficient():
     perf = build_performance([_row() for _ in range(3)]).to_dict()
     assert perf["overall"]["insufficient_sample"] is True
-    assert any("Below" in n or "below" in n for n in perf["notes"])
+    assert any("En dessous de" in n for n in perf["notes"])
 
 
 async def test_large_sample_is_not_flagged():
@@ -274,7 +274,7 @@ async def test_large_sample_is_not_flagged():
 async def test_synthetic_signals_are_called_out():
     perf = build_performance([_row(synthetic=True) for _ in range(4)]).to_dict()
     assert perf["synthetic_count"] == 4
-    assert any("SYNTHETIC" in n for n in perf["notes"])
+    assert any("SYNTHÉTIQUE" in n for n in perf["notes"])
 
 
 async def test_breakdowns_group_correctly():

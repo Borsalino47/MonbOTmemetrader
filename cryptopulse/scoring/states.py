@@ -18,6 +18,10 @@ from enum import Enum
 from cryptopulse.config.settings import ScoringSettings
 from cryptopulse.features.pipeline import AssetFeatures, Bias
 from cryptopulse.features.structure import StructureTrend
+from cryptopulse.i18n import num
+from cryptopulse.i18n import price as price_fr
+from cryptopulse.i18n import reasons as R
+from cryptopulse.i18n.labels import SETUP_STATE_FR, SETUP_STATE_LONG_FR
 
 __all__ = ["SetupState", "StateDecision", "determine_state"]
 
@@ -43,6 +47,10 @@ class StateDecision:
     def to_dict(self) -> dict:
         return {
             "state": self.state.value,
+            # The identifier stays; the label is what the screen renders. A UI
+            # falling back to the value would print "BREAKOUT" in French text.
+            "state_label_fr": SETUP_STATE_FR[self.state.value],
+            "state_long_fr": SETUP_STATE_LONG_FR[self.state.value],
             "rationale": self.rationale,
             "trigger": self.trigger,
             "invalidation": self.invalidation,
@@ -66,25 +74,25 @@ def determine_state(
     if hard_veto:
         return StateDecision(
             state=SetupState.OBSERVE if final_score >= cfg.threshold_observe else SetupState.IGNORE,
-            rationale="hard veto active (liquidity or safety) — cannot be promoted",
-            invalidation="veto must clear before this setup can be acted on",
+            rationale=R.RAT_VETO(),
+            invalidation=R.TRG_VETO(),
         )
 
     if st is None:
-        return StateDecision(SetupState.IGNORE, "no structural read available")
+        return StateDecision(SetupState.IGNORE, R.RAT_NO_STRUCTURE())
 
     # Structure actively against the setup.
     if st.trend is StructureTrend.DOWNTREND and f.bias is Bias.BEARISH:
         return StateDecision(
             SetupState.INVALIDATED,
-            "structural downtrend with bearish primary bias",
-            invalidation="requires a higher low and reclaim of EMA20 to re-qualify",
+            R.RAT_DOWNTREND(),
+            invalidation=R.TRG_REQUALIFY(),
         )
     if st.fake_breakout and final_score < cfg.threshold_watch:
         return StateDecision(
             SetupState.INVALIDATED,
-            "breakout attempt failed and score has not recovered",
-            invalidation="already invalidated by the failed attempt",
+            R.RAT_FAILED(),
+            invalidation=R.TRG_ALREADY_INVALID(),
         )
 
     res = st.nearest_resistance
@@ -95,32 +103,32 @@ def determine_state(
         if st.in_retest:
             return StateDecision(
                 SetupState.RETEST,
-                "price returned to a level it previously broke and is holding it as support",
-                trigger="reclaim and hold above the broken level with volume",
-                invalidation=f"a close back below {_lvl(st)} invalidates the retest",
+                R.RAT_RETEST(),
+                trigger=R.TRG_RECLAIM_HOLD(),
+                invalidation=R.TRG_CLOSE_BELOW_RETEST(level=_lvl(st)),
             )
         # Continuation vs fresh breakout: a mature move that is still structurally
         # sound is a continuation, not a new breakout.
         if maturity_score >= 55:
             return StateDecision(
                 SetupState.CONTINUATION,
-                "move already underway and still structurally intact",
-                trigger="continued closes above the broken level on sustained volume",
-                invalidation="loss of the broken level or a break of the last higher low",
+                R.RAT_CONTINUATION(),
+                trigger=R.TRG_CONTINUED_CLOSES(),
+                invalidation=R.TRG_LOSE_LEVEL(),
             )
         return StateDecision(
             SetupState.BREAKOUT,
-            "level cleared on a closed candle with the score confirming",
-            trigger="already triggered — breakout in progress",
-            invalidation=f"a close back below {_lvl(st)} would fail the breakout",
+            R.RAT_BREAKOUT(),
+            trigger=R.TRG_IN_PROGRESS(),
+            invalidation=R.TRG_CLOSE_BELOW_FAILS(level=_lvl(st)),
         )
 
     if st.in_retest and final_score >= cfg.threshold_observe:
         return StateDecision(
             SetupState.RETEST,
-            "price testing a previously broken level from above",
-            trigger="rejection from the level with rising volume",
-            invalidation=f"a close below {_lvl(st)}",
+            R.RAT_RETEST_ABOVE(),
+            trigger=R.TRG_REJECTION(),
+            invalidation=R.TRG_CLOSE_BELOW(level=_lvl(st)),
         )
 
     # -- coiled below a level ------------------------------------------------ #
@@ -131,15 +139,22 @@ def determine_state(
         and maturity_score < cfg.pump_maturity_max_for_premium
     ):
         trigger = (
-            f"a close above {res.price:.8g}"
-            + (f" (+{cfg.breakout_confirm_atr:.2f} ATR = {res.price + cfg.breakout_confirm_atr * atr:.8g})" if atr else "")
-            + " on sustained volume"
+            R.TRG_CLOSE_ABOVE(level=price_fr(res.price))
+            + (
+                R.TRG_CONFIRM_ATR_SUFFIX(
+                    atr=num(cfg.breakout_confirm_atr),
+                    level=price_fr(res.price + cfg.breakout_confirm_atr * atr),
+                )
+                if atr
+                else ""
+            )
+            + R.TRG_SUSTAINED_VOLUME_SUFFIX()
             if res
-            else "a close above the mapped resistance on sustained volume"
+            else R.TRG_CLOSE_ABOVE_RESISTANCE()
         )
         return StateDecision(
             SetupState.ARMED,
-            f"strong preparatory setup {d:.2f} ATR below its trigger level",
+            R.RAT_ARMED(distance=num(d)),
             trigger=trigger,
             invalidation=_invalidation(st, price, atr),
         )
@@ -147,28 +162,28 @@ def determine_state(
     if final_score >= cfg.threshold_watch:
         return StateDecision(
             SetupState.WATCH,
-            "setup forming but not yet in position to trigger",
-            trigger="approach to the mapped resistance with volume still rising",
+            R.RAT_WATCH(),
+            trigger=R.TRG_APPROACH(),
             invalidation=_invalidation(st, price, atr),
         )
 
     if final_score >= cfg.threshold_observe:
-        return StateDecision(SetupState.OBSERVE, "early signs of a behaviour change, not yet actionable")
+        return StateDecision(SetupState.OBSERVE, R.RAT_OBSERVE())
 
-    return StateDecision(SetupState.IGNORE, "nothing structurally or behaviourally notable")
+    return StateDecision(SetupState.IGNORE, R.RAT_IGNORE())
 
 
 def _lvl(st) -> str:
     if st.nearest_resistance:
-        return f"{st.nearest_resistance.price:.8g}"
+        return price_fr(st.nearest_resistance.price)
     if st.nearest_support:
-        return f"{st.nearest_support.price:.8g}"
+        return price_fr(st.nearest_support.price)
     return "the level"
 
 
 def _invalidation(st, price: float, atr: float | None) -> str:
     if st.nearest_support is not None:
-        return f"a close below support at {st.nearest_support.price:.8g}"
+        return R.INV_CLOSE_BELOW_SUPPORT(level=price_fr(st.nearest_support.price))
     if atr:
-        return f"a close below {price - 1.5 * atr:.8g} (1.5 ATR under current price)"
+        return R.INV_CLOSE_BELOW_ATR(level=price_fr(price - 1.5 * atr))
     return "loss of the current structure"

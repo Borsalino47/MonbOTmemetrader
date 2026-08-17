@@ -90,9 +90,9 @@ class PumpConfig:
         Same choice, same reason as `scoring/verdict.py`.
         """
         return (
-            f"une hausse d'au moins {self.min_gain_pct:.0f}% atteinte en moins de "
+            f"une hausse d'au moins {self.min_gain_pct:.0f}\u202f% atteinte en moins de "
             f"{self.max_bars_to_peak} bougies depuis un creux local, qui se termine "
-            f"quand le prix rend {self.end_retrace_fraction:.0%} du mouvement"
+            f"quand le prix rend {self.end_retrace_fraction * 100:.0f}\u202f% du mouvement"
         )
 
 
@@ -130,7 +130,7 @@ class PumpEpisode:
     def size_bucket(self) -> str:
         """The largest documented threshold this episode cleared."""
         cleared = [b for b in SIZE_BUCKETS if self.gain_pct >= b]
-        return f"{cleared[-1]:.0f}%+" if cleared else "below floor"
+        return f"{cleared[-1]:.0f} %+" if cleared else "sous le seuil"
 
     def reached(self, threshold_pct: float) -> bool:
         return self.gain_pct >= threshold_pct
@@ -354,12 +354,13 @@ def build_history(
     )
     if episodes:
         history.notes.append(
-            f"Timing is known to the {tf.value} bar: 'time to peak' has "
-            f"{episodes[0].resolution_minutes}-minute resolution, not minute precision."
+            f"La chronologie est connue à la bougie {tf.value} près : le « temps jusqu'au "
+            f"sommet » a une résolution de {episodes[0].resolution_minutes} minutes, pas la "
+            "précision à la minute."
         )
     else:
         history.notes.append(
-            f"No episode matching the definition in {days:.1f} days of history. "
-            "That is a finding, not a failure — this token has not accelerated."
+            f"Aucun épisode correspondant à la définition sur {days:.1f} jours "
+            "d'historique. C'est un constat, pas un échec — ce token n'a pas accéléré."
         )
     return history

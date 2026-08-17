@@ -21,6 +21,12 @@ from enum import Enum
 
 from cryptopulse.config.settings import AlertSettings, ScoringSettings
 from cryptopulse.core.logging import get_logger
+from cryptopulse.i18n.labels import (
+    ALERT_LEVEL_FR,
+    LIQUIDITY_FR,
+    SETUP_STATE_FR,
+    SETUP_STATE_LONG_FR,
+)
 from cryptopulse.scoring.engine import ScoreResult
 from cryptopulse.scoring.states import SetupState
 
@@ -38,6 +44,10 @@ class AlertLevel(str, Enum):
     @property
     def rank(self) -> int:
         return {"INFO": 0, "WATCH": 1, "HIGH": 2, "CRITICAL_SETUP": 3}[self.value]
+
+
+def _alert_label(level) -> str:
+    return ALERT_LEVEL_FR[level.value]
 
 
 @dataclass(slots=True)
@@ -64,6 +74,7 @@ class Alert:
         return {
             "symbol": self.symbol,
             "level": self.level.value,
+            "level_label_fr": _alert_label(self.level),
             "headline": self.headline,
             "timestamp_ms": self.timestamp_ms,
             "price": self.price,
@@ -83,38 +94,45 @@ class Alert:
         }
 
     def format_text(self) -> str:
+        """The body of the notification and of the webhook payload.
+
+        This is the one alert surface the user reads away from the screen, so
+        it is French end to end (spec §17). The reasons arrive already
+        rendered — they were assembled in `cryptopulse/i18n/reasons.py` where
+        the numbers were.
+        """
         lines = [
             f"{self.symbol}",
-            f"{self.headline} — {self.level.value}",
+            f"{self.headline} — {ALERT_LEVEL_FR.get(self.level.value, self.level.value)}",
             "",
-            f"Opportunity Score: {self.final_score:.0f}/100",
-            f"Data Confidence: {self.data_confidence:.0f}/100",
-            f"Pump Maturity: {self.pump_maturity:.0f}/100",
-            f"Safety: {self.safety:.0f}/100",
-            f"Liquidity: {self.liquidity}",
-            f"Price: {self.price:.8g}",
-            f"Status: {self.state}",
+            f"Score d'opportunité : {self.final_score:.0f}/100",
+            f"Confiance dans les données : {self.data_confidence:.0f}/100",
+            f"Maturité du mouvement : {self.pump_maturity:.0f}/100",
+            f"Sécurité : {self.safety:.0f}/100",
+            f"Liquidité : {LIQUIDITY_FR.get(self.liquidity, self.liquidity)}",
+            f"Prix : {self.price:.8g}",
+            f"État : {SETUP_STATE_LONG_FR.get(self.state, self.state)}",
         ]
         if self.score_acceleration is not None:
-            lines.append(f"Score change: {self.score_acceleration:+.1f}")
+            lines.append(f"Variation du score : {self.score_acceleration:+.1f}")
         if self.why:
-            lines += ["", "Why this signal:"] + [f"  - {w}" for w in self.why[:6]]
+            lines += ["", "POURQUOI :"] + [f"  - {w}" for w in self.why[:6]]
         if self.risks:
-            lines += ["", "Risks:"] + [f"  - {r}" for r in self.risks[:6]]
+            lines += ["", "RISQUES :"] + [f"  - {r}" for r in self.risks[:6]]
         if self.trigger:
-            lines += ["", f"Trigger: {self.trigger}"]
+            lines += ["", f"Déclencheur : {self.trigger}"]
         if self.invalidation:
-            lines.append(f"Invalidation: {self.invalidation}")
+            lines.append(f"Invalidation : {self.invalidation}")
         return "\n".join(lines)
 
 
 _STATE_HEADLINES = {
-    SetupState.ARMED: "ARMED — COILED BELOW RESISTANCE",
-    SetupState.BREAKOUT: "BREAKOUT CONFIRMED",
-    SetupState.RETEST: "RETEST OF BROKEN LEVEL",
-    SetupState.CONTINUATION: "MOMENTUM CONTINUATION",
-    SetupState.WATCH: "SETUP FORMING",
-    SetupState.OBSERVE: "EARLY BEHAVIOUR CHANGE",
+    SetupState.ARMED: "PRÊT — COMPRIMÉ SOUS LA RÉSISTANCE",
+    SetupState.BREAKOUT: "CASSURE CONFIRMÉE",
+    SetupState.RETEST: "RETEST DU NIVEAU CASSÉ",
+    SetupState.CONTINUATION: "CONTINUATION DE LA HAUSSE",
+    SetupState.WATCH: "SETUP EN FORMATION",
+    SetupState.OBSERVE: "CHANGEMENT DE COMPORTEMENT PRÉCOCE",
 }
 
 
@@ -141,16 +159,17 @@ class AlertEngine:
         return None
 
     def _passes_gates(self, r: ScoreResult) -> tuple[bool, str]:
+        """The reason travels to `/api/health`, so it is French like the alert."""
         if r.liquidity.veto:
-            return False, "liquidity veto"
+            return False, "veto de liquidité"
         if r.safety.hard_veto:
-            return False, "safety veto"
+            return False, "veto de sécurité"
         if r.maturity.score > self.scoring.pump_maturity_late:
-            return False, f"pump maturity {r.maturity.score:.0f} too high"
+            return False, f"maturité du mouvement trop élevée ({r.maturity.score:.0f})"
         if r.confidence.score < 55.0:
-            return False, f"data confidence {r.confidence.score:.0f} too low"
+            return False, f"confiance dans les données trop faible ({r.confidence.score:.0f})"
         if r.state.state in (SetupState.IGNORE, SetupState.INVALIDATED):
-            return False, f"state {r.state.state.value}"
+            return False, f"état {SETUP_STATE_FR[r.state.state.value]}"
         return True, ""
 
     @staticmethod
@@ -194,7 +213,9 @@ class AlertEngine:
             alert = Alert(
                 symbol=r.symbol,
                 level=level,
-                headline=_STATE_HEADLINES.get(r.state.state, r.state.state.value),
+                headline=_STATE_HEADLINES.get(
+                    r.state.state, SETUP_STATE_LONG_FR[r.state.state.value]
+                ),
                 timestamp_ms=now_ms,
                 final_score=r.final_score,
                 pump_maturity=r.maturity.score,

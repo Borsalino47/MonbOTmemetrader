@@ -137,8 +137,8 @@ async def test_the_disclaimer_travels_with_every_message():
         return httpx.Response(204)
 
     await _send_via(AlertDelivery(webhook_url=SECRET), [_alert()], handler)
-    assert "not probabilities" in captured["body"]
-    assert "No order is ever placed" in captured["body"]
+    assert "pas des probabilités" in captured["body"]
+    assert "ne passe jamais aucun ordre" in captured["body"]
 
 
 async def test_a_demo_alert_is_marked_before_anything_actionable():
@@ -151,9 +151,9 @@ async def test_a_demo_alert_is_marked_before_anything_actionable():
 
     await _send_via(AlertDelivery(webhook_url=SECRET, synthetic=True), [_alert()], handler)
     body = captured["body"]
-    assert "SYNTHETIC" in body
+    assert "SYNTHÉTIQUES" in body
     # The warning must come before the first symbol, not as a footnote.
-    assert body.index("SYNTHETIC") < body.index("SOLUSDT")
+    assert body.index("SYNTHÉTIQUES") < body.index("SOLUSDT")
 
 
 async def test_a_generic_webhook_receives_the_structured_alert():

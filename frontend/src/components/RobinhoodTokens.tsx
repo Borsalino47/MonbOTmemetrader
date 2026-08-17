@@ -1,3 +1,4 @@
+import { num } from '../format';
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
 import { TokenCrossCheck } from './TokenCrossCheck';
@@ -244,7 +245,7 @@ function EarlyDetail({ t }: { t: RobinhoodToken }) {
           <div className="rh-comp-head">
             <span>{c.label_fr}</span>
             <span className={c.unavailable ? 'unknown' : ''}>
-              {c.unavailable ? 'indisponible' : `${c.points.toFixed(1)} / ${c.max_points}`}
+              {c.unavailable ? 'indisponible' : `${num(c.points, 1)} / ${c.max_points}`}
             </span>
           </div>
           {c.reasons.map((r, i) => <div className="rh-comp-why" key={`r${i}`}>· {r}</div>)}
@@ -302,7 +303,7 @@ function SafetyDetail({ s }: { s: SafetyReport }) {
       ))}
       <p className="feed-note">
         {s.engine_version} · empreinte {s.weights_fingerprint} ·
-        {' '}couverture {(s.coverage * 100).toFixed(0)} % des contrôles.
+        {' '}couverture {num(s.coverage * 100, 0)} % des contrôles.
         {' '}Les pondérations sont une hypothèse, jamais une probabilité.
       </p>
     </div>
@@ -328,19 +329,19 @@ function fmtAge(s: number | null): string {
   if (s === null) return '—';
   if (s < 60) return `${Math.round(s)} s`;
   if (s < 3600) return `${Math.round(s / 60)} min`;
-  return `${(s / 3600).toFixed(1)} h`;
+  return `${num(s / 3600, 1)} h`;
 }
 
 function fmtUsd(v: number | null, digits = 0): string {
   if (v === null) return '—';
   if (v !== 0 && Math.abs(v) < 0.01) return `$${v.toPrecision(3)}`;
-  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
-  if (v >= 1_000) return `$${(v / 1_000).toFixed(1)}K`;
-  return `$${v.toFixed(digits)}`;
+  if (v >= 1_000_000) return `${num(v / 1_000_000, 1)} M $`;
+  if (v >= 1_000) return `${num(v / 1_000, 1)} k $`;
+  return `${num(v, digits)} $`;
 }
 
 function fmtNum(v: number | null, digits = 0, suffix = ''): string {
-  return v === null ? '—' : `${v.toFixed(digits)}${suffix}`;
+  return v === null ? '—' : `${num(v, digits)}${suffix}`;
 }
 
 function short(addr: string): string {

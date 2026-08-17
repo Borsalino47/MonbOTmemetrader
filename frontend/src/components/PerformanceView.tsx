@@ -4,7 +4,7 @@ import { DASH, num } from '../format';
 import type { PerformanceResponse, Bucket } from '../types';
 
 function pct(v: number | null | undefined): string {
-  return v === null || v === undefined || !Number.isFinite(v) ? DASH : `${(v * 100).toFixed(1)}%`;
+  return v === null || v === undefined || !Number.isFinite(v) ? DASH : `${num(v * 100, 1)} %`;
 }
 
 function expectancyClass(v: number | null | undefined): string {
@@ -45,7 +45,7 @@ export function PerformanceView() {
   }
 
   if (error) return <div className="error-box">Could not load performance: {error}</div>;
-  if (!data) return <div className="loading">Loading…</div>;
+  if (!data) return <div className="loading">Chargement…</div>;
 
   const c = data.counts;
   const p = data.performance;
@@ -56,17 +56,17 @@ export function PerformanceView() {
     <div>
       <div className="toolbar">
         <div className="filter">
-          <label>Label</label>
+          <label>Étiquette</label>
           <span style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>{data.label.config}</span>
         </div>
         <div className="filter">
-          <label>Round-trip cost</label>
+          <label>Coût aller-retour</label>
           <span style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>
             {num(data.costs.round_trip_cost_pct as number, 2)}%
           </span>
         </div>
         <button className="action" onClick={resolveNow} disabled={resolving} style={{ marginLeft: 'auto' }}>
-          {resolving ? 'Resolving…' : 'Resolve now'}
+          {resolving ? 'Évaluation…' : 'Évaluer maintenant'}
         </button>
       </div>
 
@@ -76,12 +76,12 @@ export function PerformanceView() {
         <Stat k="Pending" v={String(c.pending_evaluation)} />
         <Stat k="Unresolvable" v={String(c.unresolvable)} />
         <Stat
-          k="Win rate"
+          k="Taux de réussite"
           v={noneSettled ? DASH : pct(o.win_rate)}
           color={noneSettled ? 'var(--text-faint)' : undefined}
         />
         <Stat
-          k="Expectancy"
+          k="Espérance"
           v={noneSettled ? DASH : `${num(o.expectancy_pct)}%`}
           color={
             noneSettled ? 'var(--text-faint)' : (o.expectancy_pct ?? 0) > 0 ? 'var(--up)' : 'var(--down)'
@@ -103,7 +103,7 @@ export function PerformanceView() {
         <>
           {o.insufficient_sample && (
             <div className="banner stale" style={{ borderRadius: 6, marginBottom: 14 }}>
-              <strong>SMALL SAMPLE</strong>
+              <strong>ÉCHANTILLON INSUFFISANT</strong>
               <span>
                 {o.n} settled signals, below the {p.min_sample} minimum. These figures describe
                 what happened; they are not yet evidence about what will happen.
@@ -112,36 +112,36 @@ export function PerformanceView() {
           )}
 
           <div className="panel">
-            <h3>Definition</h3>
+            <h3>Définition</h3>
             <div style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.6 }}>
               {data.label.definition}
             </div>
           </div>
 
           <div className="panel">
-            <h3>Overall</h3>
-            <div className="kv"><span className="k">Wins / losses / timeouts</span>
+            <h3>Vue d’ensemble</h3>
+            <div className="kv"><span className="k">Gagnants / perdants / sans issue</span>
               <span className="v">{o.wins} / {o.losses} / {o.timeouts}</span></div>
-            <div className="kv"><span className="k">Win rate</span><span className="v">{pct(o.win_rate)}</span></div>
-            <div className="kv"><span className="k">Expectancy per signal</span>
+            <div className="kv"><span className="k">Taux de réussite</span><span className="v">{pct(o.win_rate)}</span></div>
+            <div className="kv"><span className="k">Espérance par signal</span>
               <span className={`v ${expectancyClass(o.expectancy_pct)}`}>{num(o.expectancy_pct)}%</span></div>
-            <div className="kv"><span className="k">Average win / loss</span>
+            <div className="kv"><span className="k">Gain moyen / perte moyenne</span>
               <span className="v">{num(o.avg_win_pct)}% / {num(o.avg_loss_pct)}%</span></div>
-            <div className="kv"><span className="k">Profit factor</span>
+            <div className="kv"><span className="k">Facteur de profit</span>
               <span className="v">{o.profit_factor === null ? DASH : num(o.profit_factor)}</span></div>
-            <div className="kv"><span className="k">Average MFE / MAE</span>
+            <div className="kv"><span className="k">MFE / MAE moyens</span>
               <span className="v">{num(o.avg_mfe_atr)} / {num(o.avg_mae_atr)} ATR</span></div>
           </div>
 
-          <BucketTable title="By opportunity score" buckets={p.by_score_band} />
-          <BucketTable title="By setup state" buckets={p.by_state} />
-          <BucketTable title="By pump maturity" buckets={p.by_maturity_band} />
-          <BucketTable title="By market regime" buckets={p.by_regime} />
-          <BucketTable title="By liquidity" buckets={p.by_liquidity} />
+          <BucketTable title="Par score d’opportunité" buckets={p.by_score_band} />
+          <BucketTable title="Par état du setup" buckets={p.by_state} />
+          <BucketTable title="Par maturité du mouvement" buckets={p.by_maturity_band} />
+          <BucketTable title="Par régime de marché" buckets={p.by_regime} />
+          <BucketTable title="Par liquidité" buckets={p.by_liquidity} />
 
           {p.component_edge.length > 0 && (
             <div className="panel">
-              <h3>Component edge — average points, winners vs losers</h3>
+              <h3>Apport de chaque composant — points moyens, gagnants contre perdants</h3>
               <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 10, lineHeight: 1.55 }}>
                 A component that scores eventual winners and losers the same is contributing
                 noise to the final score, however sensible it looked when it was written.
@@ -149,10 +149,10 @@ export function PerformanceView() {
               <table>
                 <thead>
                   <tr>
-                    <th className="left">Component</th>
-                    <th>Winners</th>
-                    <th>Losers</th>
-                    <th>Edge</th>
+                    <th className="left">Composant</th>
+                    <th>Gagnants</th>
+                    <th>Perdants</th>
+                    <th>Écart</th>
                     <th>n</th>
                   </tr>
                 </thead>
@@ -160,10 +160,10 @@ export function PerformanceView() {
                   {p.component_edge.map((c2) => (
                     <tr key={c2.component} style={c2.insufficient_sample ? { opacity: 0.5 } : undefined}>
                       <td className="left" style={{ textTransform: 'capitalize' }}>{c2.component}</td>
-                      <td>{c2.avg_points_winners.toFixed(2)}</td>
-                      <td>{c2.avg_points_losers.toFixed(2)}</td>
+                      <td>{num(c2.avg_points_winners)}</td>
+                      <td>{num(c2.avg_points_losers)}</td>
                       <td className={c2.edge > 0 ? 'pos' : c2.edge < 0 ? 'neg' : 'muted'}>
-                        {c2.edge > 0 ? '+' : ''}{c2.edge.toFixed(2)}
+                        {c2.edge > 0 ? '+' : ''}{num(c2.edge)}
                       </td>
                       <td className="muted">{c2.n_winners + c2.n_losers}</td>
                     </tr>
@@ -201,11 +201,11 @@ function BucketTable({ title, buckets }: { title: string; buckets: Bucket[] }) {
       <table>
         <thead>
           <tr>
-            <th className="left">Bucket</th>
+            <th className="left">Tranche</th>
             <th>n</th>
             <th>W / L / T</th>
-            <th>Win rate</th>
-            <th>Expectancy</th>
+            <th>Taux de réussite</th>
+            <th>Espérance</th>
             <th>PF</th>
           </tr>
         </thead>
@@ -215,7 +215,7 @@ function BucketTable({ title, buckets }: { title: string; buckets: Bucket[] }) {
               <td className="left">
                 {b.key}
                 {b.insufficient_sample && (
-                  <span className="muted" style={{ fontSize: 10, marginLeft: 6 }}>small n</span>
+                  <span className="muted" style={{ fontSize: 10, marginLeft: 6 }}>n faible</span>
                 )}
               </td>
               <td>{b.n}</td>

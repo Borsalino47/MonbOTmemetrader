@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 
 from cryptopulse.features.pipeline import AssetFeatures
 from cryptopulse.features.stats import clamp01, scale
+from cryptopulse.i18n import reasons as R
 from cryptopulse.scoring.pump_maturity import PumpMaturity
 
 __all__ = ["AccelerationScores", "compute_acceleration"]
@@ -50,7 +51,7 @@ def compute_acceleration(af: AssetFeatures, maturity: PumpMaturity) -> Accelerat
     if f.rvol_slope is not None:
         parts["rvol_slope"] = scale(f.rvol_slope, 0.02, 0.5)
         if f.rvol_slope > 0.15:
-            reasons.append("RVOL climbing bar over bar")
+            reasons.append(R.ACC_RVOL_CLIMBING())
     if f.rvol is not None and f.rvol_prev is not None and f.rvol_prev > 0:
         step = f.rvol / f.rvol_prev - 1.0
         parts["rvol_step"] = scale(step, 0.05, 0.75)
@@ -73,10 +74,10 @@ def compute_acceleration(af: AssetFeatures, maturity: PumpMaturity) -> Accelerat
     if f.compression is not None:
         parts["volatility_release"] = clamp01(1.0 - f.compression) * 0.7
         if f.compression < 0.2:
-            reasons.append("volatility compressed and beginning to release")
+            reasons.append(R.ACC_COMPRESSION_RELEASING())
 
     if not parts:
-        return AccelerationScores(0.0, 0.0, reasons=["insufficient history for acceleration"])
+        return AccelerationScores(0.0, 0.0, reasons=[R.ACC_INSUFFICIENT()])
 
     momentum_accel = 100.0 * clamp01(sum(parts.values()) / len(parts))
 
@@ -92,7 +93,7 @@ def compute_acceleration(af: AssetFeatures, maturity: PumpMaturity) -> Accelerat
     early = min(100.0, early)
 
     if momentum_accel > 60 and maturity.score < 45:
-        reasons.append("behaviour changing while the move is still young")
+        reasons.append(R.ACC_EARLY_CHANGE())
 
     return AccelerationScores(
         momentum_acceleration=momentum_accel,

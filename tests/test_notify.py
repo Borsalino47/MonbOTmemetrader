@@ -80,7 +80,7 @@ def test_a_missing_binary_is_reported_rather_than_failing_at_send_time():
     availability = notifier.availability()
 
     assert availability.available is False
-    assert "not found" in availability.reason
+    assert "introuvable" in availability.reason
     assert availability.fix and "termux-api" in availability.fix
 
 
@@ -89,7 +89,7 @@ def test_switching_notifications_off_says_so_rather_than_looking_broken():
     identical from the outside unless something distinguishes them."""
     notifier = build_notifier(enabled=False)
     assert notifier.availability().available is False
-    assert "switched off" in notifier.availability().reason
+    assert "désactivées" in notifier.availability().reason
 
 
 def test_an_available_channel_still_warns_about_the_companion_app(tmp_path):
@@ -99,7 +99,7 @@ def test_an_available_channel_still_warns_about_the_companion_app(tmp_path):
     availability = TermuxNotifier(binary=binary).availability()
 
     assert availability.available is True
-    assert availability.fix and "Termux:API app" in availability.fix
+    assert availability.fix and "Termux:API" in availability.fix
 
 
 @pytest.mark.asyncio
@@ -195,7 +195,7 @@ async def test_a_command_that_hangs_is_named_as_the_missing_app(tmp_path):
 
     assert report.ok is False
     assert report.sent == 0
-    assert "Termux:API app is not installed" in report.error
+    assert "Termux:API n'est pas installée" in report.error
 
 
 @pytest.mark.asyncio
@@ -232,7 +232,7 @@ async def test_a_nonzero_exit_is_reported_with_its_code(tmp_path):
     )
 
     assert report.ok is False
-    assert "exited 3" in report.error
+    assert "code 3" in report.error
     assert "bad flag" in report.error
 
 
@@ -267,7 +267,7 @@ def test_the_same_symbol_at_the_same_level_does_not_buzz_twice():
 
     assert len(first) == 1
     assert second == []
-    assert "already notified at HIGH" in held[0]
+    assert "déjà notifié en HIGH" in held[0]
 
 
 def test_an_escalation_gets_through():

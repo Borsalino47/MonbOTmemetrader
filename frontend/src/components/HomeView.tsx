@@ -1,4 +1,4 @@
-import { age, num, pct, scoreColor, signClass } from '../format';
+import { age, mult, num, pct, scoreColor, signClass } from '../format';
 import type {
   AlertItem, DecisionsResponse, FeedVerification, Health, ScoreRow,
 } from '../types';
@@ -90,7 +90,7 @@ export function HomeView({
         <div className="home-head">
           <h2>Ce qui bouge</h2>
           <button className="home-refresh" onClick={onScan} disabled={scanning}>
-            {scanning ? 'Scan…' : 'Scanner'}
+            {scanning ? 'Analyse…' : 'Scanner'}
           </button>
         </div>
 
@@ -136,7 +136,7 @@ export function HomeView({
                     <span className={signClass(r.metrics?.change_1h_pct)}>
                       1h {pct(r.metrics?.change_1h_pct)}
                     </span>
-                    <span>RVOL {r.metrics?.rvol ? `${num(r.metrics.rvol, 1)}x` : '—'}</span>
+                    <span>RVOL {r.metrics?.rvol ? mult(r.metrics.rvol, 1) : '—'}</span>
                     <span>Maturité {num(r.pump_maturity.score, 0)}</span>
                   </span>
                 </span>

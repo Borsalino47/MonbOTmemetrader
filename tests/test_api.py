@@ -34,7 +34,7 @@ def test_health_reports_provider_and_paper_mode(client):
     assert body["paper_mode"] is True, "V1 must never default to live execution"
     assert body["provider"] == "SYNTHETIC-FIXTURE"
     assert body["synthetic_data"] is True
-    assert "is market data" in body["synthetic_warning"]
+    assert "donnée de marché" in body["synthetic_warning"]
     assert body["engine_version"] == "SCORE_ENGINE_V1"
 
 
@@ -124,7 +124,7 @@ def test_signals_endpoint_refuses_to_invent_a_win_rate(client):
     client.post("/api/scan/run")
     stats = client.get("/api/signals").json()["stats"]
     assert stats["win_rate"] is None, "no outcome has been resolved, so there is no win rate"
-    assert "null until" in stats["win_rate_note"]
+    assert "reste vide" in stats["win_rate_note"]
     assert stats["total_signals"] >= 0
 
 
@@ -136,7 +136,7 @@ def test_alerts_endpoint_shape(client):
 def test_config_endpoint_publishes_weights_and_the_disclaimer(client):
     body = client.get("/api/config").json()
     assert sum(body["weights"].values()) == pytest.approx(100.0)
-    assert "not" in body["disclaimer"].lower() and "probability" in body["disclaimer"].lower()
+    assert "ne doit pas être lu comme une probabilité" in body["disclaimer"]
 
 
 def test_no_endpoint_presents_a_score_as_a_probability(client):
@@ -210,7 +210,7 @@ def test_signal_stats_never_invents_a_win_rate(client):
     stats = client.get("/api/signals").json()["stats"]
     assert stats["win_rate"] is None
     assert stats["settled"] == 0
-    assert "null until" in stats["win_rate_note"] or "No outcome" in stats["win_rate_note"]
+    assert "reste vide" in stats["win_rate_note"] or "Aucune issue" in stats["win_rate_note"]
     assert stats["sufficient_sample"] is False
 
 
@@ -222,14 +222,14 @@ def test_signal_stats_never_invents_a_win_rate(client):
 def test_health_exposes_the_horizon_tracker_configuration(client):
     h = client.get("/api/health").json()["horizon_tracker"]
     assert h["horizons"] == ["15m", "1h", "4h", "24h"]
-    assert "after the modelled round-trip cost" in h["success_criterion"]
-    assert "never the signal's own close" in h["entry_rule"]
+    assert "après le coût aller-retour modélisé" in h["success_criterion"]
+    assert "jamais la clôture du signal lui-même" in h["entry_rule"]
 
 
 def test_health_states_live_or_demo_without_the_client_guessing(client):
     body = client.get("/api/health").json()
     assert body["data_mode"] == "DEMO"
-    assert "No number here comes from a market" in body["data_mode_detail"]
+    assert "Aucun chiffre ici ne provient d'un marché" in body["data_mode_detail"]
 
 
 def test_horizons_endpoint_reports_every_window_before_any_has_closed(client):
@@ -254,7 +254,7 @@ def test_per_signal_horizons_say_pending_rather_than_returning_zeros(client):
     client.post("/api/scan/run")
     body = client.get("/api/signals/1/horizons").json()
     assert body["horizons"] == []
-    assert "rather than settled at the current price" in body["message"]
+    assert "plutôt que tranchée au prix actuel" in body["message"]
 
 
 # --------------------------------------------------------------------------- #
@@ -300,7 +300,7 @@ def test_health_never_exposes_the_webhook_url(client):
 def test_health_reports_the_retention_policy(client):
     r = client.get("/api/health").json()["retention"]
     assert r["retention_days"] > 0
-    assert "still owes a verdict" in r["note"]
+    assert "doit encore une issue" in r["note"]
 
 
 def test_prune_endpoint_reports_what_it_removed_and_what_it_held_back(client):
@@ -344,7 +344,7 @@ def test_hunt_ranks_the_venue_without_spending_a_request(client):
     assert p["universe_size"] > 0
     assert p["candidates"], "the venue produced no candidates at all"
     assert body["data_mode"] == "DEMO"
-    assert "not a score" in body["disclaimer"]
+    assert "n'est pas un score" in body["disclaimer"]
 
 
 def test_hunt_candidates_never_claim_an_acceleration_they_cannot_measure(client):
@@ -404,7 +404,7 @@ def test_deep_scan_reports_what_it_cost_and_which_engine_scored(client):
     assert body["engine"]["discovery_engine"] == "DISCOVERY_ENGINE_V1"
     assert body["engine"]["weights_fingerprint"]
     assert sum(body["engine"]["weights"].values()) == 100.0
-    assert "not a probability" in body["disclaimer"]
+    assert "pas une probabilité" in body["disclaimer"]
 
     first = d["results"][0]
     assert first["discovery"]["discovery_label"].endswith("/100")
@@ -420,7 +420,7 @@ def test_pump_history_reports_its_resolution_and_never_fakes_a_rate(client):
     assert "definition" in h, "what counts as a pump must be stated"
     if h["episodes"]:
         assert h["resolution_minutes"] == 60
-        assert any("resolution" in n for n in h["notes"])
+        assert any("résolution" in n for n in h["notes"])
 
     # Below the sample floor no rate is shown at all, not a greyed-out one.
     if sim["insufficient_sample"]:

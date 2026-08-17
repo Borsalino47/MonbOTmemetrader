@@ -1,3 +1,4 @@
+import { num } from '../format';
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import type { TokenDetail } from '../types';
@@ -59,7 +60,7 @@ export function TokenCrossCheck({ address, onClose }: { address: string; onClose
                   <td>{fmt(c.geckoterminal)}</td>
                   <td>{fmt(c.dexscreener)}</td>
                   <td className="drift">
-                    {c.drift_pct === null ? '—' : `${c.drift_pct.toFixed(1)} %`}
+                    {c.drift_pct === null ? '—' : `${num(c.drift_pct, 1)} %`}
                   </td>
                 </tr>
               ))}
@@ -87,12 +88,12 @@ export function TokenCrossCheck({ address, onClose }: { address: string; onClose
 
 function fmt(v: number | null): string {
   if (v === null) return '—';
-  if (Math.abs(v) >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`;
-  if (Math.abs(v) >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
+  if (Math.abs(v) >= 1_000_000) return `${num(v / 1_000_000, 2)} M`;
+  if (Math.abs(v) >= 1_000) return `${num(v / 1_000, 1)} k`;
   // Significant digits rather than fixed decimals below 1. Found by running
   // it: a 32 % price disagreement rendered as "0.03 | 0.05", which reads as a
   // rounding artefact — the table would have been hiding the exact thing it
   // exists to show.
   if (v !== 0 && Math.abs(v) < 1) return v.toPrecision(3);
-  return v.toFixed(2);
+  return num(v, 2);
 }

@@ -1,5 +1,6 @@
 import type { ScoreRow } from '../types';
-import { DASH, maturityColor, num, scoreColor } from '../format';
+import { LIQUIDITY_FR, SETUP_STATE_FR, labelFor } from '../i18n/fr';
+import { DASH, maturityColor, mult, num, scoreColor } from '../format';
 
 interface Props {
   rows: ScoreRow[];
@@ -11,7 +12,7 @@ export function TopOpportunities({ rows, onSelect }: Props) {
   if (rows.length === 0) {
     return (
       <>
-        <div className="section-title">Top opportunities now</div>
+        <div className="section-title">Meilleures opportunités maintenant</div>
         <div className="table-wrap">
           <div className="empty">
             No setup currently clears the gates. That is a valid answer — the scanner does not
@@ -24,7 +25,7 @@ export function TopOpportunities({ rows, onSelect }: Props) {
 
   return (
     <>
-      <div className="section-title">Top opportunities now — ranked by setup quality, not by price change</div>
+      <div className="section-title">Meilleures opportunités maintenant — classées par qualité du setup, pas par variation de prix</div>
       <div className="top-grid">
         {rows.map((r) => {
           const rvol = r.metrics?.rvol ?? null;
@@ -38,29 +39,29 @@ export function TopOpportunities({ rows, onSelect }: Props) {
               </div>
 
               <div>
-                <span className={`pill ${r.setup.state}`}>{r.setup.state}</span>{' '}
-                <span className={`pill ${r.liquidity.status}`}>{r.liquidity.status}</span>
+                <span className={`pill ${r.setup.state}`}>{labelFor(SETUP_STATE_FR, r.setup.state)}</span>{' '}
+                <span className={`pill ${r.liquidity.status}`}>{labelFor(LIQUIDITY_FR, r.liquidity.status)}</span>
                 {r.score_acceleration !== null && r.score_acceleration > 0 && (
                   <span className="pill BREAKOUT" style={{ marginLeft: 4 }}>
-                    +{r.score_acceleration.toFixed(0)} since last
+                    +{num(r.score_acceleration, 0)} depuis le dernier scan
                   </span>
                 )}
               </div>
 
               <div className="opp-metrics">
                 <div className="m">
-                  <span className="k">Maturity</span>
+                  <span className="k">Maturité</span>
                   <span className="v" style={{ color: maturityColor(r.pump_maturity.score) }}>
                     {num(r.pump_maturity.score, 0)}
                   </span>
                 </div>
                 <div className="m">
-                  <span className="k">Accel</span>
+                  <span className="k">Accél.</span>
                   <span className="v">{num(r.acceleration.momentum_acceleration, 0)}</span>
                 </div>
                 <div className="m">
                   <span className="k">RVOL</span>
-                  <span className="v">{rvol === null ? DASH : `${num(rvol)}x`}</span>
+                  <span className="v">{rvol === null ? DASH : mult(rvol, 2)}</span>
                 </div>
               </div>
 

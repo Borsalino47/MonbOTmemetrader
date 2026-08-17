@@ -86,7 +86,9 @@ that justifies it.
 | Robinhood maturity + data confidence | **TESTED** | Three separate readings of one snapshot, allowed to disagree (spec §52) |
 | `ROBINHOOD_EXPLOSION_15M_V1` (`scoring/robinhood_explosion.py`) | **TESTED** | 15 tests. Horizon in the fingerprint; a selling burst never scores as upside |
 
-**Test suite: 795 tests, all passing.** Run `pytest -q`.
+| **French localisation (`cryptopulse/i18n/`, `frontend/src/i18n/fr.ts`)** | **TESTED** | 46 anti-English tests. 240 catalogue entries + 50 enum labels + 42 UI labels. Rendered at emission, no network, no model |
+
+**Test suite: 841 tests, all passing.** Run `pytest -q`.
 
 ---
 
@@ -227,6 +229,10 @@ cryptopulse/
     startup.py           Phase timings. An absent phase is null, never zero
     service.py           Owns the scanner, the loop and shared state
     app.py               FastAPI routes, serves the built dashboard
+  i18n/
+    __init__.py          Text (str + .code + .params), msg(), num/pct/mult/money/price
+    reasons.py           240 French templates, one per reason code, keyed by engine
+    labels.py            Enum -> French. Keyed on plain strings, so it imports nothing
   cli.py                 doctor / scan / resolve / verify / notify / serve / backtest
 
 start.sh                 One-command launcher: install, verify feed, scan
@@ -244,10 +250,12 @@ scripts/
   simulate_journal.py    Scan across simulated time, grade, compare to baseline
 
 frontend/                Vite + React 18 + TypeScript (strict), mobile-first
+  src/i18n/fr.ts         Chrome labels + labelFor(). No fallback to the identifier
+  src/format.ts          The one place the decimal comma and the narrow space live
   HomeView               The five-second view: can I trust it, and what moved
   AssetCards             The scanner as cards; the table is wide-screen only
   bottom-nav             Thumb-reachable navigation, phones only
-tests/                   795 tests
+tests/                   841 tests
 pine/                    TradingView companion scripts
 ```
 
@@ -737,6 +745,47 @@ Break these and the product is lying to its user.
     separate checkout by syncing `dist` into it; it is not the recommended
     shape.
 
+82. **A sentence is assembled in French where the numbers are, never translated
+    on the way to the screen.** The component that knows RVOL is 2.59 is the
+    only place that can say so. Shipping English prose to React and translating
+    it there would mean parsing sentences to recover the figures, and every new
+    reason would arrive in English until somebody noticed. `Text` is a `str`
+    subclass carrying `.code` and `.params`, so `list[str]`, JSON, the database
+    and `"x" in reasons` all keep working while the structured form travels
+    alongside for anything that would rather branch on a code than on wording.
+
+83. **Nothing is translated at display time — no model, no service, no lookup.**
+    Templates are module constants and rendering is one `str.format`: measured
+    at 1.8 µs per reason, about 2 ms for a full 120-asset scan, and 1 ms of
+    import. That is why this can sit inside the scan loop. A startup A/B against
+    the pre-francisation tree measured 1394 ms versus 1411 ms over five cold
+    launches each, which is inside the run-to-run spread of either.
+
+84. **Enum values stay English on the wire and a French label travels beside
+    them.** `BREAKOUT` is an identifier stored in SQLite, compared in code, and
+    hashed into the weights fingerprint — renaming it would silently reinterpret
+    every past signal (invariant 13). So `state` stays and `state_label_fr`
+    joins it. `labelFor()` refuses to fall back to the key: `BREAKOUT` is
+    readable enough that an untranslated value would go unnoticed for months,
+    whereas an em dash is visibly missing.
+
+85. **The decimal comma and the narrow no-break space live in exactly two
+    files** — `cryptopulse/i18n/__init__.py` and `frontend/src/format.ts`.
+    Found by running the app: the score breakdown read `+0.6 / 20` and the
+    penalty line `-5.0` while every reason beside them read `+3,42 %`. Two
+    conventions on one screen is worse than either alone. The separator before
+    `%` is U+202F specifically because it is *no-break*: a plain space lets the
+    sign wrap to the next line on a phone. A test forbids `toFixed` outside the
+    formatter.
+
+86. **The anti-English test flags words, not sentiment, and its marker list is
+    deliberately narrow.** The first version flagged "volume", "prix",
+    "support", "momentum" and "acceptable" — all correct French — and a test
+    that cries wolf gets switched off within a week, which is worse than not
+    having it. Loanwords French traders actually use (`retest`, `setup`,
+    `momentum`) are stripped before matching, and so are `{placeholder}` names,
+    which are parameters rather than words on screen.
+
 ---
 
 ## 6. Design decisions and why
@@ -880,6 +929,15 @@ pytest tests/test_no_lookahead.py -v    # the ones that matter most
 * `scoring/verdict.py` — reads only what the score already computed. If you find
   yourself adding a new threshold here, it belongs in a component instead; the
   verdict is a compression, not a ninth opinion.
+* `cryptopulse/i18n/labels.py` — the label tables are keyed on **plain strings**,
+  not on the enum members. Keying them on the enums created an import cycle
+  (`labels` -> `alerts.engine` -> `labels`) the moment the alert engine wanted a
+  French liquidity label. The catalogue must keep importing nothing from the
+  engines.
+* `cryptopulse/i18n/reasons.py` — a reason is added here and called from the
+  engine, never written as a literal at the call site. `tests/test_french_only.py`
+  greps for `reasons.append("` across ten engine files, so a literal is caught,
+  but only in those files: adding an engine means adding it to `ENGINE_FILES`.
 
 ---
 

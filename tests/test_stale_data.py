@@ -15,7 +15,7 @@ from cryptopulse.core.types import DataQuality, Provenance, Timeframe
 from cryptopulse.features.pipeline import AssetFeatures, TimeframeFeatures
 from cryptopulse.scoring.confidence import compute_confidence
 from cryptopulse.scoring.engine import ScoreEngine
-from tests.conftest import FIXED_NOW_MS, make_series
+from tests.conftest import FIXED_NOW_MS, code, make_series
 
 SETTINGS = CryptoPulseSettings()
 
@@ -49,17 +49,17 @@ def test_confidence_falls_as_data_ages():
     fresh = compute_confidence(af, SETTINGS.scanner, FIXED_NOW_MS)
     stale = compute_confidence(af, SETTINGS.scanner, FIXED_NOW_MS + 45 * 60 * 1000)
     assert stale.score < fresh.score - 15
-    assert any("STALE_DATA" in i for i in stale.issues)
+    assert any(code(i) == "CONF_STALE" for i in stale.issues)
 
 
 def test_fresh_data_reports_no_stale_issue():
     c = compute_confidence(_asset(), SETTINGS.scanner, FIXED_NOW_MS)
-    assert not any("STALE_DATA" in i for i in c.issues)
+    assert not any(code(i) == "CONF_STALE" for i in c.issues)
 
 
 def test_missing_order_book_is_reported_as_an_issue():
     c = compute_confidence(_asset(), SETTINGS.scanner, FIXED_NOW_MS)
-    assert any("order book" in i.lower() for i in c.issues)
+    assert any(code(i) == "CONF_NO_BOOK" for i in c.issues)
     assert c.components["order_book"] == 0.0
 
 
@@ -82,7 +82,7 @@ def test_missing_timeframes_lower_coverage():
     partial = compute_confidence(_asset(tfs=(Timeframe.M5, Timeframe.M15)), SETTINGS.scanner, FIXED_NOW_MS)
     full = compute_confidence(_asset(), SETTINGS.scanner, FIXED_NOW_MS)
     assert partial.components["timeframe_coverage"] < full.components["timeframe_coverage"]
-    assert any("timeframes" in i for i in partial.issues)
+    assert any(code(i) == "CONF_MISSING_TF" for i in partial.issues)
 
 
 def test_confidence_is_bounded():
@@ -99,7 +99,7 @@ def test_partial_quality_series_is_penalised():
     )
     c = compute_confidence(af, SETTINGS.scanner, FIXED_NOW_MS)
     assert c.components["continuity"] < 1.0
-    assert any("partial" in i.lower() for i in c.issues)
+    assert any(code(i) == "CONF_PARTIAL_TF" for i in c.issues)
 
 
 def test_stale_data_does_not_silently_produce_a_premium_signal():
@@ -109,7 +109,7 @@ def test_stale_data_does_not_silently_produce_a_premium_signal():
     result = engine.score(af, FIXED_NOW_MS + 6 * 60 * 60 * 1000)  # six hours later
     assert result.confidence.score < 60
     assert not result.is_premium
-    assert any("STALE_DATA" in r for r in result.risks())
+    assert any(code(r) == "CONF_STALE" for r in result.risks())
 
 
 def test_frozen_clock_is_deterministic():

@@ -309,21 +309,23 @@ def signal_stats() -> dict:
 
     if settled == 0:
         note = (
-            "No outcome has been resolved yet. Win rate is null until the outcome tracker "
-            "has graded signals against the bars that followed them."
+            "Aucune issue n'a encore été tranchée. Le taux de réussite reste vide tant que "
+            "le suivi des résultats n'a pas évalué les signaux contre les bougies qui les "
+            "ont suivis."
         )
     elif settled < MIN_SAMPLE:
         note = (
-            f"Based on only {settled} settled signals — below the {MIN_SAMPLE} minimum. "
-            "Treat this as a smoke test of the pipeline, not as evidence about the strategy."
+            f"Basé sur seulement {settled} signal(x) réglé(s) — en dessous du minimum de "
+            f"{MIN_SAMPLE}. À lire comme un test de bon fonctionnement du pipeline, pas "
+            "comme une preuve concernant la stratégie."
         )
     else:
-        note = f"Based on {settled} settled signals (WIN/LOSS/TIMEOUT)."
+        note = f"Basé sur {settled} signal(x) réglé(s) (gagnant / perdant / sans issue)."
 
     if counts["synthetic_signals"]:
         note += (
-            f" {counts['synthetic_signals']} signal(s) came from the SYNTHETIC provider "
-            "and describe generated data, not a market."
+            f" {counts['synthetic_signals']} signal(x) proviennent du fournisseur "
+            "SYNTHÉTIQUE et décrivent des données générées, pas un marché."
         )
 
     return {

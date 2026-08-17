@@ -166,7 +166,7 @@ def test_decisions_taken_in_demo_mode_are_marked_and_counted_apart(client):
 
     body = client.get("/api/validations").json()
     assert body["synthetic"] == body["total"]
-    assert "DEMO" in body["note"]
+    assert "DÉMO" in body["note"]
 
 
 def test_an_outcome_is_never_written_at_decision_time(client):

@@ -115,7 +115,7 @@ function BucketCard({ title, b }: { title: string; b: TradeBucket }) {
         </p>
       ) : (
         <div className="res-grid">
-          <Stat k="Taux de réussite" v={b.win_rate === null ? DASH : `${(b.win_rate * 100).toFixed(0)}%`} />
+          <Stat k="Taux de réussite" v={b.win_rate === null ? DASH : `${num(b.win_rate * 100, 0)} %`} />
           <Stat k="Gain moyen" v={pct(b.mean_win_pct)} />
           <Stat k="Perte moyenne" v={pct(b.mean_loss_pct)} />
           <Stat k="Résultat moyen" v={pct(b.mean_pct)} />

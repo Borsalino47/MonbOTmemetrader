@@ -202,11 +202,11 @@ class AlertDelivery:
 
 
 _DISCLAIMER = (
-    "Scores are 0-100 rankings, not probabilities, and are not advice. "
-    "No order is ever placed by this software."
+    "Les scores sont des classements de 0 à 100, pas des probabilités, et ne sont pas "
+    "des conseils. Ce logiciel ne passe jamais aucun ordre."
 )
 _SYNTHETIC_WARNING = (
-    "DEMO — these alerts come from SYNTHETIC generated candles, not a real market."
+    "DÉMO — ces alertes proviennent de bougies SYNTHÉTIQUES générées, pas d'un vrai marché."
 )
 
 

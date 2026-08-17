@@ -91,7 +91,7 @@ async def test_scan_produces_ranked_results():
     report = await scanner.scan()
     assert report.succeeded > 10
     assert report.synthetic_data is True
-    assert any("SYNTHETIC" in n for n in report.notes)
+    assert any("SYNTHÉTIQUES" in n for n in report.notes)
     scores = [r.final_score for r in report.results]
     # The ranking key is not the raw score, but the list must still be ordered by it.
     keys = [CexScanner._rank_key(r) for r in report.results]
@@ -271,8 +271,8 @@ async def test_alert_text_never_claims_a_probability():
     settings = CryptoPulseSettings()
     engine = AlertEngine(settings.alerts, settings.scoring)
     text = engine.evaluate([_result()], FIXED_NOW_MS)[0].format_text()
-    assert "Opportunity Score: 85/100" in text
-    assert "%" not in text.split("Opportunity Score")[1].split("\n")[0]
+    assert "Score d'opportunité : 85/100" in text
+    assert "%" not in text.split("Score d'opportunité")[1].split("\n")[0]
     assert "probability" not in text.lower()
 
 

@@ -76,3 +76,12 @@ def make_series(
 @pytest.fixture
 def series_factory():
     return make_series
+
+
+def code(text) -> str:
+    """The reason's stable identifier, or "" for a plain string.
+
+    Assertions moved from words to codes when the engines were translated: the
+    wording is presentation and may be reworded, the code is the identity.
+    """
+    return getattr(text, "code", "")

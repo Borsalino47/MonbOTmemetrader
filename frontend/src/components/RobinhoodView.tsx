@@ -86,9 +86,9 @@ export function RobinhoodView({
           branchée : un chiffre inventé serait pire qu'une case vide.
         </p>
         <ul className="rh-roadmap">
-          <li><span className="rh-icon">👥</span> Holders, top 10, deployer</li>
-          <li><span className="rh-icon">⚠️</span> Safety + Rug Risk (veto absolu)</li>
-          <li><span className="rh-icon">📈</span> Early Score, Explosion 15 min</li>
+          <li><span className="rh-icon">👥</span> Détenteurs, top 10, déployeur</li>
+          <li><span className="rh-icon">⚠️</span> Sécurité + risque de rug (veto absolu)</li>
+          <li><span className="rh-icon">📈</span> Score de précocité, explosion 15 min</li>
           <li><span className="rh-icon">🔥</span> Décision ACHETER / SURVEILLER / NE PAS ACHETER</li>
         </ul>
         <p className="muted small">{status.note}</p>

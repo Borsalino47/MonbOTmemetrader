@@ -13,6 +13,8 @@ from cryptopulse.config.settings import RiskSettings, ScoringSettings
 from cryptopulse.core.types import Timeframe
 from cryptopulse.features.pipeline import AssetFeatures, Bias
 from cryptopulse.features.stats import scale
+from cryptopulse.i18n import num, pct
+from cryptopulse.i18n import reasons as R
 from cryptopulse.risk.liquidity import LiquidityAssessment, LiquidityStatus
 from cryptopulse.scoring.pump_maturity import PumpMaturity
 
@@ -51,26 +53,26 @@ def compute_penalties(
     # -- 1. Pump already mature --------------------------------------------- #
     if maturity.score > scoring.pump_maturity_late:
         pts = 18.0 * scale(maturity.score, scoring.pump_maturity_late, 100.0)
-        items.append(Penalty("pump_maturity", pts, f"pump maturity {maturity.score:.0f}/100 — move likely late"))
+        items.append(Penalty("pump_maturity", pts, R.PEN_MATURITY_LATE(maturity=num(maturity.score, 0))))
     elif maturity.score > 55:
-        items.append(Penalty("pump_maturity", 5.0, f"pump maturity {maturity.score:.0f}/100 — move partly played out"))
+        items.append(Penalty("pump_maturity", 5.0, R.PEN_MATURITY_PARTLY(maturity=num(maturity.score, 0))))
 
     # -- 2. Liquidity -------------------------------------------------------- #
     if liq.status is LiquidityStatus.DANGEROUS:
-        items.append(Penalty("liquidity", 20.0, "liquidity DANGEROUS"))
+        items.append(Penalty("liquidity", 20.0, R.PEN_LIQ_DANGEROUS()))
     elif liq.status is LiquidityStatus.POOR:
-        items.append(Penalty("liquidity", 10.0, "liquidity POOR"))
+        items.append(Penalty("liquidity", 10.0, R.PEN_LIQ_POOR()))
     elif liq.status is LiquidityStatus.UNKNOWN:
-        items.append(Penalty("liquidity", 4.0, "liquidity could not be assessed"))
+        items.append(Penalty("liquidity", 4.0, R.PEN_LIQ_UNKNOWN()))
 
     # -- 3. Spread ----------------------------------------------------------- #
     if af.spread_bps is not None and af.spread_bps > risk.spread_acceptable_bps:
         pts = 8.0 * scale(af.spread_bps, risk.spread_acceptable_bps, risk.spread_dangerous_bps)
-        items.append(Penalty("spread", pts, f"spread {af.spread_bps:.0f} bps erodes the edge"))
+        items.append(Penalty("spread", pts, R.PEN_SPREAD(spread=num(af.spread_bps, 0))))
 
     # -- 4. Volume climax ---------------------------------------------------- #
     if f.volume_climax and maturity.score > 40:
-        items.append(Penalty("volume_climax", 7.0, "climax volume after an extended move — exhaustion risk"))
+        items.append(Penalty("volume_climax", 7.0, R.PEN_VOLUME_CLIMAX()))
 
     # -- 5. Higher timeframes against the trade ------------------------------ #
     h1 = af.get(Timeframe.H1)
@@ -79,9 +81,9 @@ def compute_penalties(
         tf.value for tf, feats in ((Timeframe.H1, h1), (Timeframe.H4, h4)) if feats and feats.bias is Bias.BEARISH
     ]
     if len(bearish_htf) == 2:
-        items.append(Penalty("htf_conflict", 12.0, "both 1h and 4h bearish — trading against the higher timeframe"))
+        items.append(Penalty("htf_conflict", 12.0, R.PEN_HTF_BOTH()))
     elif len(bearish_htf) == 1:
-        items.append(Penalty("htf_conflict", 5.0, f"{bearish_htf[0]} bearish"))
+        items.append(Penalty("htf_conflict", 5.0, R.PEN_HTF_ONE(timeframe=bearish_htf[0])))
 
     # -- 6. Major resistance immediately overhead ---------------------------- #
     st = f.structure
@@ -92,24 +94,24 @@ def compute_penalties(
                 Penalty(
                     "overhead_resistance",
                     6.0,
-                    f"heavily tested resistance only {d:.2f} ATR overhead ({st.nearest_resistance.touches} touches)",
+                    R.PEN_OVERHEAD_RESISTANCE(distance=num(d), touches=st.nearest_resistance.touches),
                 )
             )
 
     # -- 7. Failed breakout -------------------------------------------------- #
     if st and st.fake_breakout:
-        items.append(Penalty("fake_breakout", 8.0, "recent breakout attempt failed to hold on close"))
+        items.append(Penalty("fake_breakout", 8.0, R.PEN_FAKE_BREAKOUT()))
 
     # -- 8. Irrational volatility -------------------------------------------- #
     if f.atr_pct is not None and f.atr_pct > 6.0:
         pts = 10.0 * scale(f.atr_pct, 6.0, 15.0)
-        items.append(Penalty("volatility", pts, f"ATR {f.atr_pct:.1f}% of price per bar — position sizing is punishing"))
+        items.append(Penalty("volatility", pts, R.PEN_VOLATILITY(atr=pct(f.atr_pct, 1).lstrip("+"))))
 
     # -- 9. Unstable structure ----------------------------------------------- #
     from cryptopulse.features.structure import StructureTrend
 
     if st and st.trend is StructureTrend.DOWNTREND:
-        items.append(Penalty("structure", 8.0, "structural downtrend on the primary timeframe"))
+        items.append(Penalty("structure", 8.0, R.PEN_STRUCTURE_DOWN()))
 
     # -- 10. RSI divergence proxy -------------------------------------------- #
     # Price making a new high in the window while RSI is well off its own extreme
@@ -117,7 +119,7 @@ def compute_penalties(
     # scan, and named as such.
     if st and st.range_position is not None and f.rsi14 is not None:
         if st.range_position > 0.92 and f.rsi14 < 60:
-            items.append(Penalty("momentum_divergence", 5.0, "price at range highs but RSI below 60 (proxy divergence)"))
+            items.append(Penalty("momentum_divergence", 5.0, R.PEN_MOMENTUM_DIVERGENCE()))
 
     total = min(sum(p.points for p in items), risk.max_risk_penalty)
     return PenaltyReport(total=total, items=items)

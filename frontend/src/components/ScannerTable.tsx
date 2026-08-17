@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
+import { SETUP_STATE_FR, labelFor } from '../i18n/fr';
 import type { ScoreRow } from '../types';
-import { DASH, num, pct, price, scoreColor, maturityColor, signClass } from '../format';
+import { DASH, maturityColor, mult, num, pct, price, scoreColor, signClass } from '../format';
 import { VerdictBadge } from './VerdictBadge';
 
 type SortKey =
@@ -14,18 +15,18 @@ interface Props {
 
 const COLUMNS: { key: SortKey; label: string; left?: boolean; title?: string }[] = [
   { key: 'rank', label: '#', left: true },
-  { key: 'symbol', label: 'Asset', left: true },
-  { key: 'price', label: 'Price' },
-  { key: 'change5m', label: '5m' },
-  { key: 'change1h', label: '1h' },
-  { key: 'rvol', label: 'RVOL', title: 'Current volume vs 50-bar average' },
-  { key: 'final_score', label: 'Opportunity', title: 'Final score out of 100 — a ranking, not a probability' },
-  { key: 'acceleration', label: 'Accel', title: 'Momentum acceleration 0-100' },
-  { key: 'pump_maturity', label: 'Maturity', title: 'How far along the move already is — lower is earlier' },
-  { key: 'safety', label: 'Safety' },
-  { key: 'confidence', label: 'Conf', title: 'Data confidence 0-100' },
-  { key: 'state', label: 'Status', left: true },
-  { key: 'verdict', label: 'Verdict', left: true, title: 'Plain-language summary of the same filters — not advice' },
+  { key: 'symbol', label: 'Actif', left: true },
+  { key: 'price', label: 'Prix' },
+  { key: 'change5m', label: '5 min' },
+  { key: 'change1h', label: '1 h' },
+  { key: 'rvol', label: 'RVOL', title: 'Volume actuel comparé à la moyenne des 50 dernières bougies' },
+  { key: 'final_score', label: 'Opportunité', title: 'Score final sur 100 — un classement, pas une probabilité' },
+  { key: 'acceleration', label: 'Accél.', title: 'Accélération du momentum, de 0 à 100' },
+  { key: 'pump_maturity', label: 'Maturité', title: 'Où en est déjà le mouvement — plus bas signifie plus tôt' },
+  { key: 'safety', label: 'Sécurité' },
+  { key: 'confidence', label: 'Conf.', title: 'Confiance dans les données, de 0 à 100' },
+  { key: 'state', label: 'État', left: true },
+  { key: 'verdict', label: 'Verdict', left: true, title: 'Résumé en clair des mêmes filtres — ce n’est pas un conseil' },
 ];
 
 // Worst first when sorting descending, so the rows worth a look surface together.
@@ -77,7 +78,7 @@ export function ScannerTable({ rows, onSelect }: Props) {
   }
 
   if (rows.length === 0) {
-    return <div className="table-wrap"><div className="empty">No assets match the current filters.</div></div>;
+    return <div className="table-wrap"><div className="empty">Aucun actif ne correspond aux filtres actuels.</div></div>;
   }
 
   return (
@@ -110,12 +111,12 @@ export function ScannerTable({ rows, onSelect }: Props) {
                 <td className="left rank">{i + 1}</td>
                 <td className="sym">
                   {r.symbol}
-                  {vetoed && <span className="veto-flag" title="Hard veto: liquidity or safety">VETO</span>}
+                  {vetoed && <span className="veto-flag" title="Veto absolu : liquidité ou sécurité">VETO</span>}
                 </td>
                 <td>{price(r.price)}</td>
                 <td className={signClass(c5)}>{pct(c5)}</td>
                 <td className={signClass(c1h)}>{pct(c1h)}</td>
-                <td className={rvol && rvol >= 2 ? 'pos' : ''}>{rvol === null ? DASH : `${num(rvol)}x`}</td>
+                <td className={rvol && rvol >= 2 ? 'pos' : ''}>{rvol === null ? DASH : mult(rvol, 2)}</td>
                 <td>
                   <span className="scorebar" style={{ color: scoreColor(r.final_score) }}>
                     {num(r.final_score, 1)}
@@ -123,7 +124,7 @@ export function ScannerTable({ rows, onSelect }: Props) {
                   </span>
                   {r.score_acceleration !== null && Math.abs(r.score_acceleration) >= 1 && (
                     <span className={signClass(r.score_acceleration)} style={{ fontSize: 10, marginLeft: 4 }}>
-                      {r.score_acceleration > 0 ? '▲' : '▼'}{Math.abs(r.score_acceleration).toFixed(0)}
+                      {r.score_acceleration > 0 ? '▲' : '▼'}{num(Math.abs(r.score_acceleration), 0)}
                     </span>
                   )}
                 </td>
@@ -132,7 +133,7 @@ export function ScannerTable({ rows, onSelect }: Props) {
                 <td>{num(r.safety.score, 0)}</td>
                 <td className={r.data_confidence.score < 60 ? 'neg' : ''}>{num(r.data_confidence.score, 0)}</td>
                 <td className="left">
-                  <span className={`pill ${r.setup.state}`}>{r.setup.state}</span>
+                  <span className={`pill ${r.setup.state}`}>{labelFor(SETUP_STATE_FR, r.setup.state)}</span>
                 </td>
                 <td className="left">
                   {r.verdict && <VerdictBadge verdict={r.verdict} size="sm" />}

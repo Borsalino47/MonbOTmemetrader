@@ -21,6 +21,7 @@ from cryptopulse.scoring.explosion import (
     EXPLOSION_WEIGHTS,
     ExplosionEngine,
 )
+from tests.conftest import code
 
 NOW_MS = 1_700_000_000_000
 
@@ -195,7 +196,7 @@ def test_a_mature_move_scores_lower_than_a_young_one(engine):
     young = engine.score(_loud(), timestamp_ms=NOW_MS, maturity_score=15.0)
     late = engine.score(_loud(), timestamp_ms=NOW_MS, maturity_score=88.0)
     assert young.score > late.score
-    assert any("retrace" in r for r in late.risks())
+    assert any(code(r) == "EXP_ALREADY_MATURE" for r in late.risks())
 
 
 # --------------------------------------------------------------------------- #
@@ -245,7 +246,7 @@ def test_an_absent_order_book_scores_zero_and_is_not_treated_as_neutral(engine):
                 if c.name == "book_pressure")
     assert book.points == 0.0
     assert book.available is False
-    assert any("order book" in c for c in book.caveats)
+    assert any(code(c) == "EXP_NO_BOOK" for c in book.caveats)
 
 
 def test_no_component_awards_points_without_saying_why(engine):
@@ -268,7 +269,7 @@ def test_the_payload_states_its_window_and_denies_being_a_probability(engine):
     d = engine.score(_loud(), timestamp_ms=NOW_MS, maturity_score=20.0).to_dict()
     assert d["horizon_minutes"] == EXPLOSION_HORIZON_MINUTES
     assert d["engine_version"] == EXPLOSION_ENGINE_VERSION
-    assert "not a probability" in d["disclaimer"]
+    assert "ni une probabilité chiffrée" in d["disclaimer"]
     # A ranking, rendered as a ranking.
     assert "%" not in d["explosion_label"]
 

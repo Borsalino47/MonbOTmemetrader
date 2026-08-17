@@ -56,6 +56,8 @@ from dataclasses import dataclass, field
 from cryptopulse.core.clock import SYSTEM_CLOCK, Clock
 from cryptopulse.core.logging import get_logger
 from cryptopulse.core.types import Ticker24h
+from cryptopulse.i18n import num, pct
+from cryptopulse.i18n import reasons as R
 
 log = get_logger("hunter.discovery")
 
@@ -279,9 +281,10 @@ def prescan(
         # there is no acceleration to measure, and the ranking falls back to
         # static facts only. Reporting a delta of zero would be a fabrication.
         report.notes.append(
-            "First reading of this run: no previous snapshot to compare against, so no "
-            "acceleration signal is available yet. Ranking uses static facts only. "
-            "The next cycle produces deltas."
+            "Première lecture de cette exécution : aucun instantané précédent auquel se "
+            "comparer, donc aucun signal d'accélération n'est encore disponible. Le "
+            "classement n'utilise que des faits statiques. Le cycle suivant produira les "
+            "écarts."
         )
 
     candidates.sort(key=lambda c: c.priority, reverse=True)
@@ -349,7 +352,7 @@ def _score_priority(c: Candidate) -> None:
 
     # -- acceleration: the reason this module exists ------------------------- #
     if c.volume_excess_vs_yesterday is None:
-        c.caveats.append("no previous reading yet — acceleration unknown")
+        c.caveats.append(R.HUNT_NO_PREVIOUS())
     elif c.volume_excess_vs_yesterday > 0:
         # A rolling-window delta is small in percentage terms even for a large
         # surge, so the scale here is intentionally generous.
@@ -357,7 +360,7 @@ def _score_priority(c: Candidate) -> None:
         if gain >= 1.0:
             priority += gain
             c.reasons.append(
-                f"trading {c.volume_excess_vs_yesterday:+.2f}% above the same moment yesterday"
+                R.HUNT_VOLUME_VS_YESTERDAY(change=pct(c.volume_excess_vs_yesterday, 2))
             )
 
     if c.trade_excess_vs_yesterday is not None and c.trade_excess_vs_yesterday > 0:
@@ -365,7 +368,7 @@ def _score_priority(c: Candidate) -> None:
         if gain >= 1.0:
             priority += gain
             c.reasons.append(
-                f"transaction count {c.trade_excess_vs_yesterday:+.2f}% above yesterday"
+                R.HUNT_TRADES_VS_YESTERDAY(change=pct(c.trade_excess_vs_yesterday, 2))
             )
 
     # -- volume leading price is the shape worth finding --------------------- #
@@ -376,33 +379,33 @@ def _score_priority(c: Candidate) -> None:
         and abs(c.price_change_since_previous_pct) < 0.35
     ):
         priority += 12.0
-        c.reasons.append("activity rising while price is still flat")
+        c.reasons.append(R.HUNT_ACTIVITY_FLAT_PRICE())
 
     # -- room left in the day's range ---------------------------------------- #
     if c.range_position is None:
-        c.caveats.append("24h range unusable (no spread between high and low)")
+        c.caveats.append(R.HUNT_RANGE_UNUSABLE())
     elif c.range_position <= 0.75:
         priority += (0.75 - c.range_position) * 14.0
-        c.reasons.append(f"at {c.range_position:.0%} of the 24h range, not pinned at the high")
+        c.reasons.append(R.HUNT_RANGE_ROOM(position=pct(c.range_position * 100, 0).lstrip("+")))
     else:
-        c.caveats.append(f"already at {c.range_position:.0%} of the 24h range")
+        c.caveats.append(R.HUNT_RANGE_HIGH(position=pct(c.range_position * 100, 0).lstrip("+")))
 
     # -- a move that has already happened is not an early one ---------------- #
     if c.change_pct_24h >= 25.0:
         priority -= 18.0
-        c.caveats.append(f"already {c.change_pct_24h:+.1f}% over 24h — the move may be spent")
+        c.caveats.append(R.HUNT_MOVE_SPENT(change=pct(c.change_pct_24h, 1)))
     elif c.change_pct_24h >= 12.0:
         priority -= 8.0
-        c.caveats.append(f"already {c.change_pct_24h:+.1f}% over 24h")
+        c.caveats.append(R.HUNT_MOVE_DONE(change=pct(c.change_pct_24h, 1)))
 
     # -- tradeability, as a modest bonus rather than a ranking axis ----------- #
     if c.spread_bps is None:
-        c.caveats.append("spread unknown — this venue does not publish bid/ask here")
+        c.caveats.append(R.HUNT_NO_SPREAD())
     elif c.spread_bps <= 15.0:
         priority += 5.0
-        c.reasons.append(f"tight spread ({c.spread_bps:.1f} bps)")
+        c.reasons.append(R.HUNT_SPREAD_TIGHT(spread=num(c.spread_bps, 1)))
     elif c.spread_bps > 80.0:
         priority -= 6.0
-        c.caveats.append(f"wide spread ({c.spread_bps:.0f} bps) will eat a small move")
+        c.caveats.append(R.HUNT_SPREAD_WIDE(spread=num(c.spread_bps, 0)))
 
     c.priority = round(priority, 3)
