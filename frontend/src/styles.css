@@ -1434,3 +1434,44 @@ tbody td.sym { font-weight: 600; text-align: left; }
 
 .rh-caveats { margin: 8px 0 0; padding-left: 15px; }
 .rh-caveats li { font-size: 10.5px; color: var(--warn); line-height: 1.45; }
+
+/* ------------------------------------------------------ early scores ----- */
+
+.rh-sorts { display: flex; gap: 6px; margin-bottom: 8px; }
+.rh-sorts button {
+  flex: 1; padding: 6px 8px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--bg-panel-2);
+  color: var(--text-dim); font-size: 11px; cursor: pointer;
+}
+.rh-sorts button.active {
+  border-color: var(--market-robinhood); color: var(--text);
+  background: rgba(168, 85, 247, .12);
+}
+
+.rh-scores { display: flex; gap: 6px; flex-wrap: wrap; margin: 2px 0 8px; }
+.rh-pill {
+  display: inline-flex; align-items: baseline; gap: 5px;
+  padding: 3px 8px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--bg-panel);
+  font-size: 10px;
+}
+.rh-pill-k { color: var(--text-faint); }
+.rh-pill-v { font-variant-numeric: tabular-nums; font-weight: 650; }
+.rh-pill.early .rh-pill-v { color: var(--market-robinhood); }
+.rh-pill.late  { border-color: rgba(255,176,32,.35); }
+.rh-pill.late .rh-pill-v { color: var(--warn); }
+/* Thin data is visibly thin: the number is real, what it rests on is not. */
+.rh-pill.thin { border-style: dashed; }
+.rh-pill.thin .rh-pill-v { color: var(--text-dim); }
+
+.rh-early-detail { margin: 2px 0 9px; }
+.rh-comp { padding: 4px 0; border-bottom: 1px solid var(--border); }
+.rh-comp:last-of-type { border-bottom: none; }
+.rh-comp-head {
+  display: flex; justify-content: space-between; gap: 8px;
+  font-size: 11px; color: var(--text-dim);
+}
+.rh-comp-head span:last-child { font-variant-numeric: tabular-nums; color: var(--text); }
+.rh-comp-head .unknown { color: var(--text-faint); font-style: italic; }
+.rh-comp-why  { font-size: 10.5px; color: var(--text-faint); padding-left: 8px; line-height: 1.45; }
+.rh-comp-risk { font-size: 10.5px; color: var(--warn); padding-left: 8px; line-height: 1.45; }

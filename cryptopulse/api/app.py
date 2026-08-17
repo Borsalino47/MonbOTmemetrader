@@ -355,7 +355,7 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
         return service.robinhood_status()
 
     @app.get("/api/robinhood/tokens", tags=["providers"])
-    async def robinhood_tokens(bucket: str | None = None):
+    async def robinhood_tokens(bucket: str | None = None, sort: str = "age"):
         """New tokens on Robinhood Chain, newest first.
 
         Serves the last search and kicks a first one in the background if none
@@ -376,6 +376,20 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
         if bucket:
             payload["tokens"] = [t for t in payload["tokens"] if t["age_bucket"] == bucket]
             payload["filtered_to_bucket"] = bucket
+        if sort == "early":
+            # Spec §33: "top opportunities" ranks by setup quality, not by past
+            # gain. Vetoed tokens sink to the bottom rather than being hidden —
+            # seeing *why* something was rejected is part of the point.
+            payload["tokens"].sort(
+                key=lambda t: (
+                    not t["hard_veto"],
+                    (t["early"] or {}).get("score", 0.0),
+                ),
+                reverse=True,
+            )
+            payload["sorted_by"] = "early"
+        else:
+            payload["sorted_by"] = "age"
         payload["state"] = "OK" if report.candidates else ("FAILED" if report.errors else "EMPTY")
         return payload
 

@@ -107,8 +107,10 @@ export const api = {
   providers: () => get<ProvidersResponse>('/providers'),
   robinhoodStatus: () => get<RobinhoodStatus>('/provider/robinhood/status'),
   robinhoodToken: (address: string) => get<TokenDetail>(`/robinhood/token/${address}`),
-  robinhoodTokens: (bucket?: string) =>
-    get<RobinhoodTokensResponse>('/robinhood/tokens', bucket ? { bucket } : undefined),
+  robinhoodTokens: (bucket?: string, sort?: string) =>
+    get<RobinhoodTokensResponse>('/robinhood/tokens', {
+      ...(bucket ? { bucket } : {}), ...(sort ? { sort } : {}),
+    }),
   robinhoodSearch: async (): Promise<RobinhoodTokensResponse> => {
     const resp = await fetch(`${BASE}/robinhood/tokens/search`, { method: 'POST' });
     if (!resp.ok) throw new Error(`robinhood search failed: ${resp.status}`);

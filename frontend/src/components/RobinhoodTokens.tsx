@@ -15,17 +15,18 @@ import type { RobinhoodToken, RobinhoodTokensResponse, SafetyReport } from '../t
 export function RobinhoodTokens() {
   const [data, setData] = useState<RobinhoodTokensResponse | null>(null);
   const [bucket, setBucket] = useState<string>('');
+  const [sort, setSort] = useState<'age' | 'early'>('age');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      setData(await api.robinhoodTokens(bucket || undefined));
+      setData(await api.robinhoodTokens(bucket || undefined, sort));
       setError(null);
     } catch (e) {
       setError(String((e as Error).message ?? e));
     }
-  }, [bucket]);
+  }, [bucket, sort]);
 
   useEffect(() => {
     let cancelled = false;
@@ -65,6 +66,17 @@ export function RobinhoodTokens() {
         <h3>🆕 Nouveaux tokens</h3>
         <button className="action small" onClick={search} disabled={busy}>
           {busy ? '…' : 'Rechercher'}
+        </button>
+      </div>
+
+      <div className="rh-sorts">
+        {/* Spec §33: ranking by setup quality is not the same list as ranking
+            by what already went up, and the two must be nameable. */}
+        <button className={sort === 'age' ? 'active' : ''} onClick={() => setSort('age')}>
+          🆕 Les plus récents
+        </button>
+        <button className={sort === 'early' ? 'active' : ''} onClick={() => setSort('early')}>
+          🔥 Meilleurs setups
         </button>
       </div>
 
@@ -157,6 +169,24 @@ function TokenRow({ t }: { t: RobinhoodToken }) {
       )}
 
       {s && open && <SafetyDetail s={s} />}
+
+      {t.early && (
+        <div className="rh-scores">
+          <ScorePill label="Early" value={t.early.label} tone="early" />
+          <ScorePill
+            label="Maturité"
+            value={t.maturity ? (t.maturity.known ? t.maturity.label : 'inconnue') : '—'}
+            tone={t.maturity?.is_late ? 'late' : 'ok'}
+          />
+          <ScorePill
+            label="Confiance"
+            value={t.confidence?.label ?? '—'}
+            tone={(t.confidence?.score ?? 0) < 50 ? 'thin' : 'ok'}
+          />
+        </div>
+      )}
+
+      {open && t.early && <EarlyDetail t={t} />}
       <div className="rh-addr" title={t.contract_address}>
         {short(t.contract_address)}
         {t.dex ? <span className="rh-dex">{t.dex}</span> : null}
@@ -185,6 +215,52 @@ function TokenRow({ t }: { t: RobinhoodToken }) {
       {crossOpen && (
         <TokenCrossCheck address={t.contract_address} onClose={() => setCrossOpen(false)} />
       )}
+    </div>
+  );
+}
+
+function ScorePill({ label, value, tone }: { label: string; value: string; tone: string }) {
+  return (
+    <span className={`rh-pill ${tone}`}>
+      <span className="rh-pill-k">{label}</span>
+      <span className="rh-pill-v">{value}</span>
+    </span>
+  );
+}
+
+function EarlyDetail({ t }: { t: RobinhoodToken }) {
+  const e = t.early!;
+  return (
+    <div className="rh-early-detail">
+      {e.components.map((c) => (
+        <div className="rh-comp" key={c.name}>
+          <div className="rh-comp-head">
+            <span>{c.label_fr}</span>
+            <span className={c.unavailable ? 'unknown' : ''}>
+              {c.unavailable ? 'indisponible' : `${c.points.toFixed(1)} / ${c.max_points}`}
+            </span>
+          </div>
+          {c.reasons.map((r, i) => <div className="rh-comp-why" key={`r${i}`}>· {r}</div>)}
+          {c.caveats.map((r, i) => <div className="rh-comp-risk" key={`c${i}`}>⚠ {r}</div>)}
+        </div>
+      ))}
+
+      {t.maturity && !t.maturity.known && (
+        <p className="rh-comp-risk">
+          ⚠ Maturité inconnue : la valeur affichée est neutre, pas une mesure.
+        </p>
+      )}
+      {t.confidence && t.confidence.missing.length > 0 && (
+        <p className="rh-comp-risk">
+          ⚠ Données manquantes : {t.confidence.missing.join(' · ')}
+        </p>
+      )}
+
+      <p className="feed-note">
+        {e.engine_version} · empreinte {e.weights_fingerprint}. Un score sur 100 est un
+        classement sous des pondérations fixes, jamais une probabilité — et ces
+        pondérations sont une hypothèse qu'aucun historique Robinhood n'a encore validée.
+      </p>
     </div>
   );
 }

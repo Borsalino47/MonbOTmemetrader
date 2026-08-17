@@ -834,6 +834,11 @@ export interface RobinhoodToken {
   safety: SafetyReport | null;
   /** True whenever a purchase is forbidden — including "not analysed". */
   hard_veto: boolean;
+  /** Three separate readings of the same snapshot. They are allowed to
+   *  disagree; that is why they are three objects and not one number. */
+  early: EarlyScore | null;
+  maturity: PumpMaturityRH | null;
+  confidence: DataConfidenceRH | null;
 }
 
 export interface RobinhoodTokensResponse {
@@ -852,6 +857,7 @@ export interface RobinhoodTokensResponse {
   at_ms?: number | null;
   coverage_note?: string;
   note?: string;
+  sorted_by?: 'age' | 'early';
 }
 
 export type RugRisk = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | 'UNKNOWN';
@@ -914,4 +920,47 @@ export interface TokenDetail extends RobinhoodToken {
   crosscheck: CrossCheck | null;
   errors: string[];
   requests: number;
+}
+
+export interface EarlyComponent {
+  name: string;
+  label_fr: string;
+  points: number;
+  max_points: number;
+  reasons: string[];
+  caveats: string[];
+  /** True when the inputs were absent altogether. Scores zero either way, but
+   *  only one of the two is the token's fault. */
+  unavailable: boolean;
+}
+
+export interface EarlyScore {
+  score: number;
+  label: string;
+  components: EarlyComponent[];
+  why: string[];
+  risks: string[];
+  unavailable: string[];
+  engine_version: string;
+  weights_fingerprint: string;
+}
+
+export interface PumpMaturityRH {
+  score: number;
+  label: string;
+  is_late: boolean;
+  reasons: string[];
+  /** False when nothing could be measured — the score is a neutral placeholder,
+   *  not a finding. */
+  known: boolean;
+  version: string;
+}
+
+export interface DataConfidenceRH {
+  score: number;
+  label: string;
+  present: number;
+  total: number;
+  missing: string[];
+  version: string;
 }

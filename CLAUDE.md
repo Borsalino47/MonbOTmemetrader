@@ -82,8 +82,10 @@ that justifies it.
 | `ROBINHOOD_SAFETY_V1` + RUG_RISK (`risk/robinhood_safety.py`) | **TESTED** | 37 tests. Tri-state flags, veto zeroes the score, unknown never safe. Weights are a hypothesis |
 | **DexScreener client (`providers/dexscreener.py`)** | **IMPLEMENTED — NOT LIVE VERIFIED** | Contract cross-checked vs `dexscreener` 1.3. Host refused by this sandbox |
 | Source cross-check (`hunter/robinhood_detail.py`) | **TESTED** | 16 tests. Two sources side by side, disagreement surfaced and never averaged |
+| `ROBINHOOD_EARLY_SCORE_V1` (`scoring/robinhood_early.py`) | **TESTED** | 25 tests. Flow, not candles. Favours the start of a move; weights are a hypothesis |
+| Robinhood maturity + data confidence | **TESTED** | Three separate readings of one snapshot, allowed to disagree (spec §52) |
 
-**Test suite: 754 tests, all passing.** Run `pytest -q`.
+**Test suite: 779 tests, all passing.** Run `pytest -q`.
 
 ---
 
@@ -244,7 +246,7 @@ frontend/                Vite + React 18 + TypeScript (strict), mobile-first
   HomeView               The five-second view: can I trust it, and what moved
   AssetCards             The scanner as cards; the table is wide-screen only
   bottom-nav             Thumb-reachable navigation, phones only
-tests/                   754 tests
+tests/                   779 tests
 pine/                    TradingView companion scripts
 ```
 
@@ -708,7 +710,25 @@ Break these and the product is lying to its user.
     divided by the larger magnitude rather than by either source's value —
     otherwise the reported drift would depend on an arbitrary choice.
 
-78. **One repository, mounted at the same path on both sides.** The bind is
+78. **A window that has not elapsed is not data, per input rather than in bulk.**
+    An indexer will happily return an `h1` volume for a pool ninety seconds old,
+    but that hour mostly predates the pool. Counting it would make the youngest
+    tokens — the ones the screen exists to surface — look like the best-measured
+    ones. The rule is applied input by input, because at ten minutes the
+    five-minute figures are genuinely real and the hourly ones are not; a single
+    age cap would either discard the first or accept the second.
+
+79. **The early score and its confidence stay two numbers.** Spec §52 is
+    explicit: a token minted two minutes ago may legitimately look early *and*
+    be barely measurable. Blending them would hide whichever fact the reader
+    needed. A component resting on an unelapsed window still scores, but says so
+    in its caveats, so the reasons list is never read as pure evidence.
+
+80. **Maturity with no data is 50 and `known=False`, never 0.** "This move has
+    probably not started" is a claim, and it cannot be made from an absence of
+    data — that is exactly how a dead token looks brand new.
+
+81. **One repository, mounted at the same path on both sides.** The bind is
     `--bind "$ROOT:$ROOT"`, so `frontend/dist`, `.env` and
     `data/cryptopulse.db` are the same files from Termux and from Ubuntu — no
     copy step, and no way for two checkouts to drift while the user cannot tell

@@ -1,11 +1,13 @@
 """Which tokens started trading on Robinhood Chain, and how long ago.
 
-This is the discovery stage, and it is deliberately opinion-free: it finds
-tokens, dates them, groups their pools and ranks them on figures the indexer
-actually returned. No score, no threshold-based verdict, no BUY. Those are
-later phases with their own versions and fingerprints, and mixing them in here
-would make it impossible to tell later whether a bad call came from the search
-or from the scoring.
+This is the discovery stage: it finds tokens, dates them, groups their pools,
+and then attaches the readings that cost nothing extra to compute — safety from
+GoPlus, and the three scores that are pure arithmetic on data already fetched.
+
+What it deliberately does **not** produce is a decision. There is no BUY here.
+`TRADE_DECISION_ROBINHOOD` is its own engine with its own version and
+fingerprint, and keeping the two apart is what makes it possible to tell later
+whether a bad call came from the search, the scoring or the decision.
 
 THREE THINGS IT IS CAREFUL ABOUT
 
@@ -36,6 +38,14 @@ from cryptopulse.providers.geckoterminal import GeckoTerminalClient, PoolSnapsho
 from cryptopulse.providers.goplus import GoPlusClient
 from cryptopulse.providers.robinhood import ROBINHOOD_CHAIN_ID, ROBINHOOD_PROVIDER_ID
 from cryptopulse.risk.robinhood_safety import SafetyReport, assess_safety, unanalysed
+from cryptopulse.scoring.robinhood_early import (
+    DataConfidence,
+    EarlyScore,
+    PumpMaturity,
+    assess_confidence,
+    assess_maturity,
+    score_early,
+)
 
 log = get_logger("hunter.robinhood")
 
@@ -85,6 +95,11 @@ class TokenCandidate:
     # None until the safety pass has run for this token. Absent is not clean:
     # the UI renders "non analysé" and no BUY can be authorised (spec §53).
     safety: SafetyReport | None = None
+    # The three readings of this snapshot. Separate objects on purpose: they
+    # answer different questions and are allowed to disagree (spec §52).
+    early: EarlyScore | None = None
+    maturity: PumpMaturity | None = None
+    confidence: DataConfidence | None = None
 
     @property
     def primary_pool(self) -> PoolSnapshot | None:
@@ -176,6 +191,10 @@ class TokenCandidate:
             # could forget to make.
             "safety": self.safety.to_dict() if self.safety else None,
             "hard_veto": self.safety.hard_veto if self.safety else True,
+            # Three readings, never one blended number (invariant 37).
+            "early": self.early.to_dict() if self.early else None,
+            "maturity": self.maturity.to_dict() if self.maturity else None,
+            "confidence": self.confidence.to_dict() if self.confidence else None,
         }
 
 
@@ -306,6 +325,11 @@ async def discover_new_tokens(
 
     for candidate in grouped.values():
         _finalise(candidate, now_ms=now_ms)
+        # Scoring is pure arithmetic on data already fetched: no request, no
+        # latency, and no reason to make it a separate pass a caller could skip.
+        candidate.maturity = assess_maturity(candidate)
+        candidate.confidence = assess_confidence(candidate)
+        candidate.early = score_early(candidate, settings, maturity=candidate.maturity)
 
     # Newest first: this screen exists to answer "what just appeared". Unknown
     # ages were dropped above, so every remaining candidate has one.
