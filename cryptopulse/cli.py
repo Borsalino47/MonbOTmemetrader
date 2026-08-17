@@ -617,6 +617,32 @@ def _fmt_pct(x) -> str:
 # --------------------------------------------------------------------------- #
 
 
+def cmd_db_path(args) -> int:
+    """Print the resolved database file path, and nothing else.
+
+    Exists because a shell script cannot reliably work this out. `CP_DB_URL` may
+    live in `.env` and never reach the shell environment, so
+    `${CP_DB_URL##*sqlite:///}` under `set -u` aborts the script before it can
+    back anything up — which is how a backup step ended up being the thing that
+    prevented the backup. The settings object already knows the answer; this
+    hands it to the shell.
+
+    Prints nothing and exits 1 for a non-SQLite URL: there is no file to back up
+    for Postgres, and printing something file-shaped would invite `cp` to create
+    a garbage path.
+    """
+    url = get_settings().database.url
+    if not url.startswith("sqlite:///"):
+        print(f"not a sqlite database: {url.split('://', 1)[0]}://…", file=sys.stderr)
+        return 1
+    path = url.replace("sqlite:///", "", 1)
+    if path == ":memory:":
+        print("in-memory database — nothing on disk to back up", file=sys.stderr)
+        return 1
+    print(path)
+    return 0
+
+
 async def cmd_notify(args) -> int:
     """Send a real notification, so the round trip can be confirmed on the phone.
 
@@ -723,6 +749,8 @@ def main(argv: list[str] | None = None) -> int:
     p_not = sub.add_parser("notify", help="send a test Android notification (Termux)")
     p_not.add_argument("--test", action="store_true", help="kept for readability; this command always tests")
 
+    sub.add_parser("db-path", help="print the resolved SQLite file path (for scripts)")
+
     p_serve = sub.add_parser("serve", help="run the API and dashboard")
     p_serve.add_argument("--host", type=str, default=None)
     p_serve.add_argument("--port", type=int, default=None)
@@ -734,6 +762,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "serve":
         return cmd_serve(args)
+    if args.command == "db-path":
+        return cmd_db_path(args)
     handler = {
         "doctor": cmd_doctor,
         "scan": cmd_scan,

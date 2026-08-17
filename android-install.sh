@@ -1,70 +1,96 @@
 #!/usr/bin/env bash
-# CRYPTO PULSE AI — installation Android. À lancer UNE SEULE FOIS.
+# CRYPTO PULSE AI — installation Android. À LANCER DEPUIS TERMUX NATIF, une fois.
 #
 #   ./android-install.sh
 #
-# Fait tout ce qui est lent : environnement Python, dépendances, icônes,
-# construction de l'interface. Ensuite, le démarrage quotidien
-# (./android-start.sh) ne fait plus que démarrer, en une seconde ou deux.
+# ARCHITECTURE HYBRIDE
 #
-# POURQUOI TROIS SCRIPTS AU LIEU D'UN
+#     TERMUX NATIF     Node.js / npm / Vite   → construit frontend/dist
+#          ↓ bind
+#     UBUNTU (proot)   Python / FastAPI / SQLite → fait tourner le serveur
 #
-# L'ancien android-start.sh faisait tout à chaque lancement : vérifier pip,
-# chercher les sources plus récentes que le bundle, éventuellement relancer npm,
-# puis attendre la fin d'un `doctor` réseau avant même de démarrer le serveur.
-# Sur un téléphone cela faisait des dizaines de secondes d'écran vide pour un
-# travail déjà fait la veille. Installer, mettre à jour et démarrer sont trois
-# choses différentes, à des fréquences différentes.
+# Les deux moitiés sont obligatoires et aucune ne peut faire le travail de
+# l'autre sur cet appareil :
+#
+#   * `npx vite build` sous Ubuntu/PRoot plante en BUS ERROR (esbuild émet des
+#     instructions que la traduction d'appels système de PRoot ne supporte pas).
+#     Le build DOIT tourner dans Termux natif.
+#   * numpy et pydantic-core ne se compilent pas proprement dans Termux natif.
+#     Le Python qui marche est celui d'Ubuntu.
+#
+# Ce script sait de quel côté va chaque commande. Vous n'avez jamais à taper
+# `proot-distro login` vous-même.
 
 set -euo pipefail
-cd "$(dirname "$0")"
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=scripts/android_env.sh
+source "$ROOT/scripts/android_env.sh"
 
-VENV=.venv
-PY="$VENV/bin/python"
+cp_say "Environnement détecté : $(cp_where)"
 
-say()  { printf '\n\033[36m==>\033[0m %s\n' "$1"; }
-warn() { printf '\033[33m    %s\033[0m\n' "$1"; }
-ok()   { printf '\033[32m    %s\033[0m\n' "$1"; }
-
-# ------------------------------------------------------------------ python ---
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "python3 est absent. Dans Termux : pkg install -y python" >&2
-  exit 1
+if cp_is_distro; then
+  cp_die "Lancez ce script depuis TERMUX NATIF, pas depuis Ubuntu." \
+         "Le build du frontend doit tourner côté Termux (Vite plante sous PRoot)." \
+         "Tapez 'exit' pour quitter Ubuntu, puis relancez."
 fi
 
-say "Environnement Python"
-[ -x "$PY" ] || python3 -m venv "$VENV"
-"$VENV/bin/pip" install -q --upgrade pip
-warn "Le téléphone compile numpy ; c'est long, et cela n'arrive qu'ici."
-"$VENV/bin/pip" install -q -e "."
-ok "dépendances installées"
-
-# ------------------------------------------------------------------ icônes ---
-# Python pur, sans bibliothèque d'images : pas une dépendance de plus pour six PNG.
-say "Icônes"
-"$PY" scripts/make_icons.py >/dev/null
-ok "icônes générées"
-
-# --------------------------------------------------------------- interface ---
-say "Interface"
-if command -v npm >/dev/null 2>&1; then
-  (cd frontend && npm install --silent && npm run build)
-  ok "interface construite dans frontend/dist"
-else
-  warn "npm absent : l'API fonctionnera, mais SANS interface."
-  warn "Dans Termux : pkg install -y nodejs-lts, puis relancez ce script."
+# ------------------------------------------------------- Ubuntu : la base ----
+if ! cp_have_proot_distro; then
+  cp_say "Installation de proot-distro"
+  pkg install -y proot-distro
 fi
 
-# ------------------------------------------------------------ vérification ---
-say "Vérification du flux de données"
-warn "Ceci est le SEUL moment où la vérification bloque. Au démarrage quotidien"
-warn "elle tourne en arrière-plan et n'empêche jamais l'interface de s'afficher."
-if "$PY" -m cryptopulse.cli doctor; then
-  ok "flux vérifié"
+if ! proot-distro list --installed 2>/dev/null | grep -qi "^${CP_DISTRO}\b" \
+   && [ ! -d "${PREFIX:-/data/data/com.termux/files/usr}/var/lib/proot-distro/installed-rootfs/${CP_DISTRO}" ]; then
+  cp_say "Installation d'Ubuntu (long, une seule fois)"
+  proot-distro install "$CP_DISTRO"
+fi
+cp_ok "Ubuntu disponible"
+
+# ------------------------------------------------- Ubuntu : Python + deps ----
+cp_say "Python et dépendances — DANS UBUNTU"
+cp_warn "Le téléphone compile numpy ; c'est long, et cela n'arrive qu'ici."
+cp_run_in_ubuntu "$ROOT" '
+  set -e
+  # The marker the other scripts detect. Written rather than guessed: sniffing
+  # /etc/os-release cannot tell Ubuntu-under-PRoot-on-a-phone from any other
+  # Ubuntu, and a desktop misidentified as the container refuses to build.
+  touch /etc/cryptopulse-inside-distro 2>/dev/null || true
+  command -v python3 >/dev/null || { apt-get update -qq && apt-get install -y -qq python3 python3-venv python3-dev build-essential; }
+  [ -x .venv/bin/python ] || python3 -m venv .venv
+  .venv/bin/pip install -q --upgrade pip
+  .venv/bin/pip install -q -e .
+  .venv/bin/python -c "import cryptopulse, numpy, fastapi; print(\"    backend OK\")"
+'
+cp_ok "backend installé dans Ubuntu"
+
+# ------------------------------------------------------ Ubuntu : icônes ------
+# Python pur, pas de bibliothèque d'images : autant le faire du côté qui a Python.
+cp_say "Icônes — DANS UBUNTU"
+cp_run_in_ubuntu "$ROOT" '.venv/bin/python scripts/make_icons.py >/dev/null'
+cp_ok "icônes générées"
+
+# ------------------------------------------------ Termux : build frontend ----
+cp_say "Interface — DANS TERMUX NATIF (Vite plante sous PRoot)"
+if ! command -v npm >/dev/null 2>&1; then
+  cp_warn "npm absent. Installation : pkg install -y nodejs-lts"
+  pkg install -y nodejs-lts
+fi
+cp_run_in_termux "$ROOT" 'cd frontend && npm install --silent && npx vite build'
+[ -f "$ROOT/frontend/dist/index.html" ] \
+  || cp_die "Le build n'a pas produit frontend/dist/index.html."
+cp_ok "frontend/dist construit"
+
+# --------------------------------------------------- Ubuntu : le flux --------
+cp_say "Vérification du flux — DANS UBUNTU"
+cp_warn "C'est le SEUL moment où la vérification bloque. Au démarrage quotidien"
+cp_warn "elle tourne en arrière-plan et n'empêche jamais l'affichage."
+if cp_run_in_ubuntu "$ROOT" '.venv/bin/python -m cryptopulse.cli doctor'; then
+  cp_ok "flux vérifié"
 else
-  warn "Le flux n'est pas vérifié — voir le diagnostic ci-dessus."
-  warn "L'application démarrera quand même : les scans enregistrés restent"
-  warn "visibles avec leur âge, et la vérification est retentée en arrière-plan."
+  cp_warn "Flux non vérifié — voir le diagnostic ci-dessus."
+  cp_warn "L'application démarrera quand même : les scans enregistrés restent"
+  cp_warn "visibles avec leur âge, et la vérification est retentée en arrière-plan."
 fi
 
 cat <<'BANNER'
@@ -72,8 +98,11 @@ cat <<'BANNER'
   ┌────────────────────────────────────────────────────────┐
   │  Installation terminée.                                │
   │                                                        │
-  │  Au quotidien :   ./android-start.sh                   │
-  │  Après un git pull : ./android-update.sh               │
+  │  Depuis TERMUX, toujours :                             │
+  │    tous les jours       ./android-start.sh             │
+  │    après un git pull    ./android-update.sh            │
+  │                                                        │
+  │  Vous n'avez jamais à entrer dans Ubuntu vous-même.    │
   └────────────────────────────────────────────────────────┘
 
 BANNER

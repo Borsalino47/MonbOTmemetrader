@@ -60,6 +60,43 @@ répond, puis lance un scan.
 
 ## Sur Android (téléphone ou tablette)
 
+### L'architecture, en une image
+
+Sur Android, CRYPTO PULSE tourne dans **deux environnements à la fois**, et
+c'est volontaire :
+
+```
+   ┌─────────────────────────────────────────────────────────┐
+   │  TERMUX NATIF                                           │
+   │  Node.js / npm / Vite   →  construit  frontend/dist     │
+   │                                                         │
+   │      ↓ le dossier du projet est monté au MÊME chemin    │
+   │                                                         │
+   │  UBUNTU 24.04 (proot-distro)                            │
+   │  Python 3.12 / FastAPI / SQLite  →  fait tourner        │
+   │  le serveur, la base, les scans                         │
+   └─────────────────────────────────────────────────────────┘
+```
+
+**Build du frontend = Termux natif. Backend = Ubuntu sous PRoot.** Aucune des
+deux moitiés ne peut faire le travail de l'autre :
+
+* `npx vite build` **plante en BUS ERROR** sous Ubuntu/PRoot. esbuild émet des
+  instructions que la traduction d'appels système de PRoot ne supporte pas. Ce
+  n'est pas un problème de réglage : le build doit tourner dans Termux.
+* `numpy` et `pydantic-core` ne se compilent pas proprement dans Termux natif.
+  Le Python qui marche est celui d'Ubuntu.
+
+**Vous n'avez jamais à savoir de quel côté va une commande.** Les trois scripts
+s'en chargent seuls ; vous ne tapez jamais `proot-distro login` vous-même. Tout
+se lance **depuis Termux**.
+
+> **Un seul dépôt, pas deux.** Le projet vit une fois, dans le home Termux, et
+> est monté dans Ubuntu **au même chemin**. `frontend/dist`, `.env` et
+> `data/cryptopulse.db` sont donc littéralement les mêmes fichiers des deux
+> côtés : rien à copier, et aucun moyen que deux copies divergent sans que vous
+> puissiez dire laquelle le serveur a lue.
+
 ### Étape 1 — Installer Termux
 
 Installez **Termux** depuis **F-Droid** : https://f-droid.org/packages/com.termux/
@@ -68,28 +105,44 @@ Installez **Termux** depuis **F-Droid** : https://f-droid.org/packages/com.termu
 > plus mise à jour et les paquets Python y sont cassés. C'est la cause d'échec
 > la plus fréquente sur Android.
 
-### Étape 2 — Trois commandes
+### Étape 2 — Récupérer le projet
 
 Ouvrez Termux et tapez :
 
 ```bash
-pkg install -y python git
+pkg install -y git
 git clone https://github.com/Borsalino47/MonbOTmemetrader.git
-cd MonbOTmemetrader && ./start.sh
+cd MonbOTmemetrader
 ```
 
-L'installation prend quelques minutes la première fois (le téléphone compile
-`numpy`). Les fois suivantes, le démarrage est immédiat.
+### Étape 3 — Les trois scripts
 
-### Installer l'application sur l'écran d'accueil
-
-Trois commandes, à trois moments différents :
+Trois commandes, à trois moments différents. **Toutes depuis Termux.**
 
 ```bash
-./android-install.sh    # UNE FOIS. Long : compile numpy, construit l'interface.
+./android-install.sh    # UNE FOIS. Long : installe Ubuntu, compile numpy, construit l'interface.
 ./android-start.sh      # TOUS LES JOURS. Démarre, et rien d'autre.
 ./android-update.sh     # APRÈS UN git pull seulement.
 ```
+
+Ce que chacun fait, et de quel côté :
+
+| | Termux natif | Ubuntu (PRoot) |
+|---|---|---|
+| **`android-install.sh`** | installe `proot-distro`, `nodejs-lts`, puis `npm install` + `vite build` | installe Ubuntu, `python3-venv`, `.venv`, les dépendances, les icônes, puis un `doctor` bloquant |
+| **`android-update.sh`** | `npm install` + `vite build`, **seulement si une source a changé** | sauvegarde SQLite, `pip install -e .`, migration additive du schéma, vérification finale |
+| **`android-start.sh`** | rien du tout | lance uvicorn sur `127.0.0.1:8000` |
+
+`android-install.sh` écrit un fichier repère dans Ubuntu
+(`/etc/cryptopulse-inside-distro`). C'est lui, et rien d'autre, qui permet aux
+scripts de savoir de quel côté ils tournent — un fait qu'on crée, plutôt qu'une
+coïncidence qu'on interprète : deviner à partir de `/etc/os-release` prend un
+ordinateur de bureau sous Ubuntu pour un téléphone sous PRoot.
+
+> **Si un script est lancé du mauvais côté, il le dit et s'arrête**, avec la
+> phrase à taper pour se remettre dans le bon (`exit` pour sortir d'Ubuntu). Il
+> ne tente jamais l'étape « quand même » : sous PRoot, ce serait un BUS ERROR
+> plusieurs minutes plus tard, sans rapport visible avec la cause.
 
 **Pourquoi trois scripts.** L'ancienne version faisait tout à chaque lancement :
 vérifier pip, chercher si l'interface devait être reconstruite, puis attendre la
@@ -365,14 +418,23 @@ git pull
 
 `android-update.sh` sauvegarde votre base lui-même avant toute opération.
 
-C'est tout. Détail de ce qui se passe :
+C'est tout. Détail de ce qui se passe, dans l'ordre :
 
-* **`git pull`** récupère le code. Vos fichiers `.env` et `data/` ne sont pas
-  suivis par Git : ils ne peuvent pas être écrasés.
-* **`./android-update.sh`** sauvegarde la base, installe les nouvelles
-  dépendances, reconstruit l'interface **seulement si une source a changé**, et
-  ajoute les nouvelles colonnes à votre base existante.
-* **`./android-start.sh`** démarre. C'est tout ce qu'il fait.
+1. **`git pull`** récupère le code. Vos fichiers `.env` et `data/` ne sont pas
+   suivis par Git : ils ne peuvent pas être écrasés.
+2. **Sauvegarde SQLite** — `data/cryptopulse.db.backup`. Le chemin de la base
+   est **demandé à l'application** (`cryptopulse db-path`), pas lu dans le
+   shell : `CP_DB_URL` vit dans `.env` et n'atteint jamais l'environnement du
+   terminal. L'ancienne version la déréférençait quand même et s'arrêtait sur
+   `CP_DB_URL: unbound variable` — l'étape de sauvegarde devenant la raison de
+   son absence. La présence du fichier de sauvegarde est **vérifiée** avant de
+   migrer, jamais supposée.
+3. **Dépendances Python — dans Ubuntu.**
+4. **Interface React/Vite — dans Termux natif**, et seulement si une source a
+   changé depuis le dernier build.
+5. **`frontend/dist` côté Ubuntu** — rien à copier : c'est le même dossier.
+6. **Migration du schéma — dans Ubuntu.** Additive uniquement.
+7. **`./android-start.sh`** démarre. C'est tout ce qu'il fait.
 
 > **Vos données sont conservées.** La migration est *additive uniquement* : elle
 > ajoute des colonnes et des tables, et **refuse** toute opération destructive
@@ -420,6 +482,24 @@ le logiciel ne l'invente pas.
 
 Python a été installé sans cocher « Add Python to PATH ». Réinstallez-le en
 cochant la case.
+
+### « BUS ERROR » pendant la construction de l'interface
+
+Vous êtes dans Ubuntu, pas dans Termux. Tapez `exit` pour revenir à Termux, puis
+relancez `./android-update.sh` depuis là. Les scripts refusent normalement ce
+cas d'eux-mêmes ; si vous avez lancé `npx vite build` à la main, c'est la seule
+manière de le voir.
+
+### « Lancez ce script depuis TERMUX NATIF »
+
+Même chose : `exit`, puis relancez. Le script s'arrête volontairement plutôt que
+d'essayer — sous PRoot, l'échec arriverait plusieurs minutes plus tard et ne
+ressemblerait plus à sa cause.
+
+### « proot-distro est absent »
+
+`./android-install.sh` n'a jamais été lancé, ou pas jusqu'au bout. Relancez-le :
+il est ré-exécutable sans risque, et ne refait que ce qui manque.
 
 ### « npm: command not found »
 

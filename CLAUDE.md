@@ -73,8 +73,9 @@ that justifies it.
 | Startup sequencing (`api/startup.py`) | **TESTED** | 16 tests. Phase timings; the screen never waits for the network |
 | Feed verification (`providers/verify.py`) | **TESTED** | One definition of LIVE VERIFIED, shared by `doctor` and the service |
 | Schema migration (`database/migrate.py`) | **TESTED** | Additive columns only; refuses destructive changes |
+| Hybrid Android scripts (`scripts/android_env.sh`) | **TESTED — NOT DEVICE VERIFIED** | 32 tests incl. a fake `proot-distro` recording argv. Termux build / PRoot backend split. Never run on Android |
 
-**Test suite: 612 tests, all passing.** Run `pytest -q`.
+**Test suite: 644 tests, all passing.** Run `pytest -q`.
 
 ---
 
@@ -218,7 +219,8 @@ cryptopulse/
   cli.py                 doctor / scan / resolve / verify / notify / serve / backtest
 
 start.sh                 One-command launcher: install, verify feed, scan
-android-install.sh       Android, once: venv, deps, icons, build, blocking doctor
+scripts/android_env.sh   The Termux/PRoot split. cp_run_in_ubuntu / cp_run_in_termux
+android-install.sh       Android, once: Ubuntu, venv, deps, icons, build, blocking doctor
 android-update.sh        Android, after a git pull: backup, deps, rebuild if needed
 android-start.sh         Android, daily: starts. Nothing else. ~1s to HTTP
 
@@ -234,7 +236,7 @@ frontend/                Vite + React 18 + TypeScript (strict), mobile-first
   HomeView               The five-second view: can I trust it, and what moved
   AssetCards             The scanner as cards; the table is wide-screen only
   bottom-nav             Thumb-reachable navigation, phones only
-tests/                   612 tests
+tests/                   644 tests
 pine/                    TradingView companion scripts
 ```
 
@@ -588,6 +590,51 @@ Break these and the product is lying to its user.
     and a timeline starting after it would claim the app was ready long before
     anything reached the screen.
 
+63. **On Android the frontend is built in Termux and the backend runs in Ubuntu
+    under PRoot, and neither may cross.** `npx vite build` inside the
+    distribution dies with a BUS ERROR — esbuild issues instructions PRoot's
+    syscall translation does not survive — and numpy and pydantic-core do not
+    build cleanly in Termux natively. So a command on the wrong side is not a
+    slow path, it is a crash. `cp_run_in_ubuntu` and `cp_run_in_termux` make the
+    side explicit at every call, and `tests/test_android_scripts.py` reads the
+    scripts and fails if a build token reaches Ubuntu or a heavy pip reaches
+    Termux. A stand-in `proot-distro` on PATH records its argv, so the
+    delegation is exercised rather than inspected — what no test here can prove
+    is that a real phone behaves as documented.
+
+64. **The user never types `proot-distro login`.** Not having to know which side
+    a command belongs to is the whole design: three scripts, all launched from
+    Termux, each routing its own steps. A script run from the wrong side stops
+    with the sentence to type rather than attempting the step anyway — under
+    PRoot the failure would arrive minutes later and no longer resemble its
+    cause.
+
+65. **The environment is detected by a marker file, not by sniffing
+    `/etc/os-release`.** The first version reasoned "no Termux prefix and
+    os-release says Ubuntu, therefore inside PRoot", which is equally true of
+    any ordinary Ubuntu machine — a desktop or CI run was misidentified as the
+    container and refused to build the frontend. `android-install.sh` writes
+    `/etc/cryptopulse-inside-distro` inside the distribution: a fact created
+    rather than a coincidence interpreted. `CP_FORCE_ENV` overrides it, because
+    an override beats a wrong guess with no way out.
+
+66. **The database path is asked of the application, never expanded in the
+    shell.** `CP_DB_URL` lives in `.env` and normally never reaches the shell
+    environment, so `${CP_DB_URL##*sqlite:///}` under `set -u` aborted
+    `android-update.sh` with `unbound variable` *before the backup* — the backup
+    step becoming the reason there was no backup. `cryptopulse db-path` reads
+    the same settings the server reads, prints nothing and exits non-zero when
+    there is no file (Postgres, in-memory), and the backup's existence is
+    checked before the migration rather than assumed.
+
+67. **One repository, mounted at the same path on both sides.** The bind is
+    `--bind "$ROOT:$ROOT"`, so `frontend/dist`, `.env` and
+    `data/cryptopulse.db` are the same files from Termux and from Ubuntu — no
+    copy step, and no way for two checkouts to drift while the user cannot tell
+    which one the server read. `CP_UBUNTU_PROJECT` supports a deliberately
+    separate checkout by syncing `dist` into it; it is not the recommended
+    shape.
+
 ---
 
 ## 6. Design decisions and why
@@ -724,6 +771,10 @@ pytest tests/test_no_lookahead.py -v    # the ones that matter most
   exact-local-minimum trough rule was also tried and was far too brittle — it
   accepted 29 bars in 400 of ordinary noise and missed real runs whose low was a
   bar early. Hence `trough_tolerance_pct`.
+* `scripts/android_env.sh` — every command in the three Android scripts goes
+  through `cp_run_in_ubuntu` or `cp_run_in_termux`. Adding a bare command that
+  runs "wherever" is how a `vite build` reaches PRoot; the tests scan for the
+  tokens, not for the helper, so a bare command is also invisible to them.
 * `scoring/verdict.py` — reads only what the score already computed. If you find
   yourself adding a new threshold here, it belongs in a component instead; the
   verdict is a compression, not a ninth opinion.
