@@ -275,3 +275,184 @@ class ValidationRecord(Base):
     __table_args__ = (
         Index("ix_validations_symbol_time", "symbol", "decided_at"),
     )
+
+
+class TradeSignalRecord(Base):
+    """Every ACHETER and VENDRE the engine produced, taken or not.
+
+    WHY A SIGNAL THAT WAS IGNORED IS WORTH STORING
+
+    The obvious design records only what the user acted on. That would make the
+    journal systematically flattering: the signals someone skipped are exactly
+    the ones they were unsure about, and dropping them means never learning
+    whether the doubt was justified. A signal answered NON is followed to its
+    outcome exactly like one answered OUI — the counterfactual is the point.
+
+    `taken` has three states and the third one matters. NULL means the question
+    has not been answered yet, which is neither yes nor no; folding it into
+    `False` would count every unanswered prompt as a deliberate refusal.
+    """
+
+    __tablename__ = "trade_signals"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(40), index=True)
+    action: Mapped[str] = mapped_column(String(8), index=True)  # BUY / SELL
+    strength: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    emitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+    timestamp_ms: Mapped[int] = mapped_column(
+        Integer().with_variant(Integer, "sqlite"), index=True
+    )
+    price: Mapped[float] = mapped_column(Float)
+
+    # NULL = not answered yet. Distinct from False, which is a decision.
+    taken: Mapped[bool | None] = mapped_column(Boolean, nullable=True, index=True)
+    answered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    position_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+
+    # The screen at the moment of the recommendation, copied rather than joined —
+    # same rule and same reason as `validations`.
+    opportunity_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    explosion_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    discovery_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    safety_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    data_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pump_maturity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    setup_state: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    market_regime: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    trigger_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    invalidation_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    reasons: Mapped[list] = mapped_column(JSON, default=list)
+    risks: Mapped[list] = mapped_column(JSON, default=list)
+
+    engine_version: Mapped[str] = mapped_column(String(32), index=True)
+    weights_fingerprint: Mapped[str] = mapped_column(String(16))
+    data_source: Mapped[str] = mapped_column(String(32), default="unknown")
+    synthetic: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+
+    # --- what the price did afterwards; NULL until the window has elapsed ---- #
+    # Never written at emission: the outcome of a recommendation is not knowable
+    # at the moment it is made.
+    outcome_evaluated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    change_5m_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    change_15m_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    change_1h_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    change_4h_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    change_24h_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    mfe_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    mae_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    __table_args__ = (
+        Index("ix_trade_signals_symbol_time", "symbol", "timestamp_ms"),
+    )
+
+
+class PositionRecord(Base):
+    """Something the user confirmed they actually bought.
+
+    The entry context is copied in and then never rewritten. That is what makes
+    the health score meaningful: it compares now against the state that
+    justified entering, and a snapshot recomputed later would always agree with
+    itself.
+
+    `entry_price` is what the scanner observed. `actual_entry_price` is what the
+    user says they paid, and is optional — someone who does not want to record
+    their fills should still get position tracking, so the observed price is the
+    fallback and which one is in use is always visible.
+    """
+
+    __tablename__ = "positions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(40), index=True)
+    chain: Mapped[str] = mapped_column(String(24), default="CEX")
+    contract_address: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    signal_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+    opened_ms: Mapped[int] = mapped_column(Integer().with_variant(Integer, "sqlite"), index=True)
+    # OPEN / CLOSED. No third state: a position is held or it is not.
+    status: Mapped[str] = mapped_column(String(8), default="OPEN", index=True)
+
+    entry_price: Mapped[float] = mapped_column(Float)
+    actual_entry_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    amount_invested: Mapped[float | None] = mapped_column(Float, nullable=True)
+    quantity: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    trigger_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    invalidation_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    entry_opportunity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    entry_explosion: Mapped[float | None] = mapped_column(Float, nullable=True)
+    entry_discovery: Mapped[float | None] = mapped_column(Float, nullable=True)
+    entry_safety: Mapped[float | None] = mapped_column(Float, nullable=True)
+    entry_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    entry_maturity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    entry_rvol: Mapped[float | None] = mapped_column(Float, nullable=True)
+    entry_state: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    entry_regime: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    entry_reasons: Mapped[list] = mapped_column(JSON, default=list)
+
+    # --- updated by the position watcher ------------------------------------ #
+    last_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_seen_ms: Mapped[int | None] = mapped_column(
+        Integer().with_variant(Integer, "sqlite"), nullable=True
+    )
+    # Peak and trough since entry. Monotonic by construction — they only ever
+    # widen, so a watcher that misses a cycle loses resolution, never a record.
+    peak_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    trough_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    mfe_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    mae_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    health_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    current_decision: Mapped[str | None] = mapped_column(String(8), nullable=True, index=True)
+    decision_changed_ms: Mapped[int | None] = mapped_column(
+        Integer().with_variant(Integer, "sqlite"), nullable=True
+    )
+
+    # --- closing -------------------------------------------------------------- #
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    closed_ms: Mapped[int | None] = mapped_column(
+        Integer().with_variant(Integer, "sqlite"), nullable=True
+    )
+    exit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    actual_exit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    realised_pnl_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    close_reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
+    data_source: Mapped[str] = mapped_column(String(32), default="unknown")
+    synthetic: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+
+    __table_args__ = (
+        Index("ix_positions_status_symbol", "status", "symbol"),
+    )
+
+
+class PositionEventRecord(Base):
+    """Every decision change on a position, in order.
+
+    Append-only, and never collapsed to a current state. The sequence
+    ACHETER → CONSERVER → SURVEILLER → RÉDUIRE → VENDRE is the engine's whole
+    reasoning made visible, and it is the only way to reconstruct afterwards
+    *when* the case started falling apart rather than merely that it did.
+    """
+
+    __tablename__ = "position_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    position_id: Mapped[int] = mapped_column(Integer, index=True)
+    symbol: Mapped[str] = mapped_column(String(40), index=True)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+    at_ms: Mapped[int] = mapped_column(Integer().with_variant(Integer, "sqlite"), index=True)
+
+    decision: Mapped[str] = mapped_column(String(8), index=True)
+    previous_decision: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    price: Mapped[float] = mapped_column(Float)
+    pnl_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    health_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    opportunity_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    explosion_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    reasons: Mapped[list] = mapped_column(JSON, default=list)
+    risks: Mapped[list] = mapped_column(JSON, default=list)

@@ -18,10 +18,13 @@ from cryptopulse.alerts.engine import Alert
 from cryptopulse.core.logging import get_logger
 from cryptopulse.database.models import (
     AlertRecord,
+    PositionEventRecord,
+    PositionRecord,
     ScanRunRecord,
     ScorePointRecord,
     SignalHorizonRecord,
     SignalRecord,
+    TradeSignalRecord,
     ValidationRecord,
     _utcnow,
 )
@@ -42,6 +45,10 @@ __all__ = [
     "prune", "retained_but_unsettled", "last_scan_snapshot",
     "save_validation", "recent_validations", "latest_validation_per_symbol",
     "validation_counts", "VALID_DECISIONS",
+    "save_trade_signal", "answer_trade_signal", "recent_trade_signals",
+    "unanswered_trade_signals", "open_position", "update_position",
+    "record_position_decision", "close_position", "positions", "position_by_id",
+    "open_position_symbols", "position_events",
 ]
 
 _PERSIST_STATES = {
@@ -1080,4 +1087,416 @@ def _validation_to_dict(r: ValidationRecord) -> dict:
             "change_pct": r.outcome_change_pct,
             "note": r.outcome_note,
         },
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Trading — signals emitted, positions held, decisions changed.
+#
+# Every write here is append-or-update on a row the user's own action created.
+# Nothing in this section can place an order; it records what a person did after
+# reading a recommendation.
+# --------------------------------------------------------------------------- #
+
+
+def save_trade_signal(payload: dict) -> dict:
+    """Record a BUY or SELL recommendation. `taken` starts NULL, not False.
+
+    Unanswered is a third state and it matters: folding it into "no" would count
+    every prompt the user never got round to as a deliberate refusal, and the
+    comparison in §26 between taken and skipped signals would be wrong from the
+    first day.
+    """
+    action = str(payload.get("action", "")).upper()
+    if action not in ("BUY", "SELL"):
+        raise ValueError(f"a trade signal is BUY or SELL, got {action!r}")
+
+    with get_session() as session:
+        row = TradeSignalRecord(
+            symbol=str(payload["symbol"]).upper(),
+            action=action,
+            strength=payload.get("strength"),
+            timestamp_ms=int(payload["timestamp_ms"]),
+            price=float(payload["price"]),
+            opportunity_score=payload.get("opportunity_score"),
+            explosion_score=payload.get("explosion_score"),
+            discovery_score=payload.get("discovery_score"),
+            safety_score=payload.get("safety_score"),
+            data_confidence=payload.get("data_confidence"),
+            pump_maturity=payload.get("pump_maturity"),
+            setup_state=payload.get("setup_state"),
+            market_regime=payload.get("market_regime"),
+            trigger_price=payload.get("trigger_price"),
+            invalidation_price=payload.get("invalidation_price"),
+            reasons=(payload.get("reasons") or [])[:8],
+            risks=(payload.get("risks") or [])[:8],
+            engine_version=payload.get("engine_version") or "unknown",
+            weights_fingerprint=payload.get("weights_fingerprint") or "",
+            data_source=payload.get("data_source") or "unknown",
+            synthetic=bool(payload.get("synthetic", False)),
+        )
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+        return _trade_signal_to_dict(row)
+
+
+def answer_trade_signal(signal_id: int, taken: bool, *, position_id: int | None = None) -> dict:
+    """Record the user's OUI / NON. Answering twice keeps the first answer.
+
+    A signal is a moment: the question "did you act on this?" has one true
+    answer, and letting it be rewritten later would turn the taken/not-taken
+    comparison into a record of how someone feels about their past decisions.
+    """
+    with get_session() as session:
+        row = session.get(TradeSignalRecord, signal_id)
+        if row is None:
+            raise LookupError(f"no trade signal with id {signal_id}")
+        if row.taken is None:
+            row.taken = bool(taken)
+            row.answered_at = _utcnow()
+            if position_id is not None:
+                row.position_id = position_id
+            session.commit()
+            session.refresh(row)
+        return _trade_signal_to_dict(row)
+
+
+def recent_trade_signals(
+    limit: int = 100, *, action: str | None = None, taken: bool | None = None
+) -> list[dict]:
+    with get_session() as session:
+        stmt = select(TradeSignalRecord).order_by(desc(TradeSignalRecord.timestamp_ms)).limit(limit)
+        if action:
+            stmt = stmt.where(TradeSignalRecord.action == action.upper())
+        if taken is not None:
+            stmt = stmt.where(TradeSignalRecord.taken.is_(taken))
+        return [_trade_signal_to_dict(r) for r in session.execute(stmt).scalars().all()]
+
+
+def unanswered_trade_signals(limit: int = 20) -> list[dict]:
+    """Prompts still waiting for an OUI / NON, newest first."""
+    with get_session() as session:
+        stmt = (
+            select(TradeSignalRecord)
+            .where(TradeSignalRecord.taken.is_(None))
+            .order_by(desc(TradeSignalRecord.timestamp_ms))
+            .limit(limit)
+        )
+        return [_trade_signal_to_dict(r) for r in session.execute(stmt).scalars().all()]
+
+
+def open_position(payload: dict) -> dict:
+    """Create a position from a confirmed purchase.
+
+    Peak and trough start at the entry price rather than at NULL: a position
+    that has never been observed since entry has a peak — it is where it
+    started. Leaving them NULL would make the first MFE reading look like a
+    gain measured from nowhere.
+    """
+    with get_session() as session:
+        entry = float(payload["entry_price"])
+        row = PositionRecord(
+            symbol=str(payload["symbol"]).upper(),
+            chain=payload.get("chain") or "CEX",
+            contract_address=_clip(payload.get("contract_address"), 80),
+            signal_id=payload.get("signal_id"),
+            opened_ms=int(payload["opened_ms"]),
+            entry_price=entry,
+            actual_entry_price=payload.get("actual_entry_price"),
+            amount_invested=payload.get("amount_invested"),
+            quantity=payload.get("quantity"),
+            trigger_price=payload.get("trigger_price"),
+            invalidation_price=payload.get("invalidation_price"),
+            entry_opportunity=payload.get("entry_opportunity"),
+            entry_explosion=payload.get("entry_explosion"),
+            entry_discovery=payload.get("entry_discovery"),
+            entry_safety=payload.get("entry_safety"),
+            entry_confidence=payload.get("entry_confidence"),
+            entry_maturity=payload.get("entry_maturity"),
+            entry_rvol=payload.get("entry_rvol"),
+            entry_state=payload.get("entry_state"),
+            entry_regime=payload.get("entry_regime"),
+            entry_reasons=(payload.get("entry_reasons") or [])[:8],
+            last_price=entry,
+            last_seen_ms=int(payload["opened_ms"]),
+            peak_price=entry,
+            trough_price=entry,
+            mfe_pct=0.0,
+            mae_pct=0.0,
+            data_source=payload.get("data_source") or "unknown",
+            synthetic=bool(payload.get("synthetic", False)),
+        )
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+        return _position_to_dict(row)
+
+
+def update_position(position_id: int, *, price: float, now_ms: int, health: float | None = None) -> dict:
+    """Record the current price and widen the peak / trough.
+
+    Peak and trough only ever widen. A watcher that misses a cycle therefore
+    loses resolution and never a record — the worst case is an MFE slightly
+    understated, never a fabricated one.
+    """
+    with get_session() as session:
+        row = session.get(PositionRecord, position_id)
+        if row is None:
+            raise LookupError(f"no position with id {position_id}")
+
+        row.last_price = price
+        row.last_seen_ms = now_ms
+        row.peak_price = price if row.peak_price is None else max(row.peak_price, price)
+        row.trough_price = price if row.trough_price is None else min(row.trough_price, price)
+
+        basis = row.actual_entry_price or row.entry_price
+        if basis:
+            row.mfe_pct = (row.peak_price - basis) / basis * 100.0
+            row.mae_pct = (row.trough_price - basis) / basis * 100.0
+        if health is not None:
+            row.health_score = health
+
+        session.commit()
+        session.refresh(row)
+        return _position_to_dict(row)
+
+
+def record_position_decision(
+    position_id: int, payload: dict, *, now_ms: int
+) -> dict | None:
+    """Append a decision change. Returns the event, or None if nothing changed.
+
+    Only *changes* are stored. Writing a row every cycle would bury the five
+    moments that matter under a thousand that do not, and the sequence is the
+    entire value of this table.
+    """
+    decision = str(payload["decision"]).upper()
+    with get_session() as session:
+        row = session.get(PositionRecord, position_id)
+        if row is None:
+            raise LookupError(f"no position with id {position_id}")
+        previous = row.current_decision
+        if previous == decision:
+            return None
+
+        row.current_decision = decision
+        row.decision_changed_ms = now_ms
+        event = PositionEventRecord(
+            position_id=position_id,
+            symbol=row.symbol,
+            at_ms=now_ms,
+            decision=decision,
+            previous_decision=previous,
+            price=float(payload["price"]),
+            pnl_pct=payload.get("pnl_pct"),
+            health_score=payload.get("health_score"),
+            opportunity_score=payload.get("opportunity_score"),
+            explosion_score=payload.get("explosion_score"),
+            reasons=(payload.get("reasons") or [])[:8],
+            risks=(payload.get("risks") or [])[:8],
+        )
+        session.add(event)
+        session.commit()
+        session.refresh(event)
+        return _position_event_to_dict(event)
+
+
+def close_position(
+    position_id: int,
+    *,
+    exit_price: float,
+    now_ms: int,
+    actual_exit_price: float | None = None,
+    reason: str | None = None,
+) -> dict:
+    """Close a position. Idempotent: closing a closed position changes nothing.
+
+    The realised PnL uses the actual fills where the user supplied them and the
+    observed prices otherwise, and `pnl_basis` says which — a return computed
+    from screen prices is a different number from one computed from fills, and
+    they must never be pooled without knowing which is which.
+    """
+    with get_session() as session:
+        row = session.get(PositionRecord, position_id)
+        if row is None:
+            raise LookupError(f"no position with id {position_id}")
+        if row.status == "CLOSED":
+            return _position_to_dict(row)
+
+        row.status = "CLOSED"
+        row.closed_at = _utcnow()
+        row.closed_ms = now_ms
+        row.exit_price = exit_price
+        row.actual_exit_price = actual_exit_price
+        row.close_reason = _clip(reason, 200)
+
+        entry = row.actual_entry_price or row.entry_price
+        exit_used = actual_exit_price if actual_exit_price is not None else exit_price
+        if entry:
+            row.realised_pnl_pct = (exit_used - entry) / entry * 100.0
+
+        session.commit()
+        session.refresh(row)
+        return _position_to_dict(row)
+
+
+def positions(status: str | None = "OPEN", limit: int = 200) -> list[dict]:
+    with get_session() as session:
+        stmt = select(PositionRecord).order_by(desc(PositionRecord.opened_ms)).limit(limit)
+        if status:
+            stmt = stmt.where(PositionRecord.status == status.upper())
+        return [_position_to_dict(r) for r in session.execute(stmt).scalars().all()]
+
+
+def position_by_id(position_id: int) -> dict | None:
+    with get_session() as session:
+        row = session.get(PositionRecord, position_id)
+        return _position_to_dict(row) if row else None
+
+
+def open_position_symbols() -> list[str]:
+    """What the position watcher has to follow. One cheap query per cycle."""
+    with get_session() as session:
+        rows = session.execute(
+            select(PositionRecord.symbol).where(PositionRecord.status == "OPEN").distinct()
+        ).all()
+        return [r[0] for r in rows]
+
+
+def position_events(position_id: int, limit: int = 200) -> list[dict]:
+    with get_session() as session:
+        rows = (
+            session.execute(
+                select(PositionEventRecord)
+                .where(PositionEventRecord.position_id == position_id)
+                .order_by(PositionEventRecord.at_ms)
+                .limit(limit)
+            )
+            .scalars()
+            .all()
+        )
+        return [_position_event_to_dict(r) for r in rows]
+
+
+# --------------------------------------------------------------------------- #
+
+
+def _trade_signal_to_dict(r: TradeSignalRecord) -> dict:
+    return {
+        "id": r.id,
+        "symbol": r.symbol,
+        "action": r.action,
+        "strength": r.strength,
+        "emitted_at": r.emitted_at.isoformat() if r.emitted_at else None,
+        "timestamp_ms": r.timestamp_ms,
+        "price": r.price,
+        # None means "not answered yet" and is never rendered as a no.
+        "taken": r.taken,
+        "answered_at": r.answered_at.isoformat() if r.answered_at else None,
+        "position_id": r.position_id,
+        "opportunity_score": r.opportunity_score,
+        "explosion_score": r.explosion_score,
+        "discovery_score": r.discovery_score,
+        "safety_score": r.safety_score,
+        "data_confidence": r.data_confidence,
+        "pump_maturity": r.pump_maturity,
+        "setup_state": r.setup_state,
+        "market_regime": r.market_regime,
+        "trigger_price": r.trigger_price,
+        "invalidation_price": r.invalidation_price,
+        "reasons": r.reasons,
+        "risks": r.risks,
+        "engine_version": r.engine_version,
+        "weights_fingerprint": r.weights_fingerprint,
+        "data_source": r.data_source,
+        "synthetic": r.synthetic,
+        "outcome": {
+            "evaluated": r.outcome_evaluated_at is not None,
+            "change_5m_pct": r.change_5m_pct,
+            "change_15m_pct": r.change_15m_pct,
+            "change_1h_pct": r.change_1h_pct,
+            "change_4h_pct": r.change_4h_pct,
+            "change_24h_pct": r.change_24h_pct,
+            "mfe_pct": r.mfe_pct,
+            "mae_pct": r.mae_pct,
+        },
+    }
+
+
+def _position_to_dict(r: PositionRecord) -> dict:
+    basis = r.actual_entry_price or r.entry_price
+    price = r.last_price
+    pnl = None if (basis in (None, 0) or price is None) else (price - basis) / basis * 100.0
+    drawdown = (
+        None
+        if (r.peak_price in (None, 0) or price is None)
+        else (price - r.peak_price) / r.peak_price * 100.0
+    )
+    return {
+        "id": r.id,
+        "symbol": r.symbol,
+        "chain": r.chain,
+        "contract_address": r.contract_address,
+        "signal_id": r.signal_id,
+        "status": r.status,
+        "opened_at": r.opened_at.isoformat() if r.opened_at else None,
+        "opened_ms": r.opened_ms,
+        "entry_price": r.entry_price,
+        "actual_entry_price": r.actual_entry_price,
+        # Which price the returns are computed from. A return measured on screen
+        # prices is a different number from one measured on fills.
+        "pnl_basis": "actual_fill" if r.actual_entry_price else "observed_price",
+        "amount_invested": r.amount_invested,
+        "quantity": r.quantity,
+        "trigger_price": r.trigger_price,
+        "invalidation_price": r.invalidation_price,
+        "entry_opportunity": r.entry_opportunity,
+        "entry_explosion": r.entry_explosion,
+        "entry_discovery": r.entry_discovery,
+        "entry_safety": r.entry_safety,
+        "entry_confidence": r.entry_confidence,
+        "entry_maturity": r.entry_maturity,
+        "entry_rvol": r.entry_rvol,
+        "entry_state": r.entry_state,
+        "entry_regime": r.entry_regime,
+        "entry_reasons": r.entry_reasons,
+        "last_price": price,
+        "last_seen_ms": r.last_seen_ms,
+        "peak_price": r.peak_price,
+        "trough_price": r.trough_price,
+        "pnl_pct": None if pnl is None else round(pnl, 3),
+        "drawdown_from_peak_pct": None if drawdown is None else round(drawdown, 3),
+        "mfe_pct": None if r.mfe_pct is None else round(r.mfe_pct, 3),
+        "mae_pct": None if r.mae_pct is None else round(r.mae_pct, 3),
+        "health_score": r.health_score,
+        "current_decision": r.current_decision,
+        "decision_changed_ms": r.decision_changed_ms,
+        "closed_at": r.closed_at.isoformat() if r.closed_at else None,
+        "closed_ms": r.closed_ms,
+        "exit_price": r.exit_price,
+        "actual_exit_price": r.actual_exit_price,
+        "realised_pnl_pct": None if r.realised_pnl_pct is None else round(r.realised_pnl_pct, 3),
+        "close_reason": r.close_reason,
+        "data_source": r.data_source,
+        "synthetic": r.synthetic,
+    }
+
+
+def _position_event_to_dict(r: PositionEventRecord) -> dict:
+    return {
+        "id": r.id,
+        "position_id": r.position_id,
+        "symbol": r.symbol,
+        "at": r.at.isoformat() if r.at else None,
+        "at_ms": r.at_ms,
+        "decision": r.decision,
+        "previous_decision": r.previous_decision,
+        "price": r.price,
+        "pnl_pct": r.pnl_pct,
+        "health_score": r.health_score,
+        "opportunity_score": r.opportunity_score,
+        "explosion_score": r.explosion_score,
+        "reasons": r.reasons,
+        "risks": r.risks,
     }
