@@ -101,3 +101,14 @@ export const BIAS_FR: Record<string, string> = {
   BEARISH: 'BAISSIER',
   NEUTRAL: 'NEUTRE',
 };
+
+
+/** Severity of a security finding. `UNKNOWN` is deliberately "INCONNU" rather
+ *  than anything reassuring: a check that was never run is not a check that
+ *  passed (spec §10, invariant 71). */
+export const SEVERITY_FR: Record<string, string> = {
+  CRITICAL: 'CRITIQUE',
+  MAJOR: 'MAJEUR',
+  MINOR: 'MINEUR',
+  UNKNOWN: 'INCONNU',
+};

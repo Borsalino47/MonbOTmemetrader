@@ -411,3 +411,105 @@ def test_no_robinhood_engine_writes_a_plain_space_before_a_percent(path: str):
         if " %" in line and ('"' in line or "'" in line):
             offenders.append(f"line {line_no}: {stripped[:80]}")
     assert not offenders, f"{path} : espace ordinaire avant % — {offenders}"
+
+
+# --------------------------------------------------------------------------- #
+# Labels the user named explicitly after seeing them on a real phone (§24)
+# --------------------------------------------------------------------------- #
+
+# Each entry is (forbidden English, what it must read instead). The English
+# side is what was actually on screen, so a regression is caught by the same
+# string the user reported.
+RETIRED_ENGLISH = (
+    ("LIVE VERIFIED", "FLUX VÉRIFIÉ"),
+    ("RUG RISK", "RISQUE DE RUG"),
+    ("chain id", "ID de chaîne"),
+)
+
+
+@pytest.mark.parametrize("english,french", RETIRED_ENGLISH)
+def test_a_retired_english_label_never_comes_back(english: str, french: str):
+    """These were on a real Android before this pass and must not return.
+
+    Only *displayed* strings are checked: the same words are legitimate in a
+    docstring explaining what LIVE VERIFIED means as an engineering state.
+    """
+    offenders: list[str] = []
+    for path in list(FRONTEND.rglob("*.tsx")) + list(FRONTEND.rglob("*.ts")):
+        source = path.read_text(encoding="utf-8")
+        source = re.sub(r"\{/\*[\s\S]*?\*/\}", "", source)
+        source = re.sub(r"/\*[\s\S]*?\*/", "", source)
+        if english in source:
+            offenders.append(str(path.relative_to(ROOT)))
+
+    # Python: only the presentation tables a screen reads, not the prose.
+    for path, table in (
+        ("cryptopulse/providers/verify.py", "STATE_PRESENTATION"),
+        ("cryptopulse/providers/robinhood_verify.py", "STATE_PRESENTATION"),
+        ("cryptopulse/risk/robinhood_safety.py", "RUG_PRESENTATION"),
+    ):
+        source = (ROOT / path).read_text(encoding="utf-8")
+        block = re.search(rf"{table}[^=]*= *\{{(.*?)\n\}}", source, re.S)
+        if block and english in block.group(1):
+            offenders.append(f"{path}:{table}")
+
+    assert not offenders, f"{english!r} doit se lire {french!r} — encore dans {offenders}"
+
+
+def test_severity_unknown_reads_as_inconnu_and_never_as_anything_reassuring():
+    """A check that was never run is not a check that passed (spec §10)."""
+    source = (FRONTEND / "i18n" / "fr.ts").read_text(encoding="utf-8")
+    assert "UNKNOWN: 'INCONNU'" in source
+    for reassuring in ("SÛR", "SAIN", "OK", "AUCUN RISQUE"):
+        assert f"UNKNOWN: '{reassuring}'" not in source
+
+
+def test_the_interface_never_renders_a_raw_severity_or_rug_level():
+    """`{f.severity}` prints CRITICAL on a French screen."""
+    source = (FRONTEND / "components" / "RobinhoodTokens.tsx").read_text(encoding="utf-8")
+    assert ">{f.severity}<" not in source
+    assert ">{k} {s.counts" not in source
+
+
+def test_the_tax_findings_elide_correctly_on_both_sides():
+    """French elides `la` before a vowel and not before a consonant. A shared
+    `l'` in the template produced "Taxe à l'vente" on a real card — the article
+    now travels with the word, and no template may re-add one."""
+    from cryptopulse.config.settings import RobinhoodSettings
+    from cryptopulse.providers.goplus import TokenSecurity
+    from cryptopulse.risk.robinhood_safety import assess_safety
+
+    settings = RobinhoodSettings()
+    for buy, sell in ((0.05, 0.05), (1.0, 1.0), (0.9, 0.9), (None, None)):
+        report = assess_safety(
+            TokenSecurity(address="0x" + "ab" * 20, buy_tax=buy, sell_tax=sell),
+            settings,
+        )
+        for finding in report.findings:
+            assert "l'vente" not in finding.label_fr, finding.label_fr
+            assert "l'l'" not in finding.label_fr, finding.label_fr
+            if "Taxe à" in finding.label_fr:
+                assert ("Taxe à l'achat" in finding.label_fr
+                        or "Taxe à la vente" in finding.label_fr), finding.label_fr
+
+
+def test_no_decision_check_reaches_the_screen_in_english():
+    """"Pourquoi pas ACHETER ?" renders the decision's own check names and
+    `why` sentences verbatim (spec §7), so an English name there lands on the
+    card. Found by running it: "Rug risk / rug risk MEDIUM, maximum toléré pour
+    un achat LOW" on a real token."""
+    import inspect
+
+    from cryptopulse.risk.robinhood_safety import RUG_LEVEL_FR, RugRisk
+    from cryptopulse.trading import robinhood_decision as mod
+
+    # The names and the `why` templates, read from the source rather than
+    # exercised, so a branch that needs an exotic candidate is still covered.
+    source = inspect.getsource(mod)
+    for literal in re.findall(r'name="([^"]+)"', source):
+        assert not _looks_english(literal), literal
+    assert "rug risk" not in source.replace("buy_max_rug_risk", "")
+
+    # Every rug level has a French word, and none of them is the enum value.
+    for level in RugRisk:
+        assert RUG_LEVEL_FR[level] != level.value, level

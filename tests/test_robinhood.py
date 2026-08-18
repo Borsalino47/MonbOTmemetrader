@@ -276,7 +276,7 @@ async def test_to_dict_carries_the_full_story():
     d = result.to_dict()
     assert d["state"] == "VERIFIED"
     assert d["emoji"] == "🟢"
-    assert d["label_fr"] == "ROBINHOOD CHAIN LIVE VERIFIED"
+    assert d["label_fr"] == "ROBINHOOD CHAIN — FLUX VÉRIFIÉ"
     assert d["chain_id"] == 4663
     assert d["checked_at_ms"] == FIXED_NOW_MS
     assert d["total"] == len(d["checks"]) > 0

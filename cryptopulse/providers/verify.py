@@ -76,7 +76,7 @@ class FeedState(str, Enum):
 # state: (emoji, French label)
 PRESENTATION: dict[FeedState, tuple[str, str]] = {
     FeedState.PENDING: ("🟡", "VÉRIFICATION BINANCE EN COURS"),
-    FeedState.VERIFIED: ("🟢", "BINANCE LIVE VERIFIED"),
+    FeedState.VERIFIED: ("🟢", "BINANCE — FLUX VÉRIFIÉ"),
     FeedState.FAILED: ("🔴", "FLUX LIVE NON VÉRIFIÉ"),
     FeedState.SKIPPED_SYNTHETIC: ("🟠", "DÉMO — AUCUN FLUX À VÉRIFIER"),
 }

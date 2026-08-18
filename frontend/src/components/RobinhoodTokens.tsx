@@ -2,8 +2,14 @@ import { age, compact, num, price } from '../format';
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
 import { DECISION_LABELS, DecisionBadge } from './DecisionBadge';
+import { SEVERITY_FR, labelFor } from '../i18n/fr';
 import { TokenCrossCheck } from './TokenCrossCheck';
-import type { RobinhoodToken, RobinhoodTokensResponse, SafetyReport } from '../types';
+import type {
+  RhScoreBlock,
+  RobinhoodToken,
+  RobinhoodTokensResponse,
+  SafetyReport,
+} from '../types';
 
 /** New tokens on Robinhood Chain, newest first, filterable by age.
  *
@@ -159,6 +165,7 @@ function TokenRow({ t }: { t: RobinhoodToken }) {
   const [open, setOpen] = useState(false);
   const [crossOpen, setCrossOpen] = useState(false);
   const s = t.safety;
+  const p = t.presentation;
   return (
     <div className={`rh-token ${t.hard_veto ? 'vetoed' : ''}`}>
       <div className="rh-token-head">
@@ -166,23 +173,11 @@ function TokenRow({ t }: { t: RobinhoodToken }) {
         <span className="rh-age">{fmtAge(t.pool_age_seconds)}</span>
       </div>
 
-      {/* Safety comes before any market figure. A token that cannot be sold has
-          no interesting volume, and putting the numbers first would invite
-          reading them first. Icon + text + colour, never colour alone. */}
-      {s && (
-        <button className={`rh-risk ${s.rug_risk}`} onClick={() => setOpen(!open)}>
-          <span aria-hidden="true">{s.rug_emoji}</span>
-          <span className="rh-risk-label">{s.rug_label_fr}</span>
-          <span className="rh-risk-score">Sécurité {s.score_label}</span>
-          <span className="rh-risk-more">{open ? '▲' : '▼'}</span>
-        </button>
-      )}
-
-      {/* The instruction, and directly beneath it every reason it rests on.
-          The blocking list comes from the *decision*, not from safety alone:
-          a purchase can also be refused for a pool too thin to exit, a vetoed
-          explosion, or two sources that disagree, and a ⚫ whose reason is
-          invisible is indistinguishable from a bug (invariant 73). */}
+      {/* The decision is the most visible thing on the card, immediately under
+          the symbol (spec §6). Safety used to sit here — it still comes before
+          any *market figure*, but not before the answer those figures produced:
+          the question "why is this not a buy?" has to be answerable before the
+          eye reaches a single number. */}
       {t.decision && (
         <div className={`rh-decision ${t.decision.action}`}>
           <DecisionBadge
@@ -190,11 +185,31 @@ function TokenRow({ t }: { t: RobinhoodToken }) {
             size="md"
             strength={t.decision.strength_fr}
           />
-          {t.decision.blocking.length > 0 && (
-            <ul className="rh-decision-blocking">
-              {t.decision.blocking.map((b, i) => <li key={i}>{b}</li>)}
-            </ul>
+
+          {/* The question the card exists to answer, immediately under the
+              answer itself (spec §6-7). Every line carries the reading and the
+              threshold it was measured against, so the refusal is arguable
+              rather than merely stated. */}
+          {p && p.why_not_buy.length > 0 && (
+            <div className="rh-whynot">
+              <strong>Pourquoi pas ACHETER ?</strong>
+              <ul>
+                {p.why_not_buy.map((r, i) => (
+                  <li key={i} className={r.kind}>
+                    <span className="rh-whynot-label">{r.label_fr}</span>
+                    {r.value_fr && r.minimum_fr ? (
+                      <span className="rh-whynot-nums">
+                        {r.value_fr} <span className="muted">/ minimum {r.minimum_fr}</span>
+                      </span>
+                    ) : (
+                      <span className="rh-whynot-nums">{r.detail_fr}</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
+
           {t.decision.action === 'BUY' && t.decision.reasons.length > 0 && (
             <ul className="rh-decision-why">
               {t.decision.reasons.map((r, i) => <li key={i}>{r}</li>)}
@@ -203,37 +218,122 @@ function TokenRow({ t }: { t: RobinhoodToken }) {
         </div>
       )}
 
+      {/* How much history actually exists. Near the top rather than several
+          lines down: on a token four minutes old this is the fact that
+          qualifies every other number on the card (spec §4). */}
+      {p && (
+        <div className={`rh-history ${p.history.very_recent ? 'recent' : ''}`}>
+          <span className="k">Historique disponible</span>
+          <span className="v">{p.history.available_fr}</span>
+          {p.history.warning && <p className="rh-history-warning">⚠ {p.history.warning}</p>}
+        </div>
+      )}
+
+
+      {/* Safety comes before any market figure. A token that cannot be sold has
+          no interesting volume, and putting the numbers first would invite
+          reading them first. Icon + text + colour, never colour alone. */}
+      {/* "RUG RISK FAIBLE" on a token where four checks came back empty reads
+          as reassurance it has not earned. The headline says what was actually
+          established, and the coverage sits beside it (spec §9-10). */}
+      {s && p && (
+        <button className={`rh-risk ${s.rug_risk} ${p.safety.partial ? 'partial' : ''}`}
+                onClick={() => setOpen(!open)}>
+          <span aria-hidden="true">{p.safety.emoji}</span>
+          <span className="rh-risk-label">{p.safety.headline_fr}</span>
+          <span className="rh-risk-score">
+            Risque {p.safety.risk_level_fr} · couverture {num(p.safety.coverage_pct ?? 0, 0)}&#8239;%
+          </span>
+          <span className="rh-risk-more">{open ? '▲' : '▼'}</span>
+        </button>
+      )}
+
       {s && open && <SafetyDetail s={s} />}
 
-      {t.early && (
-        <div className="rh-scores">
-          <ScorePill label="Early" value={t.early.label} tone="early" />
-          {t.explosion && (
-            <ScorePill
-              label={`Explosion ${t.explosion.horizon_minutes} min`}
-              value={t.explosion.label}
-              tone={t.explosion.vetoed ? 'late' : 'boom'}
-            />
+      {s && p && p.safety.partial && (
+        <div className="rh-partial">
+          ⚠ SÉCURITÉ PARTIELLEMENT VÉRIFIÉE — {p.safety.unknown_count ?? 0} contrôle(s) inconnu(s).
+          <ul>
+            {p.safety.unknown_checks.map((c, i) => <li key={i}>{c}</li>)}
+          </ul>
+          <p className="muted small">
+            Un contrôle non effectué n'est jamais lu comme un contrôle réussi.
+          </p>
+        </div>
+      )}
+
+      {/* Too little depth is not a secondary defect: it is the reason an exit
+          may not be executable at the price on screen (spec §8). */}
+      {p && p.liquidity.severity !== 'ok' && (
+        <div className={`rh-liq ${p.liquidity.severity}`}>
+          <strong>
+            {p.liquidity.severity === 'critical' ? '🚨 ' : '⚠ '}
+            {p.liquidity.headline_fr}
+          </strong>
+          <div className="rh-liq-nums">
+            {p.liquidity.display_fr}
+            <span className="muted"> / minimum requis {p.liquidity.minimum_fr}</span>
+          </div>
+          {p.liquidity.consequences.length > 0 && (
+            <ul>
+              {p.liquidity.consequences.map((c, i) => <li key={i}>{c}</li>)}
+            </ul>
           )}
+        </div>
+      )}
+
+      {/* The instruction, and directly beneath it every reason it rests on.
+          The blocking list comes from the *decision*, not from safety alone:
+          a purchase can also be refused for a pool too thin to exit, a vetoed
+          explosion, or two sources that disagree, and a ⚫ whose reason is
+          invisible is indistinguishable from a bug (invariant 73). */}
+      {/* Every predictive score with the reliability of the data under it.
+          The tone comes from the *weaker* of the two: a 92 measured on two
+          minutes of history is a strong number, not a strong signal, and the
+          card must not let the first read as the second (spec §2, §11). */}
+      {p && (
+        <div className="rh-scores">
+          <ScoreWithReliability block={p.scores.explosion} icon="🚀" />
+          <ScoreWithReliability block={p.scores.early} icon="🌱" />
           <ScorePill
             label="Maturité"
             value={t.maturity ? (t.maturity.known ? t.maturity.label : 'inconnue') : '—'}
             tone={t.maturity?.is_late ? 'late' : 'ok'}
           />
-          <ScorePill
-            label="Confiance"
-            value={t.confidence?.label ?? '—'}
-            tone={(t.confidence?.score ?? 0) < 50 ? 'thin' : 'ok'}
-          />
         </div>
       )}
 
-      {open && t.early && <EarlyDetail t={t} />}
-      <div className="rh-addr" title={t.contract_address}>
-        {short(t.contract_address)}
-        {t.dex ? <span className="rh-dex">{t.dex}</span> : null}
-      </div>
-      <div className="rh-token-grid">
+      {/* What is true about the pool rather than about the token: a thin pool
+          moves easily *because* it is thin, which is not an opportunity
+          (spec §20). */}
+      {p?.caveats.map((c, i) => (
+        <p className="rh-caveat" key={`cav${i}`}>⚠ {c}</p>
+      ))}
+
+      {/* What is absent, counted and nameable. These absences are what lower
+          the reliability above; a missing datum is never a favourable one
+          (spec §15). */}
+      {p && p.missing_data.count > 0 && (
+        <details className="rh-missing">
+          <summary>Données manquantes : {p.missing_data.count}</summary>
+          <ul>
+            {p.missing_data.fields.map((f, i) => <li key={i}>{f}</li>)}
+          </ul>
+          <p className="muted small">{p.missing_data.note}</p>
+        </details>
+      )}
+
+      {/* Everything below is the expert half: the same figures as before, but
+          under the decision rather than above it (spec §17). */}
+      <details className="rh-expert">
+        <summary>Détail complet</summary>
+
+        {t.early && <EarlyDetail t={t} />}
+        <div className="rh-addr" title={t.contract_address}>
+          {short(t.contract_address)}
+          {t.dex ? <span className="rh-dex">{t.dex}</span> : null}
+        </div>
+        <div className="rh-token-grid">
         <Cell k="Prix" v={fmtUsd(t.price_usd, 6)} />
         <Cell
           k="Liquidité"
@@ -247,7 +347,8 @@ function TokenRow({ t }: { t: RobinhoodToken }) {
         <Cell k="Acheteurs 1 h" v={fmtNum(t.buyers_h1)} />
         <Cell k="Achats/ventes" v={fmtNum(t.buy_sell_ratio_h1, 2)} />
         <Cell k="Accélération" v={fmtNum(t.volume_acceleration, 2, '×')} />
-      </div>
+        </div>
+      </details>
 
       {/* The cross-check costs a request, so it is opened deliberately rather
           than fetched for every row on every refresh. */}
@@ -257,6 +358,36 @@ function TokenRow({ t }: { t: RobinhoodToken }) {
       {crossOpen && (
         <TokenCrossCheck address={t.contract_address} onClose={() => setCrossOpen(false)} />
       )}
+    </div>
+  );
+}
+
+/** A predictive score with the reliability of the data under it.
+ *
+ * The two are always rendered together (spec §2). The pill's colour comes from
+ * `tone`, which the backend derives from the *weaker* of the two: 92/100 on two
+ * minutes of history is `caution`, not `strong`. A number never earns green —
+ * green belongs to a decision (spec §11-12). */
+function ScoreWithReliability({ block, icon }: { block: RhScoreBlock; icon: string }) {
+  const r = block.reliability;
+  return (
+    <div className={`rh-score ${block.tone}`}>
+      <div className="rh-score-head">
+        <span aria-hidden="true">{icon}</span>
+        <span className="rh-score-label">
+          {block.label_fr}{block.horizon_fr ? ` ${block.horizon_fr}` : ''}
+        </span>
+      </div>
+      {/* "92/100", never "92 %". There is no calibration behind this number
+          and so there is no probability to show (spec §1). */}
+      <div className="rh-score-value">{block.display}</div>
+      <div className="rh-score-rel">
+        <span aria-hidden="true">{r.emoji}</span> Fiabilité&nbsp;: {
+          r.score === null ? '—' : `${num(r.score, 0)}/100`
+        } — {r.label_fr}
+      </div>
+      {block.warning && <div className="rh-score-warn">⚠ {block.warning}</div>}
+      <div className="rh-score-note">{block.note}</div>
     </div>
   );
 }
@@ -323,13 +454,15 @@ function SafetyDetail({ s }: { s: SafetyReport }) {
     <div className="rh-safety-detail">
       <div className="rh-safety-counts">
         {(['CRITICAL', 'MAJOR', 'MINOR', 'UNKNOWN'] as const).map((k) => (
-          <span key={k} className={`rh-count ${k}`}>{k} {s.counts[k] ?? 0}</span>
+          <span key={k} className={`rh-count ${k}`}>
+            {labelFor(SEVERITY_FR, k)} {s.counts[k] ?? 0}
+          </span>
         ))}
       </div>
       {s.findings.length === 0 && <p className="muted small">Aucun signal négatif détecté.</p>}
       {s.findings.map((f) => (
         <div className="rh-finding" key={f.code}>
-          <span className={`rh-sev ${f.severity}`}>{f.severity}</span>
+          <span className={`rh-sev ${f.severity}`}>{labelFor(SEVERITY_FR, f.severity)}</span>
           <span className="rh-finding-label">
             {f.label_fr}{f.detail ? <span className="muted"> — {f.detail}</span> : null}
           </span>

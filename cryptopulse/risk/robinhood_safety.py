@@ -88,11 +88,21 @@ class RugRisk(str, Enum):
 
 # level -> (emoji, French label)
 RUG_PRESENTATION: dict[RugRisk, tuple[str, str]] = {
-    RugRisk.LOW: ("🟢", "RUG RISK FAIBLE"),
-    RugRisk.MEDIUM: ("🟡", "RUG RISK MOYEN"),
-    RugRisk.HIGH: ("🟠", "RUG RISK ÉLEVÉ"),
-    RugRisk.CRITICAL: ("🔴", "RUG RISK CRITIQUE"),
+    RugRisk.LOW: ("🟢", "RISQUE DE RUG FAIBLE"),
+    RugRisk.MEDIUM: ("🟡", "RISQUE DE RUG MOYEN"),
+    RugRisk.HIGH: ("🟠", "RISQUE DE RUG ÉLEVÉ"),
+    RugRisk.CRITICAL: ("🔴", "RISQUE DE RUG CRITIQUE"),
     RugRisk.UNKNOWN: ("⚫", "SÉCURITÉ NON ANALYSÉE"),
+}
+
+# The level word alone, for sentences that already say "risque de rug". Kept
+# beside RUG_PRESENTATION so the two can never drift into different French.
+RUG_LEVEL_FR: dict[RugRisk, str] = {
+    RugRisk.LOW: "FAIBLE",
+    RugRisk.MEDIUM: "MOYEN",
+    RugRisk.HIGH: "ÉLEVÉ",
+    RugRisk.CRITICAL: "CRITIQUE",
+    RugRisk.UNKNOWN: "INCONNU",
 }
 
 
@@ -285,13 +295,16 @@ def assess_safety(sec: TokenSecurity, settings: RobinhoodSettings) -> SafetyRepo
 
     # ------------------------------------------------------------ 3. taxes --- #
     taxes = SAFETY_WEIGHTS["taxes"]
+    # The article travels with the word: French elides `la` before a vowel and
+    # not before a consonant, so a shared `l'` produced "Taxe à l'vente" — found
+    # on a real card.
     for attr, cap, name in (
-        ("buy_tax", settings.safety_max_buy_tax, "achat"),
-        ("sell_tax", settings.safety_max_sell_tax, "vente"),
+        ("buy_tax", settings.safety_max_buy_tax, "l'achat"),
+        ("sell_tax", settings.safety_max_sell_tax, "la vente"),
     ):
         value = getattr(sec, attr)
         if value is None:
-            add(f"{attr.upper()}_UNKNOWN", Severity.UNKNOWN, f"Taxe à l'{name} inconnue")
+            add(f"{attr.upper()}_UNKNOWN", Severity.UNKNOWN, f"Taxe à {name} inconnue")
             taxes *= 0.6
             continue
         # GoPlus returns a fraction ("0.05") on some chains and a percentage on
@@ -300,14 +313,14 @@ def assess_safety(sec: TokenSecurity, settings: RobinhoodSettings) -> SafetyRepo
         # both are catastrophic anyway.
         pct = value * 100.0 if value <= 1.0 else value
         if pct >= 100.0:
-            add(f"{attr.upper()}_TOTAL", Severity.CRITICAL, f"Taxe à l'{name} de 100 %",
+            add(f"{attr.upper()}_TOTAL", Severity.CRITICAL, f"Taxe à {name} de 100 %",
                 blocking=True)
             taxes = 0.0
         elif pct > cap:
-            add(f"{attr.upper()}_HIGH", Severity.MAJOR, f"Taxe à l'{name} élevée", f"{num(pct, 1)} %")
+            add(f"{attr.upper()}_HIGH", Severity.MAJOR, f"Taxe à {name} élevée", f"{num(pct, 1)} %")
             taxes *= 0.3
         elif pct > 0:
-            add(f"{attr.upper()}_PRESENT", Severity.MINOR, f"Taxe à l'{name}", f"{num(pct, 1)} %")
+            add(f"{attr.upper()}_PRESENT", Severity.MINOR, f"Taxe à {name}", f"{num(pct, 1)} %")
             taxes *= 0.85
     if sec.slippage_modifiable is True:
         add("SLIPPAGE_MODIFIABLE", Severity.MAJOR, "Taxes modifiables après coup",

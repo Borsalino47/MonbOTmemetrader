@@ -69,7 +69,7 @@ from dataclasses import dataclass, field
 from cryptopulse.config.settings import RobinhoodSettings
 from cryptopulse.core.logging import get_logger
 from cryptopulse.i18n import money, num
-from cryptopulse.risk.robinhood_safety import RugRisk
+from cryptopulse.risk.robinhood_safety import RUG_LEVEL_FR, RugRisk
 from cryptopulse.trading.decision import (
     PRESENTATION,
     SignalStrength,
@@ -188,7 +188,7 @@ class RobinhoodTradeDecisionEngine:
         except ValueError as exc:
             raise ValueError(
                 f"CP_ROBINHOOD_BUY_MAX_RUG_RISK={self.cfg.buy_max_rug_risk!r} n'est pas un "
-                f"niveau de rug risk. Attendu : {', '.join(r.value for r in RugRisk)}"
+                f"niveau de risque de rug. Attendu : {', '.join(r.value for r in RugRisk)}"
             ) from exc
         self.weights_fingerprint = self._fingerprint()
 
@@ -470,14 +470,14 @@ class RobinhoodTradeDecisionEngine:
         rug = candidate.safety.rug_risk if candidate.safety else RugRisk.UNKNOWN
         checks.append(
             _Check(
-                name="rug risk",
+                name="risque de rug",
                 passed=_RUG_ORDER[rug] >= _RUG_ORDER[self.max_rug_risk],
                 value=None,
                 threshold=None,
                 unavailable=rug is RugRisk.UNKNOWN,
                 why=(
-                    f"rug risk {rug.value}, maximum toléré pour un achat "
-                    f"{self.max_rug_risk.value}"
+                    f"risque de rug {RUG_LEVEL_FR[rug]}, maximum toléré pour "
+                    f"un achat {RUG_LEVEL_FR[self.max_rug_risk]}"
                 ),
             )
         )

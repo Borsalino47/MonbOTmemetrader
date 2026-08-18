@@ -74,7 +74,7 @@ that justifies it.
 | Feed verification (`providers/verify.py`) | **TESTED** | One definition of LIVE VERIFIED, shared by `doctor` and the service |
 | Schema migration (`database/migrate.py`) | **TESTED** | Additive columns only; refuses destructive changes |
 | Hybrid Android scripts (`scripts/android_env.sh`) | **TESTED — NOT DEVICE VERIFIED** | 32 tests incl. a fake `proot-distro` recording argv. Termux build / PRoot backend split. Never run on Android |
-| **Robinhood Chain RPC (`providers/robinhood.py`)** | **IMPLEMENTED — NOT LIVE VERIFIED** | 17 tests vs mocked JSON-RPC. Chain id 4663. Host refused by this sandbox (403, same as Binance was); `doctor-robinhood` is the check |
+| **Robinhood Chain RPC (`providers/robinhood.py`)** | **LIVE VERIFIED ON THE USER'S ANDROID — NOT VERIFIED HERE** | 17 tests vs mocked JSON-RPC. Chain id 4663. The user reports `doctor-robinhood` green on their phone and the scanner finding real new pools; this sandbox still refuses the host (403), so nothing in this environment has ever seen that data. Re-run `doctor-robinhood` after any change to the connector — a report from a phone is not a regression test |
 | Robinhood Chain doctor (`providers/robinhood_verify.py`) | **TESTED** | 🟢 VERIFIED / 🟡 PARTIAL / 🔴 FAILED — core vs liveness split. Independent of Binance by construction |
 | **GeckoTerminal client (`providers/geckoterminal.py`)** | **IMPLEMENTED — NOT LIVE VERIFIED** | Contract cross-checked vs `geckoterminal-api` 0.9.0 + published docs. Host refused by this sandbox |
 | Robinhood token discovery (`hunter/robinhood_discovery.py`) | **TESTED** | 25 tests. Age buckets, address identity, NULL never 0. Run end to end against a stubbed indexer only |
@@ -93,9 +93,10 @@ that justifies it.
 | Robinhood statistics (`outcomes/robinhood_stats.py`) | **TESTED** | `by_action` is the table that matters: 🟢 must beat 🟡 must beat ⚫. Every rate carries its `n` |
 | Robinhood notifications (`alerts/robinhood_notify.py`) | **TESTED — NOT DEVICE VERIFIED** | 30 tests against a stand-in binary. 🟢 once per token, 🔴/🟠 never rate-limited |
 | Robinhood retention + migration | **TESTED** | 12 tests. Never prunes a decision still owing a window; new tables land on an old database |
-| **French localisation (`cryptopulse/i18n/`, `frontend/src/i18n/fr.ts`)** | **TESTED** | 46 anti-English tests. 240 catalogue entries + 50 enum labels + 42 UI labels. Rendered at emission, no network, no model |
+| **French localisation (`cryptopulse/i18n/`, `frontend/src/i18n/fr.ts`)** | **TESTED** | 77 anti-English tests. 240 catalogue entries + 50 enum labels + 42 UI labels. Rendered at emission, no network, no model |
+| **Robinhood card presentation (`scoring/robinhood_presentation.py`)** | **TESTED** | 41 tests. Pure presentation: reliability bands, "Pourquoi pas ACHETER ?", history vs requirement, liquidity severity. Computes no opinion and moves no threshold |
 
-**Test suite: 1010 tests, all passing.** Run `pytest -q`.
+**Test suite: 1058 tests, all passing.** Run `pytest -q`.
 
 ---
 
@@ -190,6 +191,7 @@ cryptopulse/
     verdict.py           🟢/🟡/🟠/🔴 in four words, computed last, caveat attached
     discovery.py         TOKEN_DISCOVERY_SCORE — has this behaviour just changed?
     explosion.py         EXPLOSION_15M_SCORE — is it about to move, within 15 min?
+    robinhood_presentation.py  How a Robinhood card reads. No opinion, no fingerprint
     engine.py            SCORE_ENGINE_V1 orchestrator + weights fingerprint
   risk/
     liquidity.py         Liquidity gate, DANGEROUS => veto
@@ -931,6 +933,50 @@ Break these and the product is lying to its user.
     landed: 1328 ms to first HTTP, with zero Robinhood, GeckoTerminal, GoPlus
     or DexScreener lines in the boot log (spec §41-42).
 
+106. **A score is shown with its reliability, and the weaker of the two sets the
+    colour.** Found on a real phone: DRCO read "Explosion 15 min 92/100" as the
+    biggest number on the card while its data confidence was 50 and its pool
+    held 2 471 dollars. The engine refused correctly and the screen argued the
+    other way. `describe_score()` takes the tone from the *weaker* reading, so a
+    92 on thin data is never green; the display string is always `n/100` and
+    every block carries `not_a_probability`. Reliability describes the data, not
+    the token, and the card says so in that sentence.
+
+107. **"Pourquoi pas ACHETER ?" is read off the decision, never recomputed.**
+    It renders the engine's own `checks` and `blocking` list with each value
+    beside its minimum, so the explanation cannot disagree with the answer it is
+    explaining. That also means a check's `name` and `why` land verbatim on a
+    French card — `test_no_decision_check_reaches_the_screen_in_english` walks
+    them, after "Rug risk / rug risk MEDIUM, maximum toléré pour un achat LOW"
+    reached a real screen.
+
+108. **The presentation layer moves no threshold and has no fingerprint.** It
+    computes no opinion, so it needs no version: a readability pass that changed
+    a floor would be the worst possible outcome of a readability pass.
+    `test_the_presentation_layer_changes_no_decision` builds the card twice
+    around a decision and asserts the action, the fingerprint and every check
+    are unchanged. Zero ACHETER remains a legitimate result, and no threshold
+    was touched to avoid it.
+
+109. **Partial safety coverage is stated as coverage, never softened into
+    safety.** The headline drops to "Aucun risque critique détecté **sur les
+    contrôles effectués**" below 85 % coverage, and the unknown checks are
+    listed by name under "⚠ SÉCURITÉ PARTIELLEMENT VÉRIFIÉE". UNKNOWN is never
+    assimilated to SAFE (invariant 71); this is where a user actually reads that
+    difference.
+
+110. **A thin pool is a warning, not a footnote.** 2 471 dollars gets 🚨 and
+    three named consequences — slippage, manipulability, an exit that may not
+    exist at the displayed price — because a pool that small can move +100 %
+    *precisely because* it is thin, and that is not the same thing as an
+    opportunity. The card says that sentence out loud rather than leaving it to
+    be inferred from a number.
+
+111. **The article travels with the word.** French elides `la` before a vowel
+    and not before a consonant, so one shared `l'` in a template produced "Taxe
+    à l'vente" on a real card. The tax loop carries `"l'achat"` and `"la vente"`
+    as whole strings, and a test asserts both spellings across every tax branch.
+
 ---
 
 ## 6. Design decisions and why
@@ -1085,6 +1131,15 @@ pytest tests/test_no_lookahead.py -v    # the ones that matter most
   `robinhood_discovery` -> `robinhood_decision`, which is the same cycle
   `i18n/labels.py` had to break, and the same fix: an engine that reads a value
   does not need to import the module that defines it.
+* `cryptopulse/scoring/robinhood_presentation.py` — presentation only. It may
+  read a score, a threshold and a decision's own checks; it may not compute one.
+  The moment a number is derived here rather than displayed, it has become a
+  ninth opinion with no version and no fingerprint, and invariant 108's test
+  will not catch every shape of that.
+* `cryptopulse/trading/robinhood_decision.py` — a check's `name` and `why` are
+  rendered verbatim under "Pourquoi pas ACHETER ?". They are user-facing French
+  strings, not identifiers, and the anti-English test reads them from the
+  source.
 * `cryptopulse/i18n/reasons.py` — a reason is added here and called from the
   engine, never written as a literal at the call site. `tests/test_french_only.py`
   greps for `reasons.append("` across ten engine files, so a literal is caught,
@@ -1096,12 +1151,16 @@ pytest tests/test_no_lookahead.py -v    # the ones that matter most
 
 1. **Run `doctor` and `doctor-robinhood` in an environment with egress.** Fix
    any field-mapping mismatch they report. Only then is anything else worth
-   doing. Five connectors are now IMPLEMENTED — NOT LIVE VERIFIED for the same
-   single reason (this sandbox refuses their hosts): Binance, Kraken, the
-   Robinhood Chain RPC, GeckoTerminal, GoPlus and DexScreener. Each contract
-   was cross-checked against the vendor's own published client read from PyPI,
-   which proves the connector and that client agree — not that the live API
-   matches either.
+   doing. The Robinhood half has now been run for real: the user reports
+   `doctor-robinhood` green on their Android and the scanner finding genuine
+   new pools — the DRCO card that prompted the readability pass came off that
+   phone. Nothing in *this* environment has seen that data, so the connectors
+   are still developed blind here and every change to one needs `doctor` re-run
+   on the phone. Binance, Kraken, GeckoTerminal, GoPlus and DexScreener remain
+   IMPLEMENTED — NOT LIVE VERIFIED for the same single reason (this sandbox
+   refuses their hosts). Each contract was cross-checked against the vendor's
+   own published client read from PyPI, which proves the connector and that
+   client agree — not that the live API matches either.
 2. **Let it run and accumulate signals.** The journal is the point; nothing can
    be validated without a few thousand real rows.
 3. ~~Build the outcome tracker.~~ **Done.** `outcomes/tracker.py` grades signals

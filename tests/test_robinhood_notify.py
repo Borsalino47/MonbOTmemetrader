@@ -353,7 +353,7 @@ def test_an_entry_notification_keeps_the_two_figures_that_decide_exitability():
     args = _decision_args("termux-notification", entry_notice(buyable()), synthetic=False)
     content = args[args.index("--content") + 1]
     assert "Liquidité" in content
-    assert "RUG RISK" in content.upper()
+    assert "RISQUE DE RUG" in content.upper()
 
 
 def test_a_reduce_and_a_sell_share_one_notification_card():

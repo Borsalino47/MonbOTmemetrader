@@ -39,7 +39,7 @@ export function RobinhoodView({
       <div className="panel rh-head">
         <div className="rh-title">
           <h3>ROBINHOOD CHAIN</h3>
-          <span className="rh-chain">chain id {status.chain_id}</span>
+          <span className="rh-chain">ID de chaîne {status.chain_id}</span>
         </div>
 
         <div className={`feed-badge ${v.state}`}>

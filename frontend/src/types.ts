@@ -852,6 +852,7 @@ export interface RobinhoodToken {
   /** The instruction, computed last from all four readings above. Null until
    *  the safety pass has run — undecided is not the same as refused. */
   decision: RobinhoodTradeDecision | null;
+  presentation: RhPresentation | null;
 }
 
 /** Same six decisions and six colours as the Binance engine (spec §21), from
@@ -1062,4 +1063,77 @@ export interface RobinhoodPerformanceResponse {
     min_sample: number;
     notes: string[];
   };
+}
+
+
+/** Presentation only, derived from the readings above. Computes no opinion:
+ *  deleting it would leave every decision identical and only the card worse. */
+export interface RhReliability {
+  score: number | null;
+  label_fr: string;
+  emoji: string;
+  trustworthy: boolean;
+  note: string;
+}
+
+export interface RhScoreBlock {
+  label_fr: string;
+  horizon_fr: string | null;
+  score: number | null;
+  /** Always "n/100", never a percentage (spec §1). */
+  display: string;
+  /** The weaker of score and reliability — a high score on thin data is
+   *  `caution`, never `strong`. Green belongs to a decision, not a number. */
+  tone: 'strong' | 'moderate' | 'weak' | 'caution' | 'unknown';
+  reliability: RhReliability;
+  not_a_probability: boolean;
+  note: string;
+  warning: string | null;
+}
+
+export interface RhWhyNot {
+  kind: 'veto' | 'floor' | 'unavailable';
+  label_fr: string;
+  detail_fr: string;
+  value_fr: string | null;
+  minimum_fr: string | null;
+}
+
+export interface RhPresentation {
+  decision_first: boolean;
+  why_not_buy: RhWhyNot[];
+  scores: { explosion: RhScoreBlock; early: RhScoreBlock };
+  reliability: RhReliability;
+  history: {
+    available_seconds: number | null;
+    available_fr: string;
+    very_recent: boolean;
+    insufficient_for: { measure: string; needs_fr: string; have_fr: string }[];
+    warning: string | null;
+  };
+  safety: {
+    analysed: boolean;
+    headline_fr: string;
+    emoji: string;
+    risk_level_fr: string;
+    coverage_pct: number | null;
+    coverage_label_fr: string;
+    unknown_checks: string[];
+    unknown_count?: number;
+    confidence_fr: string;
+    partial?: boolean;
+    note: string;
+  };
+  liquidity: {
+    usd: number | null;
+    display_fr: string;
+    minimum_usd: number;
+    minimum_fr: string;
+    ratio?: number;
+    severity: 'ok' | 'low' | 'critical' | 'unknown';
+    headline_fr: string;
+    consequences: string[];
+  };
+  missing_data: { count: number; fields: string[]; note: string };
+  caveats: string[];
 }

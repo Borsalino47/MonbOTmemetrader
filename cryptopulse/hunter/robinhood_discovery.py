@@ -47,6 +47,7 @@ from cryptopulse.scoring.robinhood_early import (
     score_early,
 )
 from cryptopulse.scoring.robinhood_explosion import RobinhoodExplosion, score_explosion
+from cryptopulse.scoring.robinhood_presentation import build_presentation
 from cryptopulse.trading.decision import TradeAction
 from cryptopulse.trading.robinhood_decision import (
     RobinhoodTradeDecision,
@@ -113,6 +114,8 @@ class TokenCandidate:
     # decision that existed before them would have been taken on less evidence
     # than the screen shows beside it.
     decision: RobinhoodTradeDecision | None = None
+    # Filled last, after the decision, because it explains it (spec §6-7).
+    presentation: dict | None = None
 
     @property
     def primary_pool(self) -> PoolSnapshot | None:
@@ -212,6 +215,11 @@ class TokenCandidate:
             # The instruction, kept separate from the three readings it rests
             # on so the screen can show the reasoning beside the answer.
             "decision": self.decision.to_dict() if self.decision else None,
+            # Presentation only: derived from everything above, computes no
+            # opinion of its own, and reads no threshold to *decide* anything.
+            # Deleting it would leave every decision identical and only the
+            # screen worse.
+            "presentation": self.presentation,
         }
 
 
@@ -440,6 +448,9 @@ async def attach_safety(
     now_ms = report.at_ms or SYSTEM_CLOCK.now_ms()
     for candidate in targets:
         candidate.decision = engine.decide_entry(candidate, now_ms=now_ms)
+        # Presentation last of all: it explains the decision, so it cannot be
+        # built before there is one to explain.
+        candidate.presentation = build_presentation(candidate, settings)
     report.decision_fingerprint = engine.weights_fingerprint
 
     log.info(

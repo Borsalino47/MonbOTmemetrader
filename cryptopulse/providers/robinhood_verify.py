@@ -57,7 +57,7 @@ class ChainState(str, Enum):
 # label; a test pins it.
 PRESENTATION: dict[ChainState, tuple[str, str]] = {
     ChainState.PENDING: ("🟡", "VÉRIFICATION ROBINHOOD CHAIN EN COURS"),
-    ChainState.VERIFIED: ("🟢", "ROBINHOOD CHAIN LIVE VERIFIED"),
+    ChainState.VERIFIED: ("🟢", "ROBINHOOD CHAIN — FLUX VÉRIFIÉ"),
     ChainState.PARTIAL: ("🟡", "ROBINHOOD CHAIN — VÉRIFICATION PARTIELLE"),
     ChainState.FAILED: ("🔴", "ROBINHOOD CHAIN NON VÉRIFIÉ"),
 }

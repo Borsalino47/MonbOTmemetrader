@@ -1568,3 +1568,105 @@ tbody td.sym { font-weight: 600; text-align: left; }
   font-size: 11px;
   color: var(--text-dim);
 }
+
+/* --- Robinhood: reliability beside every predictive score ----------------- */
+/* The tone comes from the weaker of score and reliability. A high score on
+   thin data is amber; green is never earned by one number (spec §11-12). */
+.rh-score {
+  flex: 1 1 150px;
+  min-width: 140px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+}
+.rh-score.strong   { border-color: var(--up); }
+.rh-score.moderate { border-color: var(--border); }
+.rh-score.weak     { border-color: var(--border); opacity: 0.85; }
+.rh-score.caution  { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 8%, var(--panel-2)); }
+.rh-score.unknown  { border-style: dashed; }
+
+.rh-score-head { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-dim); }
+.rh-score-value { font-size: 22px; font-weight: 600; line-height: 1.1; margin: 2px 0; }
+.rh-score.caution .rh-score-value { color: var(--warn); }
+.rh-score.strong .rh-score-value { color: var(--up); }
+.rh-score-rel { font-size: 11px; color: var(--text-dim); }
+.rh-score-warn { margin-top: 4px; font-size: 11px; color: var(--warn); line-height: 1.35; }
+.rh-score-note { margin-top: 3px; font-size: 10px; color: var(--text-faint); }
+
+/* --- Why not buy ---------------------------------------------------------- */
+.rh-whynot { margin-top: 8px; }
+.rh-whynot > strong { font-size: 11px; letter-spacing: 0.04em; color: var(--text); }
+.rh-whynot ul { margin: 4px 0 0; padding: 0; list-style: none; }
+.rh-whynot li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  padding: 2px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+}
+.rh-whynot li::before { content: '❌'; margin-right: 4px; }
+.rh-whynot li.veto::before { content: '⛔'; }
+.rh-whynot li.unavailable::before { content: '❔'; }
+.rh-whynot-label { color: var(--text-dim); flex: 1 1 auto; }
+.rh-whynot-nums { color: var(--text); white-space: nowrap; text-align: right; }
+
+/* --- History and freshness ------------------------------------------------ */
+.rh-history {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  margin: 6px 0;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.rh-history .v { color: var(--text); font-weight: 600; }
+.rh-history.recent { color: var(--warn); }
+.rh-history-warning { flex-basis: 100%; margin: 2px 0 0; color: var(--warn); line-height: 1.35; }
+
+/* --- Partial safety coverage ---------------------------------------------- */
+.rh-partial {
+  margin: 4px 0 6px;
+  padding: 6px 8px;
+  border-left: 3px solid var(--warn);
+  background: color-mix(in srgb, var(--warn) 7%, transparent);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.rh-partial ul { margin: 4px 0 2px; padding-left: 16px; }
+
+/* --- Liquidity, when it is the reason ------------------------------------- */
+.rh-liq {
+  margin: 6px 0;
+  padding: 7px 9px;
+  border-radius: 8px;
+  border-left: 3px solid var(--warn);
+  background: color-mix(in srgb, var(--warn) 7%, transparent);
+  font-size: 11px;
+}
+.rh-liq.critical { border-left-color: var(--down); background: color-mix(in srgb, var(--down) 8%, transparent); }
+.rh-liq-nums { margin: 2px 0 0; font-size: 13px; font-weight: 600; }
+.rh-liq ul { margin: 4px 0 0; padding-left: 16px; color: var(--text-dim); line-height: 1.4; }
+
+.rh-caveat {
+  margin: 6px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--warn);
+}
+
+/* --- Missing data --------------------------------------------------------- */
+.rh-missing { margin: 6px 0; font-size: 11px; }
+.rh-missing summary { cursor: pointer; color: var(--text-dim); }
+.rh-missing ul { margin: 4px 0 0; padding-left: 16px; color: var(--text-dim); line-height: 1.4; }
+
+/* Expert detail, folded under the decision rather than stacked above it. */
+.rh-expert { margin-top: 6px; }
+.rh-expert summary {
+  cursor: pointer;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}

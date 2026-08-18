@@ -124,7 +124,7 @@ def test_the_four_states_have_distinct_presentations():
     assert len(set(emojis)) == len(FeedState), "two states sharing an icon are indistinguishable"
     # The three the user named, in the words they named them.
     assert PRESENTATION[FeedState.PENDING][1] == "VÉRIFICATION BINANCE EN COURS"
-    assert PRESENTATION[FeedState.VERIFIED][1] == "BINANCE LIVE VERIFIED"
+    assert PRESENTATION[FeedState.VERIFIED][1] == "BINANCE — FLUX VÉRIFIÉ"
     assert PRESENTATION[FeedState.FAILED][1] == "FLUX LIVE NON VÉRIFIÉ"
 
 

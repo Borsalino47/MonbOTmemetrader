@@ -168,7 +168,7 @@ def test_the_fingerprint_is_not_the_binance_one():
 
 
 def test_a_bad_rug_risk_setting_fails_loudly_at_construction():
-    with pytest.raises(ValueError, match="rug risk"):
+    with pytest.raises(ValueError, match="risque de rug"):
         RobinhoodTradeDecisionEngine(RobinhoodSettings(buy_max_rug_risk="TRÈS ÉLEVÉ"))
 
 
@@ -309,7 +309,7 @@ def test_medium_rug_risk_is_tolerable_to_look_at_but_not_to_buy(engine):
         token(safety_report=safety(score=90.0, rug=RugRisk.MEDIUM)), now_ms=NOW
     )
     assert d.action is not TradeAction.BUY
-    assert any("rug risk" in c["name"] for c in d.checks)
+    assert any("risque de rug" in c["name"] for c in d.checks)
 
 
 def test_every_check_is_recorded_whether_or_not_it_passed(engine):
@@ -317,7 +317,7 @@ def test_every_check_is_recorded_whether_or_not_it_passed(engine):
     d = engine.decide_entry(token(early=40.0), now_ms=NOW)
     names = {c["name"] for c in d.checks}
     assert {"score de précocité", "explosion 15 min", "confiance des données",
-            "sécurité", "maturité du mouvement", "liquidité", "rug risk"} <= names
+            "sécurité", "maturité du mouvement", "liquidité", "risque de rug"} <= names
     assert any(c["passed"] for c in d.checks) and any(not c["passed"] for c in d.checks)
 
 
