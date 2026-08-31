@@ -23,7 +23,11 @@ if [ ! -x "$PY" ]; then
   echo "==> Création de l'environnement Python"
   python3 -m venv "$VENV"
 fi
-if ! "$PY" -c "import cryptopulse" >/dev/null 2>&1; then
+# On teste une dépendance, PAS `import cryptopulse` : le paquet est dans le
+# répertoire courant, donc son import réussit même dans un venv vide — et
+# l'installation était alors sautée, pour échouer une ligne plus loin sur
+# ModuleNotFoundError. C'est le tout premier obstacle d'un clone neuf.
+if ! "$PY" -c "import pydantic, fastapi, numpy, sqlalchemy, structlog, httpx" >/dev/null 2>&1; then
   echo "==> Installation des dépendances (une seule fois)"
   "$VENV/bin/pip" install -q --upgrade pip
   # Le driver PostgreSQL n'est installé que s'il sert : sinon le processus
@@ -33,6 +37,14 @@ if ! "$PY" -c "import cryptopulse" >/dev/null 2>&1; then
   else
     "$VENV/bin/pip" install -q -e "."
   fi
+fi
+
+# La configuration documentée doit être celle qui tourne. Sans ce fichier, les
+# valeurs par défaut du code s'appliquent — et elles ne sont pas celles du
+# produit (univers Robinhood, canaux d'alerte, couche ×10 notée).
+if [ ! -f .env ] && [ -f .env.example ]; then
+  cp .env.example .env
+  echo "==> .env créé depuis .env.example (édite-le pour tes canaux d'alerte)"
 fi
 
 # ------------------------------------------------------------ mode / feed ---

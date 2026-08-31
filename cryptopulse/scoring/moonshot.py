@@ -411,7 +411,13 @@ def _ignition(
     # -- the same volume, ranked against every other asset scanned ----------- #
     if af.rvol_percentile_universe is not None:
         parts["volume_rank"] = af.rvol_percentile_universe
-        if af.rvol_percentile_universe >= 0.9:
+        if af.rvol_percentile_universe >= 0.999:
+            # "above 100% of the universe" is not a sentence anyone should read.
+            reasons.append(
+                "the highest relative volume in the scanned universe — busy against the market, "
+                "not just against itself"
+            )
+        elif af.rvol_percentile_universe >= 0.9:
             reasons.append(
                 f"relative volume above {af.rvol_percentile_universe:.0%} of the scanned universe — "
                 "busy against the market, not just against itself"
