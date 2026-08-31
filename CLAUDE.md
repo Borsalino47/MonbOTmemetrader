@@ -52,7 +52,7 @@ that justifies it.
 | Scanner pipeline | **TESTED** | Verified against the fixture provider only |
 | Database + signal journal | **TESTED** | SQLite **and PostgreSQL 16** both verified end to end |
 | Liveness / watchdog / housekeeping | **TESTED** | 16 tests. `/healthz`, SYSTEM alerts, score-memory rehydration, retention |
-| Backtest engine + labels + walk-forward | **TESTED** | Never run on real market data |
+| Backtest engine + labels + walk-forward | **TESTED** | Grades on the label's own timeframe; never run on real market data |
 | FastAPI API | **TESTED** | 16 endpoint tests |
 | React dashboard | **IMPLEMENTED** | Builds clean, renders, screenshotted against fixture data |
 | **Binance connector** | **IMPLEMENTED — NOT LIVE VERIFIED** | Contract cross-checked vs python-binance 1.0.37; still no live round-trip. See §3 |
@@ -77,7 +77,7 @@ that justifies it.
 | **×10 journal + grading** (`moon_outcome_*`, `MOONSHOT_LABEL_CONFIGS`) | **TESTED** | 16 tests. The reading is now written to disk and graded on its own horizon — see §11 |
 | **Candle cache** (`providers/cache.py`) | **TESTED** | 19 tests. ~57% fewer kline requests over 10 passes, ~90% on the daily |
 
-**Test suite: 402 tests, all passing.** Run `pytest -q`.
+**Test suite: 406 tests + 1 PostgreSQL integration test, all passing.** The Postgres one skips unless `CP_TEST_POSTGRES_URL` names a server. Run `pytest -q`.
 
 ---
 
@@ -213,7 +213,7 @@ scripts/
   simulate_journal.py    Scan across simulated time, grade, compare to baseline
 
 frontend/                Vite + React 18 + TypeScript (strict)
-tests/                   402 tests
+tests/                   406 tests
 pine/                    TradingView companion scripts
 ```
 
@@ -502,6 +502,14 @@ pytest tests/test_no_lookahead.py -v    # the ones that matter most
   meant *every insert failed on Postgres* while SQLite, which types integers
   dynamically, never noticed. `tests/test_postgres.py` compiles the DDL for the
   real dialect so this cannot regress.
+* `backtest/engine.py:run` — the label decides which series grades the trade, and
+  it is not always the decision timeframe. Grading `moon_2x_30d` on 5-minute bars
+  would turn "30 days" into "two and a half hours", silently and in the
+  flattering direction. The engine now refuses to run without the timeframe the
+  label names.
+* `api/service.py:_loop` — the watchdog is consulted *outside* the try that wraps
+  the pass. Checking it only on the success path would leave it silent during a
+  provider that raises, which is the exact case it exists for.
 * `api/service.py:run_maintenance` — purges score points only. Signals are the
   evidence, and a ×10 label can take 180 days to settle, so a retention timer
   shorter than the horizon would delete rows before they could be graded.
@@ -677,3 +685,31 @@ instead of ten times. The hit rate is reported in `/api/health` under
 `candle_cache`, because a collapsing hit rate is the first sign the scan interval
 and the timeframe set have drifted out of step — and it shows up there before it
 shows up as a rate-limit ban.
+
+
+---
+
+## 14. Validating the ×10 layer once the network opens
+
+The machinery is in place; what is missing is real history. The order:
+
+1. `cryptopulse doctor` must print **LIVE VERIFIED**. Nothing below is worth
+   doing before it does.
+2. **Backtest the layer on real daily history.** The decisions have to be spread
+   across months, which means the *decision* timeframe has to be slow too:
+
+   ```bash
+   CP_SCAN_PRIMARY_TIMEFRAME=1d CP_SCAN_TIMEFRAMES=4h,1d \
+     cryptopulse backtest --label moon_2x_30d --bars 800 --symbols BTCUSDT,SOLUSDT,...
+   ```
+
+   Run it against `moon_3x_90d` too: a definition that only works at one horizon
+   is usually an artefact of that horizon.
+3. **Compare against random daily entry** — `scripts/simulate_journal.py` does
+   this on synthetic candles today; the same comparison on real history is what
+   says whether the ranking is worth anything. A layer that does not beat a
+   random daily entry is a stage machine with extra steps.
+4. **Let the radar accumulate a live journal** and grade it with
+   `cryptopulse resolve --axis moonshot`. Watch `reached_10x` and the multiple
+   distribution rather than the win rate.
+5. **Only then** touch the weights, and bump `MOONSHOT_ENGINE_V1` when you do.

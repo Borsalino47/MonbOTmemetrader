@@ -125,6 +125,15 @@ class ScannerService:
                 # The loop must survive anything a scan can throw.
                 self.consecutive_failures += 1
                 log.error("scan_loop_error", error=str(exc)[:300], consecutive=self.consecutive_failures)
+
+            # Outside the try: a scan that *raised* is exactly the case the
+            # watchdog exists for, so checking it only on the success path would
+            # leave it silent during the worst failure.
+            try:
+                await self.check_watchdog()
+            except Exception as exc:
+                log.error("watchdog_failed", error=str(exc)[:300])
+
             await asyncio.sleep(self.settings.scanner.scan_interval_seconds)
 
     # -- scanning ------------------------------------------------------------ #
@@ -187,11 +196,6 @@ class ScannerService:
             await self.run_maintenance()
         except Exception as exc:
             log.error("maintenance_failed", error=str(exc)[:300])
-
-        try:
-            await self.check_watchdog()
-        except Exception as exc:
-            log.error("watchdog_failed", error=str(exc)[:300])
 
         return report
 

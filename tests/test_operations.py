@@ -248,3 +248,37 @@ def test_the_dashboard_health_payload_carries_the_same_verdict(client):
     body = c.get("/api/health").json()
     assert body["health"]["status"] in ("OK", "DEGRADED")
     assert body["candle_cache"] is not None  # the saving is visible, not internal
+
+
+async def test_the_watchdog_still_fires_when_the_scan_itself_throws(tmp_path):
+    """The worst failure is a provider that raises — the watchdog must survive it.
+
+    Checking the watchdog only on the success path would leave it silent in
+    exactly the situation it exists for.
+    """
+    import asyncio
+
+    reset_engine()
+    service = ScannerService(_settings(tmp_path))
+    await service.run_once()
+
+    async def exploding_scan():
+        raise RuntimeError("the venue is gone")
+
+    service.scanner.scan = exploding_scan
+    service.last_success_ms -= (service.watchdog_deadline_seconds() + 60) * 1000
+    service.settings.scanner.scan_interval_seconds = 1
+
+    task = asyncio.create_task(service._loop())
+    await asyncio.sleep(0.4)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+    assert service.consecutive_failures >= 1
+    assert service._watchdog_fired, "a raising scan must still trip the watchdog"
+    assert service.health_status()["status"] == "DOWN"
+    await service.stop()
+    reset_engine()

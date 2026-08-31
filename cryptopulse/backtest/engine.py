@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import numpy as np
+
 from cryptopulse.backtest.labels import DEFAULT_LABEL_CONFIGS, LabelConfig, Outcome, label_signal
 from cryptopulse.backtest.metrics import BacktestMetrics, TradeRecord, compute_metrics
 from cryptopulse.backtest.splits import chronological_split
@@ -84,6 +86,10 @@ class BacktestResult:
     splits: dict[str, dict] = field(default_factory=dict)
     data_source: str = "unknown"
     synthetic: bool = False
+    # Why the result looks the way it does. An empty result with no explanation
+    # reads as "the strategy found nothing", which is a different claim from
+    # "the history supplied could not settle anything".
+    notes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -92,6 +98,7 @@ class BacktestResult:
             "synthetic_data": self.synthetic,
             "signals_generated": self.signals_generated,
             "signals_unresolved": self.signals_unresolved,
+            "notes": self.notes,
             "metrics": self.metrics.to_dict(),
             "splits": self.splits,
             "config": self.config,
@@ -147,13 +154,31 @@ class BacktestEngine:
         label_cfg = label_config or cfg.label_configs[0]
         quote_volumes = quote_volumes or {}
 
+        # The label decides which bars grade the trade, and it is not always the
+        # timeframe the decision was made on. A ×10 label counts its horizon in
+        # daily bars: grading it on the 5-minute series would turn "30 days" into
+        # "two and a half hours" — silently, and in the flattering direction.
+        outcome_tf = label_cfg.timeframe or primary_tf
+        if outcome_tf is not primary_tf:
+            missing = [sym for sym, by_tf in series_by_symbol.items() if outcome_tf not in by_tf]
+            if missing:
+                raise ValueError(
+                    f"label {label_cfg.name!r} resolves on {outcome_tf.value} bars, but no "
+                    f"{outcome_tf.value} series was supplied for: {', '.join(missing[:5])}. "
+                    "Fetch that timeframe rather than grading on the wrong one."
+                )
+
         trades: list[TradeRecord] = []
         signals = 0
         unresolved = 0
 
         for symbol, by_tf in series_by_symbol.items():
             primary = by_tf.get(primary_tf)
-            if primary is None or len(primary) < cfg.warmup_bars + label_cfg.horizon_bars + 2:
+            outcome_series = by_tf.get(outcome_tf)
+            if primary is None or outcome_series is None:
+                log.info("backtest_skip_symbol", symbol=symbol, reason="missing timeframe")
+                continue
+            if len(primary) < cfg.warmup_bars + 2 or len(outcome_series) < label_cfg.horizon_bars + 2:
                 log.info("backtest_skip_symbol", symbol=symbol, reason="insufficient history")
                 continue
 
@@ -185,12 +210,31 @@ class BacktestEngine:
                     continue
 
                 atr_at_signal = af.primary.atr14
-                if not atr_at_signal:
+                if label_cfg.needs_atr and not atr_at_signal:
                     continue
+
+                # Place the decision on the grading timeframe. Same timeframe →
+                # the same bar; slower timeframe → the bar the decision fell
+                # inside, whose successor's open is the earliest honest entry.
+                if outcome_tf is primary_tf:
+                    outcome_index = i
+                else:
+                    outcome_index = int(
+                        np.searchsorted(outcome_series.close_time_ms, decision_ts, side="left")
+                    )
+                    if outcome_index >= len(outcome_series) - 1:
+                        unresolved += 1
+                        continue
 
                 signals += 1
                 label = label_signal(
-                    primary.high, primary.low, primary.close, primary.open, i, atr_at_signal, label_cfg
+                    outcome_series.high,
+                    outcome_series.low,
+                    outcome_series.close,
+                    outcome_series.open,
+                    outcome_index,
+                    atr_at_signal or 0.0,
+                    label_cfg,
                 )
                 if label.outcome is Outcome.UNRESOLVED:
                     unresolved += 1
@@ -200,7 +244,7 @@ class BacktestEngine:
                 trades.append(
                     TradeRecord(
                         symbol=symbol,
-                        entry_time_ms=int(primary.open_time_ms[i + 1]),
+                        entry_time_ms=int(outcome_series.open_time_ms[outcome_index + 1]),
                         entry_price=label.entry_price,
                         exit_price=label.exit_price,
                         return_pct=net,
@@ -226,8 +270,29 @@ class BacktestEngine:
                 if subset:
                     splits[split.name] = compute_metrics(subset).to_dict()
 
+        notes: list[str] = []
+        if unresolved and not trades:
+            notes.append(
+                f"Every one of the {unresolved} signal(s) was unresolved: no {outcome_tf.value} bars "
+                f"exist after the decision to cover a {label_cfg.horizon_bars}-bar horizon. The "
+                f"decisions are made on {primary_tf.value} bars, so the history supplied has to reach "
+                f"back far enough that {label_cfg.horizon_bars} {outcome_tf.value} bars still follow "
+                "them. This is a data-window problem, not a result."
+            )
+        elif unresolved:
+            notes.append(
+                f"{unresolved} signal(s) had no {outcome_tf.value} bars left to settle against and are "
+                "excluded rather than counted as anything."
+            )
+        if outcome_tf is not primary_tf:
+            notes.append(
+                f"Decisions on {primary_tf.value}, graded on {outcome_tf.value}: each signal is placed "
+                "in the bar it fired inside, and entry is the open of the next one."
+            )
+
         return BacktestResult(
             label_name=label_cfg.name,
+            notes=notes,
             metrics=metrics,
             trades=trades,
             signals_generated=signals,

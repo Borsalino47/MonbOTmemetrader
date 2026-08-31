@@ -297,3 +297,53 @@ def test_an_empty_report_is_empty_rather_than_zero_filled():
     assert perf["overall"]["n"] == 0
     assert perf["overall"]["win_rate"] is None
     assert perf["best_multiple"] is None
+
+
+# --------------------------------------------------------------------------- #
+# The backtest path — how the ×10 layer gets validated once real history exists
+# --------------------------------------------------------------------------- #
+
+
+async def test_a_backtest_grades_a_moonshot_label_on_daily_bars():
+    """The trap: 30 bars of a 5-minute series is 2.5 hours, not 30 days."""
+    from cryptopulse.backtest.engine import BacktestConfig, BacktestEngine
+
+    settings = CryptoPulseSettings()
+    settings.providers.market_data = "fixture"
+    provider = FixtureProvider(clock=FrozenClock(FIXED_NOW_MS))
+    by_tf = {
+        Timeframe.M5: (await provider.get_ohlcv("BTCUSDT", Timeframe.M5, 600)).closed(),
+        Timeframe.D1: (await provider.get_ohlcv("BTCUSDT", Timeframe.D1, 400)).closed(),
+    }
+
+    engine = BacktestEngine(settings, BacktestConfig(min_score=0.0))
+    result = engine.run({"BTCUSDT": by_tf}, primary_tf=Timeframe.M5, label_config=MOON)
+
+    assert result.label_name == "moon_2x_30d"
+    if result.trades:
+        held_ms = result.trades[0].bars_held * Timeframe.D1.ms
+        assert held_ms > 20 * 86_400_000 or result.trades[0].outcome != "TIMEOUT", (
+            "a TIMEOUT on a 30-bar daily label must span weeks, not hours"
+        )
+        # Entry timestamps must come from the daily series, not the 5m one.
+        assert result.trades[0].entry_time_ms % Timeframe.D1.ms == 0
+
+
+async def test_a_backtest_refuses_to_grade_without_the_labels_timeframe():
+    """Silence here would look like a validation of the ×10 layer and not be one."""
+    from cryptopulse.backtest.engine import BacktestConfig, BacktestEngine
+
+    settings = CryptoPulseSettings()
+    settings.providers.market_data = "fixture"
+    provider = FixtureProvider(clock=FrozenClock(FIXED_NOW_MS))
+    only_intraday = {Timeframe.M5: (await provider.get_ohlcv("BTCUSDT", Timeframe.M5, 600)).closed()}
+
+    engine = BacktestEngine(settings, BacktestConfig(min_score=0.0))
+    with pytest.raises(ValueError, match="resolves on 1d bars"):
+        engine.run({"BTCUSDT": only_intraday}, primary_tf=Timeframe.M5, label_config=MOON)
+
+
+def test_the_backtest_cli_will_not_silently_substitute_a_label():
+    """`--label moon_2x_30d` used to fall back to standard_2R without a word."""
+    with pytest.raises(ValueError, match="unknown label config"):
+        label_config_by_name("moon_typo_30d")

@@ -574,6 +574,15 @@ async def cmd_radar(args) -> int:
                 log.error("radar_cycle_failed", cycle=cycles, error=str(exc)[:300], consecutive=failures)
                 print(f"[{_now()}] cycle {cycles} FAILED: {type(exc).__name__}: {str(exc)[:160]}")
 
+            # A cycle that threw is the case the watchdog exists for, so it is
+            # consulted here rather than inside the pass that failed.
+            try:
+                fired = await service.check_watchdog()
+                if fired is not None:
+                    print(f"    >>> [{fired.level.value}] {fired.headline}: {'; '.join(fired.why[:2])}")
+            except Exception as exc:
+                log.error("watchdog_failed", error=str(exc)[:200])
+
             if args.once or stop.is_set():
                 break
 
@@ -709,20 +718,30 @@ async def cmd_universe(args) -> int:
 async def cmd_backtest(args) -> int:
     settings = _settings_with_provider(args)
     from cryptopulse.backtest.engine import BacktestConfig, BacktestEngine
-    from cryptopulse.backtest.labels import DEFAULT_LABEL_CONFIGS
+    from cryptopulse.backtest.labels import label_config_by_name
     from cryptopulse.core.types import Timeframe
     from cryptopulse.providers.registry import build_market_provider, is_synthetic
+
+    # No silent fallback: asking for a ×10 label and quietly getting standard_2R
+    # would look like a validation of the moonshot layer and be a validation of
+    # something else entirely.
+    label = label_config_by_name(args.label)
 
     provider = build_market_provider(settings, SYSTEM_CLOCK)
     symbols = args.symbols.split(",") if args.symbols else settings.scanner.always_include[:5]
     timeframes = [settings.scanner.primary_timeframe, Timeframe.H1, Timeframe.H4]
+    # The label grades on its own timeframe, so that series has to be fetched.
+    if label.timeframe and label.timeframe not in timeframes:
+        timeframes.append(label.timeframe)
 
     series_by_symbol: dict[str, dict] = {}
     for symbol in symbols:
         by_tf = {}
         for tf in timeframes:
             try:
-                by_tf[tf] = (await provider.get_ohlcv(symbol, tf, args.bars)).closed()
+                # A 180-day horizon needs more than `--bars` daily candles.
+                want = max(args.bars, label.horizon_bars * 3) if tf is label.timeframe else args.bars
+                by_tf[tf] = (await provider.get_ohlcv(symbol, tf, want)).closed()
             except Exception as exc:
                 print(f"  {symbol} {tf.value}: {type(exc).__name__}: {exc}")
         if settings.scanner.primary_timeframe in by_tf:
@@ -735,7 +754,6 @@ async def cmd_backtest(args) -> int:
 
     synthetic = is_synthetic(provider)
     engine = BacktestEngine(settings, BacktestConfig(min_score=args.min_score))
-    label = next((c for c in DEFAULT_LABEL_CONFIGS if c.name == args.label), DEFAULT_LABEL_CONFIGS[1])
 
     result = engine.run(
         series_by_symbol,
@@ -969,7 +987,10 @@ def main(argv: list[str] | None = None) -> int:
     p_bt.add_argument("--symbols", type=str, default=None, help="comma-separated, default: config majors")
     p_bt.add_argument("--bars", type=int, default=1000)
     p_bt.add_argument("--min-score", type=float, default=65.0, dest="min_score")
-    p_bt.add_argument("--label", type=str, default="standard_2R")
+    p_bt.add_argument(
+        "--label", type=str, default="standard_2R",
+        help="standard_2R | fast_2R | patient_3R | moon_2x_30d | moon_3x_90d | moon_10x_180d",
+    )
     _add_provider_flag(p_bt)
 
     p_res = sub.add_parser("resolve", help="grade emitted signals against what actually happened")

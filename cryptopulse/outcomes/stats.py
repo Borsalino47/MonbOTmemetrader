@@ -62,6 +62,8 @@ class Bucket:
             "wins": self.wins,
             "losses": self.losses,
             "timeouts": self.timeouts,
+            # The barrier's own verdict, not "ended green": a TIMEOUT that drifted
+            # up is not a WIN here. `backtest/metrics.py` uses the other one.
             "win_rate": _r(self.win_rate),
             "expectancy_pct": _r(self.expectancy_pct),
             "avg_win_pct": _r(self.avg_win_pct),

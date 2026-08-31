@@ -379,7 +379,8 @@ retried — it is our bug, not a transient failure.
 ## Testing
 
 ```bash
-pytest -q                            # 402 tests
+pytest -q                            # 406 tests
+CP_TEST_POSTGRES_URL=... pytest -q   # + the PostgreSQL round trip
 pytest tests/test_no_lookahead.py -v # the ones that matter most
 ```
 
@@ -580,6 +581,19 @@ one field keeps "how many ever reached ×10" answerable from the journal:
 **It has never been validated.** The machinery to grade it now exists and is
 tested; what does not exist is real signals to grade. Read it as a watchlist
 ranking, and nothing more.
+
+Once the feed is verified, the layer is validated in this order — backtest on
+real daily history, compare against random daily entry, then accumulate a live
+journal:
+
+```bash
+CP_SCAN_PRIMARY_TIMEFRAME=1d CP_SCAN_TIMEFRAMES=4h,1d \
+  python -m cryptopulse.cli backtest --label moon_2x_30d --bars 800
+```
+
+The decision timeframe has to be slow too: 1000 five-minute candles reach back
+three days, which cannot host a 30-day horizon. The backtest says so explicitly
+rather than returning an empty result that reads as "found nothing".
 
 ---
 
