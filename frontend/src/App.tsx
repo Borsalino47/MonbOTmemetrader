@@ -3,6 +3,7 @@ import { api } from './api';
 import { AlertsView } from './components/AlertsView';
 import { AssetDrawer } from './components/AssetDrawer';
 import { MoonshotView } from './components/MoonshotView';
+import { MoonshotPerformance } from './components/MoonshotPerformance';
 import { PerformanceView } from './components/PerformanceView';
 import { ScannerTable } from './components/ScannerTable';
 import { TopOpportunities } from './components/TopOpportunities';
@@ -22,6 +23,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const [noScanYet, setNoScanYet] = useState(false);
+  const [perfAxis, setPerfAxis] = useState<'setup' | 'moonshot'>('setup');
 
   // Filters
   const [minScore, setMinScore] = useState(0);
@@ -109,6 +111,10 @@ export default function App() {
   // Staleness is decided server-side, where the timeframe length is known.
   const isStale = last?.data_stale ?? false;
   const providerDown = health?.provider_health?.some((p) => !p.available) ?? false;
+  // "The process is up" and "the radar is scanning" are different claims, and the
+  // second is the one that matters.
+  const radarStatus = health?.health?.status ?? (providerDown ? 'DOWN' : 'OK');
+  const radarClass = radarStatus === 'OK' ? 'ok' : radarStatus === 'DOWN' ? 'bad' : 'warn';
 
   return (
     <div className="app">
@@ -133,11 +139,11 @@ export default function App() {
         </nav>
 
         <div className="status-strip">
-          <div className="stat">
-            <span className="k">API</span>
-            <span className={`v ${providerDown ? 'bad' : 'ok'}`}>
-              <span className={`dot ${providerDown ? 'bad' : 'ok'}`} />
-              {providerDown ? 'DOWN' : 'OK'}
+          <div className="stat" title={health?.health?.reasons?.join(' · ') ?? ''}>
+            <span className="k">Radar</span>
+            <span className={`v ${radarClass}`}>
+              <span className={`dot ${radarClass}`} />
+              {health?.health?.status ?? (providerDown ? 'DOWN' : 'OK')}
             </span>
           </div>
           <div className="stat">
@@ -202,6 +208,16 @@ export default function App() {
             {health.universe.missing?.length ? `, ${health.universe.missing.length} not carried here` : ''}).
             The listing is hand-maintained and not verified against Robinhood, and every price below comes
             from the data venue — <strong>not</strong> from Robinhood, whose spread and fill will differ.
+          </span>
+        </div>
+      )}
+
+      {radarStatus === 'DOWN' && (
+        <div className="banner stale">
+          <strong>RADAR NOT SCANNING</strong>
+          <span>
+            {health?.health?.reasons?.join(' · ')}. Everything below is the last state it managed to
+            compute, not the current market.
           </span>
         </div>
       )}
@@ -293,7 +309,24 @@ export default function App() {
 
         {tab === 'alerts' && <AlertsView alerts={alerts} onSelect={setSelected} />}
 
-        {tab === 'performance' && <PerformanceView />}
+        {tab === 'performance' && (
+          <>
+            <div className="toolbar">
+              <div className="filter">
+                <label>Horizon</label>
+                <select value={perfAxis} onChange={(e) => setPerfAxis(e.target.value as 'setup' | 'moonshot')}>
+                  <option value="setup">Setup axis — hours</option>
+                  <option value="moonshot">×10 axis — weeks</option>
+                </select>
+              </div>
+              <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
+                Two theses, two verdicts. They are graded against different labels on different
+                timeframes and never share a result.
+              </span>
+            </div>
+            {perfAxis === 'setup' ? <PerformanceView /> : <MoonshotPerformance />}
+          </>
+        )}
 
         <div className="disclaimer">
           <strong>Opportunity Score is a 0–100 ranking, not a probability.</strong>{' '}

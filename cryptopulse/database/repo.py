@@ -30,7 +30,7 @@ __all__ = [
     "persist_scan", "persist_alerts", "recent_signals", "score_history", "recent_alerts", "signal_stats",
     "pending_signals", "save_resolutions", "resolved_signals", "outcome_counts",
     "pending_moonshot_signals", "save_moonshot_resolutions", "resolved_moonshot_signals",
-    "moonshot_counts",
+    "moonshot_counts", "purge_older_than", "recent_score_points",
 ]
 
 _PERSIST_STATES = {
@@ -318,10 +318,52 @@ def signal_stats() -> dict:
 
 
 def purge_older_than(cutoff_ms: int) -> int:
+    """Drop score points older than the cutoff. Signals are never purged here.
+
+    Score points are a hot-path convenience — the ranker reads them to know
+    whether a score is rising — and they regenerate on the next scan. Signals are
+    the opposite: they are the evidence the whole project exists to accumulate,
+    and a ×10 label can take 180 days to settle, so a retention window shorter
+    than the horizon would delete rows before they could ever be graded. If
+    signals ever need pruning it has to be a deliberate, separate decision with
+    the pending horizons in front of it.
+    """
     with get_session() as session:
         result = session.execute(delete(ScorePointRecord).where(ScorePointRecord.timestamp_ms < cutoff_ms))
         session.commit()
         return result.rowcount or 0
+
+
+def recent_score_points(since_ms: int, limit: int = 20_000) -> list[dict]:
+    """Every score point newer than `since_ms`, oldest first.
+
+    Used to rehydrate the in-process score memory after a restart. Without it a
+    restarted radar reports no score acceleration for the first few passes — and
+    a rising score is weighted by the ranker, so the thing the product exists to
+    spot is exactly what goes missing.
+    """
+    with get_session() as session:
+        rows = (
+            session.execute(
+                select(ScorePointRecord)
+                .where(ScorePointRecord.timestamp_ms >= since_ms)
+                .order_by(desc(ScorePointRecord.timestamp_ms))
+                .limit(limit)
+            )
+            .scalars()
+            .all()
+        )
+    return [
+        {
+            "symbol": r.symbol,
+            "timestamp_ms": r.timestamp_ms,
+            "final_score": r.final_score,
+            "raw_score": r.raw_score,
+            "price": r.price,
+            "state": r.state,
+        }
+        for r in reversed(rows)
+    ]
 
 
 def _signal_to_dict(r: SignalRecord) -> dict:

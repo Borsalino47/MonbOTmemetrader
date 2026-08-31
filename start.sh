@@ -26,7 +26,13 @@ fi
 if ! "$PY" -c "import cryptopulse" >/dev/null 2>&1; then
   echo "==> Installation des dépendances (une seule fois)"
   "$VENV/bin/pip" install -q --upgrade pip
-  "$VENV/bin/pip" install -q -e "."
+  # Le driver PostgreSQL n'est installé que s'il sert : sinon le processus
+  # démarre et meurt à la première écriture, ce qui est un mode d'échec inutile.
+  if grep -qs "^CP_DB_URL=postgres" .env; then
+    "$VENV/bin/pip" install -q -e ".[postgres]"
+  else
+    "$VENV/bin/pip" install -q -e "."
+  fi
 fi
 
 # ------------------------------------------------------------ mode / feed ---

@@ -254,6 +254,9 @@ export interface Health {
     latency_ms: number | null; detail: string | null;
     rate_limit_remaining_pct: number | null;
   }[];
+  /** Is the radar actually scanning? Not the same as "the process is up". */
+  health?: HealthVerdict;
+  candle_cache: { hits: number; misses: number; entries: number; hit_rate: number | null } | null;
   server_time_ms: number;
 }
 
@@ -346,4 +349,43 @@ export interface PerformanceResponse {
     synthetic_count: number;
     notes: string[];
   };
+}
+
+// ------------------------------------------------------ ×10 axis outcomes --
+
+export interface MoonshotPerformanceResponse {
+  counts: {
+    readings_journalled: number;
+    pending_evaluation: number;
+    settled: number;
+    wins: number;
+    losses: number;
+    timeouts: number;
+    unresolvable: number;
+    candidates_journalled: number;
+    reached_10x: number;
+  };
+  label: { config: string; definition: string; timeframe: string };
+  performance: {
+    overall: Bucket;
+    by_score_band: Bucket[];
+    by_stage: Bucket[];
+    by_capacity_known: Bucket[];
+    /** How far the readings actually went — the headline for this axis. */
+    multiple_distribution: { at_least: number; n: number; share: number | null }[];
+    best_multiple: number | null;
+    median_multiple: number | null;
+    label_config: string;
+    return_basis: string;
+    min_sample: number;
+    synthetic_included: boolean;
+    synthetic_count: number;
+    notes: string[];
+  };
+}
+
+export interface HealthVerdict {
+  status: 'OK' | 'DEGRADED' | 'DOWN' | 'STARTING';
+  reasons: string[];
+  since_success_seconds: number | null;
 }

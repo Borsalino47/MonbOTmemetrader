@@ -287,6 +287,13 @@ class AlertSettings(BaseSettings):
     discord_webhook_url: str | None = None
     delivery_timeout_seconds: float = 10.0
 
+    # Watchdog. A radar that silently stops scanning is worse than no radar: you
+    # keep trusting a screen that stopped updating. When no scan has succeeded
+    # for this long, the radar says so through the same channels as a signal.
+    # 0 means "five scan intervals", which adapts if the interval changes.
+    watchdog_enabled: bool = True
+    watchdog_after_seconds: int = 0
+
     @field_validator("channels", mode="before")
     @classmethod
     def _parse_channels(cls, v):

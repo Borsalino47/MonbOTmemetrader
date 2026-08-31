@@ -598,11 +598,18 @@ def _print_heartbeat(service, report, cycle: int) -> None:
     """One line per cycle, plus the rows that actually matter."""
     alerts = service.last_alerts
     candidates = [r for r in report.results if r.moonshot and r.moonshot.is_candidate]
+    health = service.health_status()
+    cache = service.scanner.cache_stats() or {}
+    hit_rate = cache.get("hit_rate")
     print(
         f"[{_now()}] cycle {cycle:<5} scanned={report.scanned:<4} ok={report.succeeded:<4} "
         f"failed={report.failed:<3} {report.duration_ms}ms  alerts={len(alerts)}  "
-        f"moonshot_candidates={len(candidates)}"
+        f"moonshot={len(candidates)}  cache={'-' if hit_rate is None else f'{hit_rate:.0%}'}  "
+        f"[{health['status']}]"
     )
+    if health["status"] != "OK":
+        for reason in health["reasons"][:3]:
+            print(f"        ! {reason}")
     for r in report.results[:5]:
         m = r.moonshot
         moon = f"moon={m.score:5.1f} {m.stage.value:<12}" if m else "moon=  n/a"

@@ -1,5 +1,6 @@
 import type {
-  AlertItem, AssetDetail, Health, MoonshotResponse, PerformanceResponse, ScanResponse, UniverseResponse,
+  AlertItem, AssetDetail, Health, MoonshotPerformanceResponse, MoonshotResponse,
+  PerformanceResponse, ScanResponse, UniverseResponse,
 } from './types';
 
 const BASE = '/api';
@@ -37,8 +38,14 @@ export const api = {
   signals: (limit = 100) =>
     get<{ stats: Record<string, unknown>; signals: Record<string, unknown>[] }>('/signals', { limit }),
   performance: () => get<PerformanceResponse>('/performance'),
+  moonshotPerformance: () => get<MoonshotPerformanceResponse>('/performance/moonshot'),
   resolveOutcomes: async () => {
     const resp = await fetch(`${BASE}/outcomes/resolve`, { method: 'POST' });
+    if (!resp.ok) throw new Error(`resolve failed: ${resp.status}`);
+    return resp.json();
+  },
+  resolveMoonshotOutcomes: async () => {
+    const resp = await fetch(`${BASE}/outcomes/resolve/moonshot`, { method: 'POST' });
     if (!resp.ok) throw new Error(`resolve failed: ${resp.status}`);
     return resp.json();
   },

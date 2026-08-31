@@ -61,7 +61,20 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
 
     @app.get("/api/health", tags=["status"])
     async def health():
-        return get_service().status()
+        service = get_service()
+        return {**service.status(), "health": service.health_status()}
+
+    @app.get("/healthz", tags=["status"], include_in_schema=False)
+    async def healthz():
+        """Liveness for a container orchestrator, a load balancer or a cron.
+
+        Answers with a status code rather than a payload to read: 200 while the
+        radar is scanning, 503 once it has stopped. A process that is up but no
+        longer scanning is not healthy — that distinction is the whole point.
+        """
+        health = get_service().health_status()
+        code = 503 if health["status"] == "DOWN" else 200
+        return JSONResponse(status_code=code, content=health)
 
     @app.get("/api/config", tags=["status"])
     async def config():

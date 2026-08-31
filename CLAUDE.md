@@ -50,7 +50,8 @@ that justifies it.
 | Score memory / acceleration | **TESTED** | |
 | Alert engine (dedup + cooldown) | **TESTED** | 12 tests |
 | Scanner pipeline | **TESTED** | Verified against the fixture provider only |
-| Database + signal journal | **TESTED** | SQLite verified; Postgres **NOT** verified |
+| Database + signal journal | **TESTED** | SQLite **and PostgreSQL 16** both verified end to end |
+| Liveness / watchdog / housekeeping | **TESTED** | 16 tests. `/healthz`, SYSTEM alerts, score-memory rehydration, retention |
 | Backtest engine + labels + walk-forward | **TESTED** | Never run on real market data |
 | FastAPI API | **TESTED** | 16 endpoint tests |
 | React dashboard | **IMPLEMENTED** | Builds clean, renders, screenshotted against fixture data |
@@ -76,7 +77,7 @@ that justifies it.
 | **×10 journal + grading** (`moon_outcome_*`, `MOONSHOT_LABEL_CONFIGS`) | **TESTED** | 16 tests. The reading is now written to disk and graded on its own horizon — see §11 |
 | **Candle cache** (`providers/cache.py`) | **TESTED** | 19 tests. ~57% fewer kline requests over 10 passes, ~90% on the daily |
 
-**Test suite: 379 tests, all passing.** Run `pytest -q`.
+**Test suite: 402 tests, all passing.** Run `pytest -q`.
 
 ---
 
@@ -212,7 +213,7 @@ scripts/
   simulate_journal.py    Scan across simulated time, grade, compare to baseline
 
 frontend/                Vite + React 18 + TypeScript (strict)
-tests/                   379 tests
+tests/                   402 tests
 pine/                    TradingView companion scripts
 ```
 
@@ -312,7 +313,12 @@ Break these and the product is lying to its user.
     else. Order books and 24h tickers are never cached; `doctor` always bypasses
     it, because proving the live API works cannot be done against a cache.
 
-21. **The universe is stated, not implied.** Which assets were scanned, which
+21. **"The process is up" is not "the radar is working".** `health_status()`
+    answers OK / DEGRADED / DOWN with reasons, `/healthz` turns that into a
+    status code an orchestrator can act on, and the watchdog says it out loud
+    through the alert channels — once per outage, and again on recovery.
+
+22. **The universe is stated, not implied.** Which assets were scanned, which
     listed ones the venue does not carry, and where the listing came from are in
     every scan report, the API and the dashboard banner.
 
@@ -491,6 +497,14 @@ pytest tests/test_no_lookahead.py -v    # the ones that matter most
   timeframe. The cross-timeframe branch exists only for a label graded on slower
   bars than the signal was scored on, and it writes the resulting lag into the
   resolution note rather than absorbing it.
+* `database/models.py` — every `_ms` column is `BigInteger`. A millisecond epoch
+  is ~1.8e12 and PostgreSQL's INTEGER stops at 2.1e9, so the original `Integer`
+  meant *every insert failed on Postgres* while SQLite, which types integers
+  dynamically, never noticed. `tests/test_postgres.py` compiles the DDL for the
+  real dialect so this cannot regress.
+* `api/service.py:run_maintenance` — purges score points only. Signals are the
+  evidence, and a ×10 label can take 180 days to settle, so a retention timer
+  shorter than the horizon would delete rows before they could be graded.
 * `universe/robinhood.py:SNAPSHOT_BASES` — a hand-maintained list. Adding a
   symbol Robinhood does not list costs a permanent `missing` row; omitting one it
   does list means that asset is never scanned. Neither corrupts a score, and both

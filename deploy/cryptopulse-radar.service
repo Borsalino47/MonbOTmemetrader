@@ -1,0 +1,48 @@
+# CRYPTO PULSE AI — the autonomous radar as a system service.
+#
+#   sudo cp deploy/cryptopulse-radar.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now cryptopulse-radar
+#   journalctl -u cryptopulse-radar -f
+#
+# Restart=always is the point: the radar is meant to be running whenever the
+# machine is. It stops cleanly on SIGTERM (closing the provider and flushing the
+# database), so a restart never loses a write mid-flight.
+
+[Unit]
+Description=CRYPTO PULSE AI radar
+Documentation=https://github.com/Borsalino47/MonbOTmemetrader
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cryptopulse
+Group=cryptopulse
+WorkingDirectory=/opt/cryptopulse
+EnvironmentFile=/opt/cryptopulse/.env
+ExecStart=/opt/cryptopulse/.venv/bin/python -m cryptopulse.cli radar
+
+Restart=always
+RestartSec=10
+# Give the loop time to finish the pass it is in rather than killing it mid-write.
+TimeoutStopSec=30
+KillSignal=SIGTERM
+
+# The radar reads public market data and writes its own journal. It needs
+# nothing else, so it is not given anything else.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/cryptopulse/data
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cryptopulse-radar
+
+[Install]
+WantedBy=multi-user.target

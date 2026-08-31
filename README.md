@@ -351,6 +351,22 @@ tickers (one request covers the whole venue), and `doctor` (proving the live API
 works cannot be done against a cache). The hit rate is in `/api/health` under
 `candle_cache`.
 
+### Running it unattended
+
+`deploy/README.md` covers systemd and Docker. The short version of what makes it
+safe to leave alone:
+
+* **`/healthz` answers 503 once the radar stops scanning** — not merely when the
+  process dies. A process that is up and no longer scanning is the failure that
+  matters, because you keep trusting a screen that stopped updating.
+* **The watchdog tells you itself**, through the same alert channels as a
+  signal, once per outage and again on recovery.
+* **Score history survives a restart.** It is reloaded from the database at
+  startup, because score acceleration is a difference between two passes and a
+  cold process would report every asset as flat.
+* **Signals are never deleted on a retention timer.** A ×10 label can take 180
+  days to settle; only score points are purged.
+
 ### Provider resilience
 
 Weighted rate limiter (budget on request *weight*, not count), exponential
@@ -363,7 +379,7 @@ retried — it is our bug, not a transient failure.
 ## Testing
 
 ```bash
-pytest -q                            # 379 tests
+pytest -q                            # 402 tests
 pytest tests/test_no_lookahead.py -v # the ones that matter most
 ```
 
@@ -389,6 +405,8 @@ pytest tests/test_no_lookahead.py -v # the ones that matter most
 | `test_radar.py` | 18 | Env-list parsing, enrichment, moonshot alerts and cooldown, a full radar cycle, the new endpoints |
 | `test_moonshot_outcomes.py` | 16 | Multiple-based labels, cross-timeframe grading, the ×10 journal, two independent verdicts |
 | `test_cache.py` | 19 | A cached series is identical to an uncached one; bar-boundary validity; what must never be cached |
+| `test_operations.py` | 16 | Liveness verdicts, the watchdog firing once per outage, score memory across a restart, retention |
+| `test_postgres.py` | 8 | Millisecond columns are wide enough for a real timestamp; full round trip on a live server |
 
 ---
 
@@ -647,8 +665,6 @@ liquid pairs, ignoring Robinhood entirely.
   `risk/safety.py:dex_safety` raises rather than returning a plausible default.
 * **Order flow is REST snapshots**, not a streamed book. Depth carries no venue
   timestamp, so fetch time is recorded as the observation time and labelled as such.
-* **Postgres is untested.** SQLite is verified; the Postgres path is configuration
-  only.
 * **The ×10 layer has never been graded on real data.** The machinery now exists
   — readings are journalled, a daily ladder grades them over 30/90/180 days, and
   every row records the multiple reached — but it has only ever run on synthetic

@@ -43,6 +43,10 @@ __all__ = ["AlertKind", "AlertLevel", "Alert", "AlertEngine"]
 class AlertKind(str, Enum):
     SETUP = "SETUP"  # tradable setup on the primary timeframe
     MOONSHOT = "MOONSHOT"  # candidate for a large multiple, on the daily
+    # Not about an asset at all: the radar telling you it has stopped working.
+    # A scanner that dies quietly is worse than no scanner, because you keep
+    # believing it is watching.
+    SYSTEM = "SYSTEM"
 
 
 class AlertLevel(str, Enum):

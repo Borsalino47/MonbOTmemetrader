@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     DateTime,
     Float,
@@ -46,7 +47,11 @@ class SignalRecord(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     symbol: Mapped[str] = mapped_column(String(40), index=True)
     scanner: Mapped[str] = mapped_column(String(16), default="cex")
-    timestamp_ms: Mapped[int] = mapped_column(Integer().with_variant(Integer, "sqlite"), index=True)
+    # BigInteger, not Integer. A millisecond epoch is ~1.8e12, and PostgreSQL's
+    # INTEGER stops at 2.1e9 — every insert would have failed with a numeric
+    # overflow. SQLite stores integers dynamically so it never noticed, which is
+    # exactly why this survived: the variant keeps SQLite's own type unchanged.
+    timestamp_ms: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     price: Mapped[float] = mapped_column(Float)
@@ -144,7 +149,7 @@ class ScorePointRecord(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     symbol: Mapped[str] = mapped_column(String(40), index=True)
-    timestamp_ms: Mapped[int] = mapped_column(Integer().with_variant(Integer, "sqlite"), index=True)
+    timestamp_ms: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), index=True)
     final_score: Mapped[float] = mapped_column(Float)
     raw_score: Mapped[float] = mapped_column(Float)
     price: Mapped[float] = mapped_column(Float)
@@ -160,7 +165,7 @@ class AlertRecord(Base):
     symbol: Mapped[str] = mapped_column(String(40), index=True)
     level: Mapped[str] = mapped_column(String(16), index=True)
     headline: Mapped[str] = mapped_column(String(120))
-    timestamp_ms: Mapped[int] = mapped_column(Integer().with_variant(Integer, "sqlite"), index=True)
+    timestamp_ms: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), index=True)
     dedup_key: Mapped[str] = mapped_column(String(32), index=True)
     price: Mapped[float] = mapped_column(Float)
     final_score: Mapped[float] = mapped_column(Float)
@@ -175,7 +180,7 @@ class ScanRunRecord(Base):
     __tablename__ = "scan_runs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    started_at_ms: Mapped[int] = mapped_column(Integer().with_variant(Integer, "sqlite"), index=True)
+    started_at_ms: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), index=True)
     duration_ms: Mapped[int] = mapped_column(Integer)
     universe_size: Mapped[int] = mapped_column(Integer)
     scanned: Mapped[int] = mapped_column(Integer)
