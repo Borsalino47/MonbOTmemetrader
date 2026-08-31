@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from cryptopulse.config.settings import CryptoPulseSettings
 from cryptopulse.core.clock import SYSTEM_CLOCK, Clock
-from cryptopulse.providers.base import MarketDataProvider, OrderBookProvider
+from cryptopulse.providers.base import MarketDataProvider, OrderBookProvider, ValuationProvider
 
-__all__ = ["build_market_provider", "is_synthetic"]
+__all__ = ["build_market_provider", "build_valuation_provider", "is_synthetic"]
 
 
 def build_market_provider(
@@ -30,6 +30,24 @@ def build_market_provider(
 
         return FixtureProvider(clock=clock)
     raise ValueError(f"unknown market data provider {choice!r}")
+
+
+def build_valuation_provider(
+    settings: CryptoPulseSettings, clock: Clock = SYSTEM_CLOCK
+) -> ValuationProvider | None:
+    """The market-cap source, or None.
+
+    None is a supported state, not a failure: the moonshot layer reports an
+    unknown market cap as unknown and renormalises around it.
+    """
+    choice = settings.providers.valuation
+    if choice == "none":
+        return None
+    if choice == "coingecko":
+        from cryptopulse.providers.coingecko import CoinGeckoValuationProvider
+
+        return CoinGeckoValuationProvider(settings.providers, clock=clock)
+    raise ValueError(f"unknown valuation provider {choice!r}")
 
 
 def is_synthetic(provider) -> bool:

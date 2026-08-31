@@ -1,4 +1,4 @@
-"""CEX scanner: DATA → FILTER → SCORE → VALIDATE → RANK.
+"""CEX scanner: DATA → FILTER → ENRICH → SCORE → VALIDATE → RANK.
 
 Operational rules enforced here:
 
@@ -10,6 +10,22 @@ Operational rules enforced here:
   both pointless and a fast route to a rate-limit ban.
 * Order books are fetched only for the top candidates after a first-pass score,
   because depth is the most expensive data per unit of signal.
+
+THE ENRICH STEP, AND WHY IT HAS TO HAPPEN BEFORE SCORING
+
+Three of the strongest readings this scanner has are not computable from one
+asset in isolation, so they are attached to every `AssetFeatures` *before* the
+first score rather than bolted on afterwards:
+
+* **relative strength** — an asset rising while the benchmark falls is a
+  different event from the same asset rising in a market where everything is up;
+* **cross-sectional volume rank** — RVOL 2.5 means one thing on a dead Sunday
+  and another when the whole board is at 2.5;
+* **valuation** — market cap, which no candle contains and which decides whether
+  a ×10 is arithmetically payable at all.
+
+All three are `None` when they cannot be computed, and every consumer treats
+`None` as unknown rather than as neutral.
 """
 
 from __future__ import annotations
@@ -24,11 +40,15 @@ from cryptopulse.core.logging import get_logger
 from cryptopulse.core.types import Timeframe
 from cryptopulse.features.pipeline import AssetFeatures, TimeframeFeatures
 from cryptopulse.features.regime import RegimeReport, classify_regime
+from cryptopulse.features.stats import cross_sectional_percentile
 from cryptopulse.providers.base import MarketDataProvider, OrderBookProvider
-from cryptopulse.providers.registry import build_market_provider, is_synthetic
+from cryptopulse.providers.registry import build_market_provider, build_valuation_provider, is_synthetic
 from cryptopulse.scanner.base import Scanner, ScanReport
 from cryptopulse.scanner.memory import ScoreMemory, ScorePoint
 from cryptopulse.scoring.engine import ScoreEngine, ScoreResult
+from cryptopulse.scoring.moonshot import MoonshotStage
+from cryptopulse.universe.robinhood import UniverseResolution, load_bases, resolve_universe
+from cryptopulse.universe.symbols import canonical_base, split_symbol
 
 log = get_logger("scanner.cex")
 
@@ -36,6 +56,10 @@ __all__ = ["CexScanner"]
 
 # How many top-ranked assets get an order book fetched each pass.
 ORDER_BOOK_TOP_N = 20
+
+# Bars used for relative strength. Matches `roc6`, which every timeframe already
+# computes, so no extra series has to be kept.
+RS_BARS = 6
 
 
 class CexScanner(Scanner):
@@ -53,25 +77,87 @@ class CexScanner(Scanner):
         self.cfg = settings.scanner
         self.clock = clock
         self.provider = provider or build_market_provider(settings, clock)
+        # Optional and allowed to be None: an absent market cap is reported as
+        # unknown, never inferred.
+        self.valuation_provider = build_valuation_provider(settings, clock)
         self.engine = ScoreEngine(settings)
         self.memory = memory or ScoreMemory()
         self.regime: RegimeReport = RegimeReport.unknown()
+        self.universe_resolution: UniverseResolution | None = None
+        self._benchmark_roc: dict[Timeframe, float] = {}
         self._last_report: ScanReport | None = None
 
     async def close(self) -> None:
         await self.provider.close()
+        if self.valuation_provider is not None:
+            await self.valuation_provider.close()
 
     @property
     def last_report(self) -> ScanReport | None:
         return self._last_report
+
+    @property
+    def benchmark_symbol(self) -> str:
+        """What relative strength and the regime are measured against.
+
+        Falls back to the provider's own reference symbol rather than a hardcoded
+        BTCUSDT, which is simply wrong on a venue that calls bitcoin XBT.
+        """
+        return self.cfg.benchmark_symbol or getattr(self.provider, "reference_symbol", "BTCUSDT")
+
+    @property
+    def timeframes(self) -> list[Timeframe]:
+        """Timeframes to fetch: the configured set, plus the moonshot timeframe.
+
+        The daily is added rather than substituted — the intraday setup logic
+        still needs its own timeframes, and a base is invisible on them.
+        """
+        tfs = list(self.cfg.timeframes)
+        moon = self.settings.moonshot
+        if moon.enabled and moon.timeframe not in tfs:
+            tfs.append(moon.timeframe)
+        return tfs
 
     # ---------------------------------------------------------------- universe #
 
     async def _build_universe(self) -> tuple[list[str], dict, int]:
         """Cheap pre-filter. Returns (symbols, tickers, full universe size)."""
         tickers = await self.provider.get_tickers_24h()
+        if self.cfg.universe == "robinhood":
+            return self._robinhood_universe(tickers)
+        return self._volume_universe(tickers)
+
+    def _robinhood_universe(self, tickers: dict) -> tuple[list[str], dict, int]:
+        """Only what can be bought on Robinhood, resolved against this venue's names.
+
+        Deliberately does NOT apply the volume floor: the whole point of the
+        Robinhood universe is that it is small and fixed, and dropping a listed
+        asset because it had a quiet day would hide exactly the dormant, based
+        assets the ×10 layer exists to find. The liquidity gate still runs during
+        scoring, so a genuinely untradable asset is vetoed rather than hidden.
+        """
+        bases, source, as_of = load_bases(
+            file_path=self.cfg.robinhood_file,
+            extra=self.cfg.robinhood_extra,
+            exclude=self.cfg.robinhood_exclude,
+        )
+        resolution = resolve_universe(
+            bases, list(tickers.keys()), self.cfg.quote_asset, source=source, as_of=as_of
+        )
+        self.universe_resolution = resolution
+        if not resolution.symbols:
+            log.error(
+                "robinhood_universe_empty",
+                venue=self.provider.name,
+                quote=self.cfg.quote_asset,
+                requested=len(bases),
+            )
+        return resolution.symbols[: self.cfg.max_symbols], tickers, len(tickers)
+
+    def _volume_universe(self, tickers: dict) -> tuple[list[str], dict, int]:
         cfg = self.cfg
         quote = cfg.quote_asset.upper()
+        self.universe_resolution = None
 
         candidates = []
         for symbol, t in tickers.items():
@@ -99,6 +185,17 @@ class CexScanner(Scanner):
 
     # ---------------------------------------------------------------- features #
 
+    def _candles_for(self, tf: Timeframe) -> int:
+        """The moonshot timeframe needs a deeper window than the intraday ones.
+
+        A 300-bar daily window is under a year, which is not enough to see the
+        high a beaten-down asset is measured against.
+        """
+        moon = self.settings.moonshot
+        if moon.enabled and tf is moon.timeframe:
+            return max(self.cfg.candles_per_timeframe, moon.candles)
+        return self.cfg.candles_per_timeframe
+
     async def _fetch_features(self, symbol: str, ticker) -> AssetFeatures:
         per_tf: dict[Timeframe, TimeframeFeatures] = {}
         structure_kwargs = {
@@ -106,13 +203,14 @@ class CexScanner(Scanner):
             "retest_band_atr": self.settings.scoring.retest_band_atr,
         }
 
+        timeframes = self.timeframes
         series_list = await asyncio.gather(
-            *(self.provider.get_ohlcv(symbol, tf, self.cfg.candles_per_timeframe) for tf in self.cfg.timeframes),
+            *(self.provider.get_ohlcv(symbol, tf, self._candles_for(tf)) for tf in timeframes),
             return_exceptions=True,
         )
 
         warnings: list[str] = []
-        for tf, series in zip(self.cfg.timeframes, series_list, strict=True):
+        for tf, series in zip(timeframes, series_list, strict=True):
             if isinstance(series, BaseException):
                 warnings.append(f"{tf.value}: {type(series).__name__}")
                 log.warning("timeframe_fetch_failed", symbol=symbol, timeframe=tf.value, error=str(series)[:160])
@@ -150,17 +248,99 @@ class CexScanner(Scanner):
         except Exception as exc:
             log.info("order_book_unavailable", symbol=af.symbol, error=str(exc)[:120])
 
-    # ---------------------------------------------------------------- regime #
+    # ------------------------------------------------------- benchmark / regime #
 
-    async def _update_regime(self) -> None:
-        ref = "BTCUSDT"
-        try:
-            series = (await self.provider.get_ohlcv(ref, Timeframe.H4, 200)).closed()
-            if len(series) >= 60:
+    async def _update_benchmark(self) -> None:
+        """Market regime plus the benchmark's own return on each relevant timeframe.
+
+        One fetch per timeframe for the whole scan, not per asset: relative
+        strength is the same subtraction for every symbol.
+        """
+        ref = self.benchmark_symbol
+        self._benchmark_roc = {}
+        wanted = {Timeframe.H4}
+        if self.settings.moonshot.enabled:
+            wanted.add(self.settings.moonshot.timeframe)
+
+        regime_set = False
+        for tf in wanted:
+            try:
+                series = (await self.provider.get_ohlcv(ref, tf, self._candles_for(tf))).closed()
+            except Exception as exc:
+                log.info("benchmark_unavailable", symbol=ref, timeframe=tf.value, error=str(exc)[:120])
+                continue
+
+            if tf is Timeframe.H4 and len(series) >= 60:
                 self.regime = classify_regime(series.high, series.low, series.close, reference_symbol=ref)
-        except Exception as exc:
-            log.info("regime_unavailable", error=str(exc)[:120])
+                regime_set = True
+            if len(series) > RS_BARS:
+                past = float(series.close[-1 - RS_BARS])
+                if past > 0:
+                    self._benchmark_roc[tf] = (series.last_close - past) / past * 100.0
+
+        if not regime_set:
             self.regime = RegimeReport.unknown(ref)
+
+    # ---------------------------------------------------------------- enrich #
+
+    def _apply_relative_strength(self, features: list[AssetFeatures]) -> None:
+        """Asset return minus benchmark return, in percentage points, same window.
+
+        Uses the slowest timeframe for which both sides are available, because
+        outperforming bitcoin over six daily bars is a far stronger statement
+        than doing so over six four-hour bars.
+        """
+        if not self._benchmark_roc:
+            return
+        order = sorted(self._benchmark_roc, key=lambda tf: tf.seconds, reverse=True)
+        for af in features:
+            for tf in order:
+                own = af.timeframes.get(tf)
+                if own is None or own.roc6 is None:
+                    continue
+                af.rs_vs_benchmark_pct = own.roc6 - self._benchmark_roc[tf]
+                af.benchmark_symbol = f"{self.benchmark_symbol} ({tf.value}, {RS_BARS} bars)"
+                break
+
+    @staticmethod
+    def _apply_cross_section(features: list[AssetFeatures]) -> None:
+        """Rank each asset's RVOL against every other asset in this same scan."""
+        population = [
+            af.primary.rvol for af in features if af.primary.rvol is not None and af.primary.rvol == af.primary.rvol
+        ]
+        if len(population) < 5:  # a percentile over four assets is noise
+            return
+        for af in features:
+            if af.primary.rvol is not None:
+                af.rvol_percentile_universe = cross_sectional_percentile(af.primary.rvol, population)
+
+    async def _attach_valuations(self, features: list[AssetFeatures]) -> str | None:
+        """Market caps for the scanned assets. Returns a note when unavailable.
+
+        One catalogue fetch covers the whole scan. Failure is not fatal and not
+        silent: the moonshot layer reports capacity as unknown and says why.
+        """
+        if self.valuation_provider is None or not features:
+            return None
+        quote = self.cfg.quote_asset
+        wanted: dict[str, list[AssetFeatures]] = {}
+        for af in features:
+            base = split_symbol(af.symbol, quote)
+            if base:
+                wanted.setdefault(canonical_base(base), []).append(af)
+        if not wanted:
+            return None
+
+        try:
+            valuations = await self.valuation_provider.get_valuations(sorted(wanted))
+        except Exception as exc:
+            log.warning("valuations_unavailable", error=str(exc)[:160])
+            return f"valuation source unavailable ({type(exc).__name__}); market caps unknown this scan"
+
+        for base, val in valuations.items():
+            for af in wanted.get(base, []):
+                af.valuation = val
+        return None
 
     # ---------------------------------------------------------------- main #
 
@@ -207,7 +387,9 @@ class CexScanner(Scanner):
                 notes=notes + ["scan aborted: could not build universe"],
             )
 
-        await self._update_regime()
+        await self._update_benchmark()
+        if self.universe_resolution is not None:
+            notes.extend(self.universe_resolution.notes)
 
         # -- pass 1: features + first-pass score ------------------------------ #
         sem = asyncio.Semaphore(self.settings.providers.max_concurrent_requests)
@@ -230,6 +412,13 @@ class CexScanner(Scanner):
                 errors[symbol] = err
             elif af is not None:
                 features.append(af)
+
+        # -- enrich: cross-asset context, before anything is scored ----------- #
+        self._apply_cross_section(features)
+        self._apply_relative_strength(features)
+        valuation_note = await self._attach_valuations(features)
+        if valuation_note:
+            notes.append(valuation_note)
 
         now_ms = self.clock.now_ms()
         first_pass = [(af, self.engine.score(af, now_ms)) for af in features]
@@ -259,6 +448,8 @@ class CexScanner(Scanner):
             results.append(result)
 
         results.sort(key=self._rank_key, reverse=True)
+        if self.cfg.rank_mode != "setup":
+            notes.append(f"ranked by {self.cfg.rank_mode} (CP_SCAN_RANK_MODE)")
 
         finished = self.clock.now_ms()
         report = ScanReport(
@@ -290,8 +481,30 @@ class CexScanner(Scanner):
         )
         return report
 
+    def _rank_key(self, r: ScoreResult) -> float:
+        """Order the table according to what this deployment is hunting.
+
+        `setup` is the V1 behaviour. `moonshot` puts the daily reading first and
+        keeps setup quality only as a tie-break, which is what a ×10 radar wants:
+        the best setup on a $40B asset is not the row you opened the app for.
+        `blend` ranks on both.
+        """
+        setup = self._setup_rank(r)
+        mode = self.cfg.rank_mode
+        if mode == "setup":
+            return setup
+
+        moon = r.moonshot
+        if moon is None or moon.stage is MoonshotStage.UNKNOWN:
+            # Unknown must not outrank measured. It sorts below every asset that
+            # produced a reading, rather than being treated as a zero score.
+            return -1000.0 + setup * 0.01
+        if mode == "moonshot":
+            return moon.score * 10.0 + setup * 0.1
+        return 0.5 * moon.score + 0.5 * setup
+
     @staticmethod
-    def _rank_key(r: ScoreResult) -> float:
+    def _setup_rank(r: ScoreResult) -> float:
         """Rank by setup quality, not by price change.
 
         A rising score is worth real weight — that is the "changing behaviour"

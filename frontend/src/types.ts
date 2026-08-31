@@ -17,6 +17,34 @@ export interface Component {
 
 export interface PenaltyItem { name: string; points: number; reason: string }
 
+export type MoonshotStage =
+  | 'UNKNOWN' | 'NEUTRAL' | 'DORMANT' | 'ACCUMULATION' | 'IGNITION' | 'EXPANSION' | 'EXHAUSTION';
+
+/**
+ * The ×10 reading. Every field can be null: `capacity` is null whenever no
+ * valuation source is configured, and the UI must render that as "unknown"
+ * rather than as a zero, which would read as "no room to run".
+ */
+export interface Moonshot {
+  engine_version: string;
+  score: number;
+  label: string;
+  ignition: number | null;
+  headroom: number | null;
+  capacity: number | null;
+  stage: MoonshotStage;
+  timeframe: string | null;
+  target_multiple: number;
+  multiple_to_window_high: number | null;
+  is_candidate: boolean;
+  coverage: number;
+  components: Record<string, number>;
+  reasons: string[];
+  caveats: string[];
+  unknowns: string[];
+  disclaimer: string;
+}
+
 export interface ScoreRow {
   symbol: string;
   price: number;
@@ -37,6 +65,7 @@ export interface ScoreRow {
   safety: { score: number; hard_veto: boolean; reasons: string[] };
   setup: { state: SetupState; rationale: string; trigger: string | null; invalidation: string | null };
   is_premium: boolean;
+  moonshot: Moonshot | null;
   metrics: TableMetrics;
   why: string[];
   risks: string[];
@@ -89,6 +118,17 @@ export interface TimeframeFeatures {
   } | null;
 }
 
+export interface Valuation {
+  symbol: string;
+  market_cap_usd: number | null;
+  market_cap_upper_bound_usd: number | null;
+  fully_diluted_valuation_usd: number | null;
+  circulating_ratio: number | null;
+  ath_change_pct: number | null;
+  rank: number | null;
+  ambiguous_symbol: boolean;
+}
+
 export interface AssetFeatures {
   symbol: string;
   price: number;
@@ -96,7 +136,51 @@ export interface AssetFeatures {
   price_change_pct_24h: number | null;
   order_book_imbalance: number | null;
   spread_bps: number | null;
+  valuation: Valuation | null;
+  benchmark_symbol: string | null;
+  rs_vs_benchmark_pct: number | null;
+  rvol_percentile_universe: number | null;
   timeframes: Record<string, TimeframeFeatures>;
+}
+
+export interface MoonshotResponse {
+  meta: {
+    engine_version: string;
+    timeframe: string;
+    target_multiple: number;
+    valuation_source: string;
+    matched: number;
+    no_reading: string[];
+    disclaimer: string;
+  };
+  results: {
+    symbol: string;
+    price: number;
+    moonshot: Moonshot;
+    final_score: number;
+    pump_maturity: number;
+    data_confidence: number;
+    liquidity: LiquidityStatus;
+    setup_state: SetupState;
+    valuation: Valuation | null;
+  }[];
+}
+
+export interface UniverseResponse {
+  mode: 'volume' | 'robinhood';
+  quote_asset: string;
+  venue: string;
+  benchmark: string;
+  note: string | null;
+  resolution: {
+    count: number;
+    symbols: string[];
+    by_base: Record<string, string>;
+    missing: string[];
+    source: string;
+    as_of: string;
+    notes: string[];
+  } | null;
 }
 
 export interface AssetDetail extends ScoreRow {
@@ -131,6 +215,28 @@ export interface Health {
   consecutive_failures: number;
   scan_interval_seconds: number;
   market_regime: { trend: string; volatility: string; reference: string };
+  universe: {
+    mode: string;
+    benchmark: string;
+    rank_mode: string;
+    count?: number;
+    missing?: string[];
+    source?: string;
+    as_of?: string;
+    notes?: string[];
+  };
+  moonshot: {
+    enabled: boolean;
+    engine_version: string;
+    timeframe: string;
+    target_multiple: number;
+    valuation_source: string;
+    candidates_last_scan: number;
+  };
+  alert_delivery: {
+    channels: { channel: string; configured: boolean; missing_setting: string | null }[];
+    last_results: { channel: string; delivered: number; failed: number; detail: string | null }[];
+  };
   last_scan: {
     finished_at_ms: number;
     age_seconds: number;
@@ -162,6 +268,7 @@ export interface ScanResponse {
 
 export interface AlertItem {
   symbol: string;
+  kind: 'SETUP' | 'MOONSHOT';
   level: 'INFO' | 'WATCH' | 'HIGH' | 'CRITICAL_SETUP';
   headline: string;
   timestamp_ms: number;
@@ -178,6 +285,9 @@ export interface AlertItem {
   risks: string[];
   trigger: string | null;
   invalidation: string | null;
+  moonshot_score: number | null;
+  moonshot_stage: string | null;
+  moonshot_multiple_to_window_high: number | null;
 }
 
 // --------------------------------------------------------------- outcomes --

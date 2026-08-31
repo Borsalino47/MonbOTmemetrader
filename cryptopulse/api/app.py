@@ -19,6 +19,7 @@ from cryptopulse.api.service import get_service
 from cryptopulse.config.settings import get_settings
 from cryptopulse.core.logging import configure_logging, get_logger
 from cryptopulse.database import repo
+from cryptopulse.scoring.moonshot import MOONSHOT_ENGINE_VERSION
 
 log = get_logger("api")
 
@@ -64,7 +65,11 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
 
     @app.get("/api/config", tags=["status"])
     async def config():
-        s = get_settings()
+        # The *running* service's settings, not the process-wide defaults. They
+        # can differ (a service constructed with overrides), and reporting the
+        # ones that are not in force would be a confident lie about what
+        # produced the scores on screen.
+        s = get_service().settings
         return {
             "engine_version": s.scoring.engine_version,
             "paper_mode": s.paper_mode,
@@ -86,9 +91,47 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
             "timeframes": [tf.value for tf in s.scanner.timeframes],
             "primary_timeframe": s.scanner.primary_timeframe.value,
             "scan_interval_seconds": s.scanner.scan_interval_seconds,
+            "universe_mode": s.scanner.universe,
+            "rank_mode": s.scanner.rank_mode,
+            "moonshot": {
+                "enabled": s.moonshot.enabled,
+                "timeframe": s.moonshot.timeframe.value,
+                "target_multiple": s.moonshot.target_multiple,
+                "weights": {
+                    "ignition": s.moonshot.w_ignition,
+                    "headroom": s.moonshot.w_headroom,
+                    "capacity": s.moonshot.w_capacity,
+                },
+                "valuation_source": s.providers.valuation,
+                "disclaimer": (
+                    "The moonshot score ranks how closely an asset resembles states that have preceded "
+                    "large expansions. The weights are a hypothesis, they have never been fitted, and no "
+                    "×10 outcome has ever been graded against them. It must not be read as a probability."
+                ),
+            },
             "disclaimer": (
                 "The opportunity score is a transparent 0-100 ranking produced by fixed weights. "
                 "It has NOT been statistically calibrated and must not be read as a probability."
+            ),
+        }
+
+    @app.get("/api/universe", tags=["status"])
+    async def universe():
+        """Which assets are being scanned, and which listed ones are missing."""
+        service = get_service()
+        resolution = service.scanner.universe_resolution
+        s = service.settings
+        return {
+            "mode": s.scanner.universe,
+            "quote_asset": s.scanner.quote_asset,
+            "venue": service.scanner.provider.name,
+            "benchmark": service.scanner.benchmark_symbol,
+            "resolution": resolution.to_dict() if resolution else None,
+            "note": (
+                None
+                if s.scanner.universe == "robinhood"
+                else "Universe is the venue's most liquid pairs, not the Robinhood listing. "
+                "Set CP_SCAN_UNIVERSE=robinhood to scan only what Robinhood carries."
             ),
         }
 
@@ -161,6 +204,75 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
     async def run_scan():
         report = await get_service().run_once()
         return {k: v for k, v in report.to_dict().items() if k != "results"}
+
+    @app.get("/api/moonshot", tags=["scanner"])
+    async def moonshot(
+        limit: int = Query(25, ge=1, le=200),
+        min_score: float = Query(0.0, ge=0, le=100),
+        stage: str | None = None,
+        candidates_only: bool = False,
+    ):
+        """Assets ranked by the ×10 layer rather than by today's setup.
+
+        Vetoed assets are excluded outright: a market cap small enough for a ×10
+        is worth nothing if the book is too thin to get out of, and the gates are
+        not negotiable on this horizon either.
+        """
+        service = get_service()
+        if service.last_report is None:
+            return JSONResponse(status_code=503, content={"reason": "NO_SCAN_YET", "results": []})
+
+        s = service.settings
+        rows = [
+            r
+            for r in service.results()
+            if r.moonshot is not None
+            and r.moonshot.stage.value != "UNKNOWN"
+            and not (r.safety.hard_veto or r.liquidity.veto)
+            and r.moonshot.score >= min_score
+        ]
+        if stage:
+            wanted = {x.strip().upper() for x in stage.split(",")}
+            rows = [r for r in rows if r.moonshot.stage.value in wanted]
+        if candidates_only:
+            rows = [r for r in rows if r.moonshot.is_candidate]
+        rows.sort(key=lambda r: r.moonshot.score, reverse=True)
+
+        unreadable = [
+            r.symbol for r in service.results() if r.moonshot is None or r.moonshot.stage.value == "UNKNOWN"
+        ]
+        return {
+            "meta": {
+                "engine_version": MOONSHOT_ENGINE_VERSION,
+                "timeframe": s.moonshot.timeframe.value,
+                "target_multiple": s.moonshot.target_multiple,
+                "valuation_source": s.providers.valuation,
+                "matched": len(rows),
+                "no_reading": unreadable,
+                "disclaimer": (
+                    "Ranking of resemblance to pre-expansion behaviour. Not calibrated, never validated "
+                    "against a graded outcome, and not to be read as a likelihood."
+                ),
+            },
+            "results": [
+                {
+                    "symbol": r.symbol,
+                    "price": r.price,
+                    "moonshot": r.moonshot.to_dict(),
+                    "final_score": round(r.final_score, 1),
+                    "pump_maturity": round(r.maturity.score, 1),
+                    "data_confidence": round(r.confidence.score, 1),
+                    "liquidity": r.liquidity.status.value,
+                    "setup_state": r.state.state.value,
+                    "valuation": (
+                        r.features.valuation.to_dict()
+                        if (r.features and r.features.valuation)
+                        else None
+                    ),
+                }
+                for r in rows[:limit]
+            ],
+        }
 
     # ---------------------------------------------------------------- asset #
 

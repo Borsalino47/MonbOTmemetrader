@@ -12,7 +12,22 @@ A crypto scanner that tries to answer **"which asset is changing behaviour right
 now, before the rest of the market notices?"** — not "what went up the most
 today".
 
-Pipeline: `DATA → SCAN → FILTER → SCORE → VALIDATE → RANK → ALERT → BACKTEST`.
+Pipeline: `DATA → SCAN → FILTER → ENRICH → SCORE → VALIDATE → RANK → ALERT → BACKTEST`.
+
+It now does this on **two horizons at once**, and keeps them apart on purpose:
+
+* the **opportunity score** (`SCORE_ENGINE_V1`) — the next few hours, on the
+  primary intraday timeframe;
+* the **moonshot score** (`MOONSHOT_ENGINE_V1`, §11) — the next few weeks: how
+  closely an asset resembles states that have preceded *large multiples*.
+
+Both are rankings, neither is a probability, and the second one is the less
+validated of the two. A single blended number would hide exactly the distinction
+that matters — a 78 in EXHAUSTION and a 78 in ACCUMULATION are opposite
+situations.
+
+The scanned universe defaults to **assets believed tradable on Robinhood Crypto**
+(§12). A signal on something you cannot buy is noise.
 
 ---
 
@@ -48,10 +63,18 @@ that justifies it.
 | Score calibration / probabilities | **NOT IMPLEMENTED** | Needs a real signal history first |
 | Machine learning | **NOT IMPLEMENTED** | Deliberately deferred, see §9 |
 | Outcome tracker | **TESTED** | 23 tests; run end to end on 310 signals |
+| Expansion features (base age, drawdown, VCP, spring, quiet accumulation) | **TESTED** | 13 tests + truncation stability |
+| Accumulation indicators (OBV / A-D / CMF) | **TESTED** | 6 unit tests + 4 no-look-ahead |
+| **Moonshot / ×10 layer** (`MOONSHOT_ENGINE_V1`) | **TESTED** | 20 tests. Weights are a hypothesis, NOT fitted, and no ×10 outcome has ever been graded. See §11 |
+| Relative strength + cross-sectional volume rank | **TESTED** | Computed per scan, `None` when the scan cannot |
+| **Robinhood universe filter** | **IMPLEMENTED — NOT LIVE VERIFIED** | 16 tests. The *listing* is a hand-maintained snapshot, never checked against Robinhood. See §12 |
+| Alert delivery (console / jsonl / webhook / telegram / discord) | **TESTED** | 11 tests incl. secret-leak and crash isolation. Network channels tested against mocks only |
+| Autonomous radar loop (`cryptopulse radar`) | **TESTED** | Full cycle end to end on the fixture provider |
+| **CoinGecko valuation (market cap)** | **IMPLEMENTED — NOT LIVE VERIFIED** | 10 tests against mocks. OFF by default |
 | Performance analytics (`outcomes/stats.py`) | **TESTED** | Buckets + component edge, `n` on every rate |
 | Schema migration (`database/migrate.py`) | **TESTED** | Additive columns only; refuses destructive changes |
 
-**Test suite: 245 tests, all passing.** Run `pytest -q`.
+**Test suite: 344 tests, all passing.** Run `pytest -q`.
 
 ---
 
@@ -68,9 +91,10 @@ Binance geo-block, not DNS, and not a bug in the connector.
 
 **The fix is an environment setting, not code.** At claude.ai/code: cloud icon
 above the message box -> hover the environment -> settings -> Network access
-**Custom** -> add `api.binance.com` and `data-api.binance.vision` to
-**Allowed domains**, keeping "Also include default list of common package
-managers" checked. Then start a NEW session; a running one keeps the policy it
+**Custom** -> add `api.binance.com`, `data-api.binance.vision` and
+`api.coingecko.com` to **Allowed domains**, keeping "Also include default list
+of common package managers" checked. (CoinGecko is what supplies market cap; the
+×10 layer reports capacity as unknown without it — see §11.) Then start a NEW session; a running one keeps the policy it
 booted with. `cryptopulse doctor` now prints these steps itself when it detects
 this exact failure. So:
 
@@ -126,6 +150,7 @@ cryptopulse/
     http.py              Weighted rate limiter, retry+jitter, circuit breaker
     binance.py           Binance Spot public REST      <- NOT LIVE VERIFIED
     kraken.py            Kraken public REST, 2nd venue <- NOT LIVE VERIFIED
+    coingecko.py         Market cap / FDV / supply     <- NOT LIVE VERIFIED, off by default
     fixture.py           SYNTHETIC generator for offline dev/tests
     registry.py          One switch: CP_PROVIDER_MARKET_DATA
   features/
@@ -134,12 +159,16 @@ cryptopulse/
     structure.py         Fractal swings, level clustering, breakout geometry
     stats.py             z-score, percentile, cross-sectional rank
     regime.py            Bull/bear/range + volatility regime
+    expansion.py         Long-horizon readings: base age, drawdown, VCP, spring,
+                         quiet accumulation                       <- the ×10 inputs
     pipeline.py          TimeframeFeatures.build / AssetFeatures  <- closed() boundary
   scoring/
     components.py        The 8 weighted components, each self-explaining
     pump_maturity.py     0 = not started, 100 = probably late
     acceleration.py      Momentum acceleration + early move
     confidence.py        Data confidence, with a hard staleness cap
+    moonshot.py          MOONSHOT_ENGINE_V1: headroom + capacity + ignition,
+                         stage machine, ×10 ranking          <- separate axis
     states.py            IGNORE/OBSERVE/WATCH/ARMED/BREAKOUT/RETEST/...
     engine.py            SCORE_ENGINE_V1 orchestrator + weights fingerprint
   risk/
@@ -150,7 +179,12 @@ cryptopulse/
     base.py              Scanner ABC + ScanReport
     cex.py               Two-pass pipeline (cheap filter, then order books)
     memory.py            Score history ring buffer, score acceleration
-  alerts/engine.py       Levels, gates, dedup, cooldown
+  universe/
+    robinhood.py         Which assets Robinhood lists; resolution against a venue
+    symbols.py           Ticker equivalences (XBT=BTC, XDG=DOGE, POL=MATIC)
+  alerts/
+    engine.py            Levels, gates, dedup, cooldown; SETUP and MOONSHOT kinds
+    notifiers.py         Delivery: console / jsonl / webhook / telegram / discord
   outcomes/
     tracker.py           Grades emitted signals against the bars that followed
     stats.py             Win rate / expectancy by bucket + per-component edge
@@ -167,7 +201,7 @@ cryptopulse/
   api/
     service.py           Owns the scanner, the loop and shared state
     app.py               FastAPI routes, serves the built dashboard
-  cli.py                 doctor / scan / resolve / serve / backtest (--provider)
+  cli.py                 doctor / scan / radar / universe / resolve / serve / backtest
 
 start.sh                 One-command launcher: install, verify feed, scan
 
@@ -175,7 +209,7 @@ scripts/
   simulate_journal.py    Scan across simulated time, grade, compare to baseline
 
 frontend/                Vite + React 18 + TypeScript (strict)
-tests/                   245 tests
+tests/                   344 tests
 pine/                    TradingView companion scripts
 ```
 
@@ -234,7 +268,34 @@ Break these and the product is lying to its user.
 
 13. **Scoring is versioned.** `engine_version` + a `weights_fingerprint` hash go
     into every signal row. Change a weight and the fingerprint changes, so old
-    signals are never reinterpreted under new rules.
+    signals are never reinterpreted under new rules. The fingerprint covers the
+    **timeframe set** as well as the weights: multi-timeframe alignment is one of
+    the eight components, so adding a timeframe changes what a 70 means.
+
+14. **The ×10 axis never moves the opportunity score, and never lifts a gate.**
+    `assess_moonshot` runs last, reads only what is already computed, and writes
+    nothing back. A liquidity or safety veto still vetoes an asset with a
+    moonshot score of 95 — enforced in `AlertEngine.evaluate_moonshots`.
+
+15. **Capacity is unknown, never assumed.** Market cap cannot be derived from a
+    candle at any price. With no valuation source the capacity reading is `None`,
+    the composite renormalises over what remains, and `unknowns` says so in
+    plain words. "Not in the top 500 by cap" is recorded as an *upper bound*,
+    which is a fact — and is never promoted to a measurement.
+
+16. **Lateness caps the score, it does not merely discount it.** Once pump
+    maturity says the move is extended, the stage becomes EXHAUSTION and the
+    score is capped. A late entry still scoring 90 is the most expensive thing a
+    radar can show a user.
+
+17. **A delivery failure never breaks a scan, and a secret never reaches a log.**
+    Every notifier catches its own failures; detail strings carry a status code
+    or an exception class, never a URL or a token (the Telegram token is part of
+    the URL path). An unconfigured channel names the *setting* that is missing.
+
+18. **The universe is stated, not implied.** Which assets were scanned, which
+    listed ones the venue does not carry, and where the listing came from are in
+    every scan report, the API and the dashboard banner.
 
 ---
 
@@ -271,6 +332,41 @@ is trustworthy. See `scoring/confidence.py`.
 made every healthy feed look stale, because a 4h candle is legitimately hours
 old. The reported figure is the median primary-timeframe age across assets.
 
+**The ×10 layer is a separate axis, not a bigger opportunity score.** Blending
+them into one number would make a 78 on a based, dormant micro-cap
+indistinguishable from a 78 on an exhausted large-cap pump. They answer
+different questions on different horizons and are shown side by side.
+
+**The moonshot reading refuses to run below 4h.** A base that takes four months
+to build is invisible in 300 five-minute candles. Given only intraday
+timeframes, `assess_moonshot` returns UNKNOWN and says why, rather than scoring
+a shape it cannot see. This costs one extra kline request per asset per scan —
+the daily — which is why `CP_MOON_ENABLED=false` exists for tight rate budgets.
+
+**The Robinhood universe does not apply the 24h volume floor.** The volume
+universe needs one because it is picking 120 out of thousands. The Robinhood
+universe is a fixed list of a few dozen, and dropping an asset for having a
+quiet day would hide precisely the dormant, based assets the ×10 layer exists to
+find. The liquidity gate still runs during scoring, so an untradable asset is
+vetoed and visible rather than silently absent.
+
+**Universe resolution matches against the venue's own symbol list.** Building
+`BTC + USDT` would scan nothing on Kraken, which lists bitcoin as XBT. Aliases
+(XBT/BTC, XDG/DOGE, POL/MATIC, RNDR/RENDER) are tried against what the venue
+actually returned, so a rename in either direction resolves instead of silently
+dropping the asset.
+
+**Relative strength and volume rank are computed per scan, before scoring.**
+Both are cross-asset facts: RVOL 2.5 means one thing on a dead Sunday and
+another when the whole board is at 2.5. Computing them after the score would
+mean the score could not use them.
+
+**`enable_decoding=False` on every settings class holding a list.**
+pydantic-settings JSON-decodes complex env values before validators run, so
+`CP_SCAN_ALWAYS_INCLUDE=BTCUSDT,ETHUSDT` — the form `.env.example` documents —
+raised a JSONDecodeError at import and killed the process. The documented
+configuration must load.
+
 **Ambiguous backtest bars resolve as LOSS.** When one candle touches both the
 target and the stop, intrabar order is unknown. Assuming the win flatters every
 result and the error compounds. See `backtest/labels.py`.
@@ -287,8 +383,15 @@ cp .env.example .env
 # verify the live data feed (the important one)
 python -m cryptopulse.cli doctor
 
-# one scan, printed as a table
+# one scan, printed as a table (plus the ×10 block)
 python -m cryptopulse.cli scan --limit 30
+
+# what the Robinhood filter actually resolves to on this venue, and what it cannot
+python -m cryptopulse.cli universe
+
+# the autonomous radar: scan, alert, notify, repeat until stopped
+python -m cryptopulse.cli radar
+python -m cryptopulse.cli radar --once --provider fixture --universe robinhood --rank moonshot
 
 # grade signals whose horizon has elapsed, then print realised performance
 python -m cryptopulse.cli resolve
@@ -340,6 +443,28 @@ pytest tests/test_no_lookahead.py -v    # the ones that matter most
   for reasons unrelated to the strategy. A regression test guards it.
 * `outcomes/tracker.py:_resolve_one` — requires an *exact* close-time match.
   Resolving against the nearest bar would shift every barrier by a bar.
+* `scoring/moonshot.py:_stage` — **order matters**. Lateness is checked first and
+  overrides everything: an asset can be igniting on every measure and still be
+  something you are late to. Reordering these branches would put exhausted pumps
+  at the top of a ×10 list, which is the single worst output this system can
+  produce.
+* `scoring/moonshot.py:_composite` — renormalises over the readings that exist.
+  Do not "simplify" it by defaulting a missing capacity to 0; that would rank an
+  asset with an unknown market cap below one known to be a $40B large-cap.
+* `features/expansion.py:base_run_length` — walks backwards and stops at the bar
+  that would widen the range. It measures the base that is forming *now*, not the
+  best base in history, because only the current one can break.
+* `alerts/notifiers.py` — the Telegram token is inside the request URL. No code
+  path may log or return a URL. `_post` deliberately returns a status code or an
+  exception class and nothing else; a test asserts the secret never appears in a
+  result.
+* `config/settings.py` — the `enable_decoding=False` on classes with list fields
+  is load-bearing, not cosmetic. Removing it makes every comma-separated
+  environment variable in `.env.example` crash the process at import.
+* `universe/robinhood.py:SNAPSHOT_BASES` — a hand-maintained list. Adding a
+  symbol Robinhood does not list costs a permanent `missing` row; omitting one it
+  does list means that asset is never scanned. Neither corrupts a score, and both
+  are visible in `cryptopulse universe`.
 
 ---
 
@@ -366,7 +491,12 @@ pytest tests/test_no_lookahead.py -v    # the ones that matter most
 7. **Calibration** — map score bands to observed frequencies. Only after this
    may the UI display anything resembling a probability.
 8. Phase 2: DEX scanner, on-chain safety, multi-provider cross-validation.
-9. Phase 3: ML, compared against the deterministic baseline. Not before.
+9. **Grade the ×10 layer against a label that matches its horizon.** The outcome
+   tracker currently uses a 2R triple barrier over hours; a moonshot claim is
+   about weeks. Until a label with a multi-week horizon exists and has graded
+   real signals, `MOONSHOT_ENGINE_V1` is an untested hypothesis with a stage
+   machine — which is exactly how it describes itself.
+10. Phase 3: ML, compared against the deterministic baseline. Not before.
 
 ---
 
@@ -378,3 +508,83 @@ pytest tests/test_no_lookahead.py -v    # the ones that matter most
 * Tests are named as the behaviour they assert, not the function they call.
 * No bare `except:`. Catch typed errors; a broad catch must log and continue
   with a stated reason.
+
+
+---
+
+## 11. The ×10 layer (`MOONSHOT_ENGINE_V1`)
+
+Read `cryptopulse/scoring/moonshot.py` before changing anything here; its
+docstring is the specification. The short version:
+
+**Three separate readings, deliberately not merged into one comforting number.**
+
+| Reading | Question | Source | Missing when |
+|---|---|---|---|
+| **Headroom** | Has it traded ×10 higher than this, in the history we can see? | Arithmetic on the daily candles | Only at the top of its own history |
+| **Capacity** | Is a ×10 *payable* at this market cap? | Valuation provider | **Always, unless `CP_PROVIDER_VALUATION` is set** |
+| **Ignition** | Is the behaviour changing right now? | 11 weighted sub-signals | Individually, each says so |
+
+`score = weighted blend, renormalised over what exists`. Not a probability.
+
+**The eleven ignition sub-signals**, weights in `_IGNITION_WEIGHTS`:
+volume regime shift (daily volume vs its own 30-bar median), a multi-month level
+breaking, the accumulation tape (CMF + A-D slope + quiet accumulation), base
+length, trend reclaim over EMA50, relative strength vs the benchmark, volatility
+compression, the contraction pattern (VCP), cross-sectional volume rank, faster
+timeframes agreeing, and a spring (failed breakdown reclaimed).
+
+**Stages**, in evaluation order — the order is the safety property:
+
+`EXHAUSTION` (late, score capped at 45) → `EXPANSION` (markup under way, capped
+at 70) → `IGNITION` → `ACCUMULATION` → `DORMANT` → `NEUTRAL`, with `UNKNOWN` when
+there is no timeframe of 4h or slower. Only IGNITION and ACCUMULATION can raise
+an alert.
+
+**What it has never been:** validated. No ×10 outcome has ever been graded
+against these weights, because no real signal history exists yet (§3). It ranks
+resemblance to a pre-expansion state. Most of what it flags will not do ×10 —
+that is a property of the market, and the module says so in its own payload.
+
+---
+
+## 12. The Robinhood universe
+
+**Robinhood publishes no usable public market-data API.** Its Crypto Trading API
+needs an API key and an Ed25519 request signature and serves your own account,
+not a scannable historical feed. So this project does **not** get prices from
+Robinhood. `universe/robinhood.py` decides *which symbols to scan*; the candles
+still come from Binance or Kraken.
+
+The consequence has to reach the user, and does — in the scan notes, the API and
+a permanent dashboard banner: **the price on screen is the reference venue's
+price, not Robinhood's.** Robinhood's spread and fill will differ, sometimes
+materially on a thin asset during a fast move.
+
+The listing itself is a **hand-maintained snapshot** (`SNAPSHOT_BASES`, dated),
+never verified against Robinhood. Both ways it can be wrong are safe and
+visible: an asset the venue does not carry appears in `missing` and is skipped;
+one Robinhood lists but the snapshot omits is simply never scanned. To correct
+it, set `CP_SCAN_ROBINHOOD_EXTRA` / `_EXCLUDE`, or point
+`CP_SCAN_ROBINHOOD_FILE` at your own JSON — which is what
+`cryptopulse universe --refresh` writes if Robinhood's catalogue is reachable
+(it never has been from this sandbox).
+
+---
+
+## 13. Autonomy
+
+`cryptopulse radar` is the daemon: scan → alert → notify → persist → grade,
+until stopped. Three properties make it safe to leave running:
+
+* **it survives anything a scan throws** — a failed cycle backs off
+  exponentially (capped at 15 minutes) so a dead feed is not hammered;
+* **it prints where alerts will go before it starts**, marking any configured
+  but inert channel with the setting it is missing — a misconfiguration is found
+  at 09:00, not at 03:14;
+* **it stops cleanly** on SIGINT/SIGTERM, closing the provider and flushing the
+  database rather than dying mid-write.
+
+Delivery lives in `ScannerService`, not in the CLI, so the API's own scan loop
+notifies through exactly the same path. Alerts are persisted *before* they are
+delivered: a delivery crash can never lose the record.

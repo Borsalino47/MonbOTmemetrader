@@ -2,6 +2,16 @@
 
 No secret is ever hardcoded. `CryptoPulseSettings` is the single source of truth;
 modules receive the settings object rather than reading os.environ themselves.
+
+ONE NON-OBVIOUS SETTING: `enable_decoding=False`
+
+Every class here that holds a list field turns pydantic-settings' complex-value
+decoding off. By default it JSON-decodes an environment variable before any
+validator sees it, so `CP_SCAN_ALWAYS_INCLUDE=BTCUSDT,ETHUSDT` — the form
+documented in .env.example — raises a JSONDecodeError at import and takes the
+whole process down before a single line of scanner code runs. Turning decoding
+off hands the raw string to the `mode="before"` validators below, which is what
+they were always written to receive.
 """
 
 from __future__ import annotations
@@ -19,6 +29,19 @@ class ProviderSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="CP_PROVIDER_", env_file=".env", extra="ignore")
 
     market_data: Literal["binance", "kraken", "fixture"] = "binance"
+
+    # Valuation (market cap) enrichment. Deliberately OFF by default: it is a
+    # second network dependency, and the moonshot layer reports an unknown market
+    # cap as unknown rather than degrading quietly, so "none" costs honesty
+    # nothing. Turn it on to get the capacity reading.
+    valuation: Literal["none", "coingecko"] = "none"
+    coingecko_base_url: str = "https://api.coingecko.com"
+    coingecko_api_key: str | None = None
+    # Pages of 250 assets ranked by market cap. Two pages = the top 500, which is
+    # also what makes "not in the ranking" a usable upper bound on the cap.
+    valuation_pages: int = 2
+    valuation_ttl_seconds: int = 3600
+
     binance_base_url: str = "https://api.binance.com"
     # Binance publishes a market-data-only mirror that carries the same public
     # endpoints; useful when the main host is geo-restricted.
@@ -46,11 +69,34 @@ class ProviderSettings(BaseSettings):
 
 
 class ScannerSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="CP_SCAN_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="CP_SCAN_", env_file=".env", extra="ignore", enable_decoding=False
+    )
 
     quote_asset: str = "USDT"
     max_symbols: int = 120
     scan_interval_seconds: int = 60
+
+    # Which assets a scan may look at.
+    #   volume     — the venue's most liquid pairs (the V1 behaviour)
+    #   robinhood  — only assets believed tradable on Robinhood Crypto
+    # `robinhood` is what the radar ships with; a signal on something you cannot
+    # buy is noise. See universe/robinhood.py for what that list is and is not.
+    universe: Literal["volume", "robinhood"] = "volume"
+    robinhood_file: str | None = None
+    robinhood_extra: list[str] = Field(default_factory=list)
+    robinhood_exclude: list[str] = Field(default_factory=list)
+
+    # How the ranked table is ordered.
+    #   setup     — best trade setup right now (V1 behaviour)
+    #   moonshot  — best candidate for a large multiple
+    #   blend     — setup quality weighted by moonshot score
+    rank_mode: Literal["setup", "moonshot", "blend"] = "setup"
+
+    # Benchmark for the market regime and for relative strength. Empty means
+    # "ask the provider for a symbol it is certain to carry", which is what makes
+    # this work on Kraken (XBT) as well as Binance (BTC).
+    benchmark_symbol: str = ""
 
     # Universe pre-filter, applied before any network cost is spent on klines.
     min_quote_volume_24h: float = 3_000_000.0
@@ -77,7 +123,14 @@ class ScannerSettings(BaseSettings):
             return [Timeframe.parse(x.strip()) for x in v.split(",") if x.strip()]
         return v
 
-    @field_validator("always_include", "exclude_patterns", "exclude_stable_bases", mode="before")
+    @field_validator(
+        "always_include",
+        "exclude_patterns",
+        "exclude_stable_bases",
+        "robinhood_extra",
+        "robinhood_exclude",
+        mode="before",
+    )
     @classmethod
     def _parse_list(cls, v):
         if isinstance(v, str):
@@ -115,6 +168,56 @@ class ScoringSettings(BaseSettings):
     retest_band_atr: float = 0.5
 
 
+class MoonshotSettings(BaseSettings):
+    """The ×10 layer. Every number here is a hypothesis — see scoring/moonshot.py."""
+
+    model_config = SettingsConfigDict(env_prefix="CP_MOON_", env_file=".env", extra="ignore")
+
+    enabled: bool = True
+
+    # A base that takes months to build is invisible on an intraday chart, so the
+    # reading is taken on the daily and refuses to run below 4h.
+    timeframe: Timeframe = Timeframe.D1
+    candles: int = 400
+    min_bars: int = 80
+
+    # The multiple being hunted. Everything scales off this, so setting it to 5
+    # or 20 re-tunes the whole layer coherently rather than just renaming it.
+    target_multiple: float = 10.0
+
+    # Composite weights. Renormalised over whatever is available, so a missing
+    # market cap redistributes rather than scoring zero. NOT fitted.
+    w_ignition: float = 55.0
+    w_headroom: float = 20.0
+    w_capacity: float = 25.0
+
+    # Market cap ends of the capacity scale, in USD. At 20M a ×10 implies 200M,
+    # which happens somewhere most weeks; at 20B it implies 200B, which almost
+    # nothing has ever reached.
+    cap_full_capacity_usd: float = 20_000_000.0
+    cap_no_capacity_usd: float = 20_000_000_000.0
+
+    # Stage thresholds.
+    ignition_threshold: float = 60.0
+    exhaustion_maturity: float = 70.0
+    # "The markup is already under way", measured two ways because either alone
+    # misses cases: a fast run shows up in the 12-bar return, a slow grinding one
+    # only in how far price has pulled away from its own mean.
+    expansion_roc_pct: float = 60.0  # over 12 bars of the moonshot timeframe
+    expansion_extension_atr: float = 4.0  # ATR above the EMA50 of that timeframe
+    min_base_bars: int = 20
+
+    # Caps applied once the move is no longer early. A late entry that still
+    # scores 90 is the single most expensive thing a radar can show you.
+    expansion_score_cap: float = 70.0
+    exhaustion_score_cap: float = 45.0
+
+    @field_validator("timeframe", mode="before")
+    @classmethod
+    def _parse_tf(cls, v):
+        return Timeframe.parse(v) if isinstance(v, str) else v
+
+
 class RiskSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="CP_RISK_", env_file=".env", extra="ignore")
 
@@ -135,7 +238,9 @@ class RiskSettings(BaseSettings):
 
 
 class AlertSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="CP_ALERT_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="CP_ALERT_", env_file=".env", extra="ignore", enable_decoding=False
+    )
 
     enabled: bool = True
     min_score_info: float = 50.0
@@ -145,7 +250,30 @@ class AlertSettings(BaseSettings):
     min_score_acceleration: float = 6.0
     cooldown_seconds: int = 1800
     max_alerts_per_scan: int = 12
+
+    # Moonshot alerts are a different animal from setup alerts: a base does not
+    # change between two scans, so they get their own threshold and a cooldown
+    # measured in hours rather than minutes.
+    min_score_moonshot: float = 68.0
+    moonshot_cooldown_seconds: int = 21_600
+
+    # Delivery. An alert nobody sees is not an alert — this is what makes the
+    # radar autonomous rather than something you have to sit and watch.
+    # Any of: console, jsonl, webhook, telegram, discord.
+    channels: list[str] = Field(default_factory=lambda: ["console"])
+    jsonl_path: str = "data/alerts.jsonl"
     webhook_url: str | None = None
+    telegram_bot_token: str | None = None
+    telegram_chat_id: str | None = None
+    discord_webhook_url: str | None = None
+    delivery_timeout_seconds: float = 10.0
+
+    @field_validator("channels", mode="before")
+    @classmethod
+    def _parse_channels(cls, v):
+        if isinstance(v, str):
+            return [x.strip().lower() for x in v.split(",") if x.strip()]
+        return v
 
 
 class DatabaseSettings(BaseSettings):
@@ -157,7 +285,7 @@ class DatabaseSettings(BaseSettings):
 
 
 class CryptoPulseSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="CP_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="CP_", env_file=".env", extra="ignore", enable_decoding=False)
 
     app_name: str = "CRYPTO PULSE AI"
     environment: Literal["dev", "prod"] = "dev"
@@ -175,6 +303,7 @@ class CryptoPulseSettings(BaseSettings):
     providers: ProviderSettings = Field(default_factory=ProviderSettings)
     scanner: ScannerSettings = Field(default_factory=ScannerSettings)
     scoring: ScoringSettings = Field(default_factory=ScoringSettings)
+    moonshot: MoonshotSettings = Field(default_factory=MoonshotSettings)
     risk: RiskSettings = Field(default_factory=RiskSettings)
     alerts: AlertSettings = Field(default_factory=AlertSettings)
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)

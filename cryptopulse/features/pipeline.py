@@ -17,7 +17,8 @@ from enum import Enum
 
 import numpy as np
 
-from cryptopulse.core.types import OHLCVSeries, Provenance, Timeframe
+from cryptopulse.core.types import AssetValuation, OHLCVSeries, Provenance, Timeframe
+from cryptopulse.features.expansion import ExpansionReport, analyse_expansion
 from cryptopulse.features.indicators import (
     atr,
     bollinger_width,
@@ -100,6 +101,11 @@ class TimeframeFeatures:
 
     consecutive_green: int = 0
     structure: StructureReport | None = None
+    # Long-horizon reading (base age, drawdown from the window high, accumulation
+    # tape). Only meaningful on a high timeframe with real history behind it; it
+    # is computed for every timeframe because the cost is negligible and the
+    # moonshot layer picks whichever timeframe it was given.
+    expansion: ExpansionReport | None = None
     bias: Bias = Bias.UNKNOWN
     provenance: Provenance | None = None
     warnings: list[str] = field(default_factory=list)
@@ -179,6 +185,7 @@ class TimeframeFeatures:
         feats.consecutive_green = consecutive_up(c, s.open)
 
         feats.structure = analyse_structure(h, l, c, s.open_time_ms, **(structure_kwargs or {}))
+        feats.expansion = analyse_expansion(h, l, c, v, s.open_time_ms, atr_value=feats.atr14)
         feats.bias = feats._compute_bias()
         return feats
 
@@ -252,6 +259,7 @@ class TimeframeFeatures:
             "roc12": self.roc12,
             "consecutive_green": self.consecutive_green,
             "structure": self.structure.to_dict() if self.structure else None,
+            "expansion": self.expansion.to_dict() if self.expansion else None,
             "warnings": self.warnings,
         }
 
@@ -271,6 +279,19 @@ class AssetFeatures:
     ticker_provenance: Provenance | None = None
     warnings: list[str] = field(default_factory=list)
 
+    # -- cross-asset context, filled in by the scanner ---------------------- #
+    # None everywhere means "the scanner did not compute it", which scores
+    # nothing rather than scoring neutral.
+    valuation: AssetValuation | None = None
+    benchmark_symbol: str | None = None
+    # Percentage points by which this asset out- or under-performed the benchmark
+    # over the same window. Positive = stronger than the market.
+    rs_vs_benchmark_pct: float | None = None
+    # This asset's RVOL as a percentile of every asset in the same scan. A 2.5x
+    # RVOL means something different on a quiet day than on a day the whole
+    # market is running.
+    rvol_percentile_universe: float | None = None
+
     @property
     def primary(self) -> TimeframeFeatures:
         return self.timeframes[self.primary_timeframe]
@@ -281,6 +302,16 @@ class AssetFeatures:
 
     def get(self, tf: Timeframe) -> TimeframeFeatures | None:
         return self.timeframes.get(tf)
+
+    def highest_timeframe(self) -> TimeframeFeatures | None:
+        """The slowest timeframe available, which is where a multi-week base shows.
+
+        The moonshot layer prefers the daily but must not silently score a 5m
+        chart as if it were one, so the caller checks which timeframe came back.
+        """
+        if not self.timeframes:
+            return None
+        return max(self.timeframes.values(), key=lambda f: f.timeframe.seconds)
 
     def change_pct(self, tf: Timeframe, bars: int = 1) -> float | None:
         """Percent change over `bars` closed candles of `tf`."""
@@ -298,6 +329,10 @@ class AssetFeatures:
             "price_change_pct_24h": self.price_change_pct_24h,
             "order_book_imbalance": self.order_book_imbalance,
             "spread_bps": self.spread_bps,
+            "valuation": self.valuation.to_dict() if self.valuation else None,
+            "benchmark_symbol": self.benchmark_symbol,
+            "rs_vs_benchmark_pct": self.rs_vs_benchmark_pct,
+            "rvol_percentile_universe": self.rvol_percentile_universe,
             "timeframes": {tf.value: f.to_dict() for tf, f in self.timeframes.items()},
             "warnings": self.warnings,
         }

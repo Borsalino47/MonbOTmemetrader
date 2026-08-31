@@ -4,7 +4,7 @@ import { DASH, num, pct, price, scoreColor, maturityColor, signClass } from '../
 
 type SortKey =
   | 'rank' | 'symbol' | 'price' | 'change5m' | 'change1h' | 'rvol'
-  | 'final_score' | 'acceleration' | 'pump_maturity' | 'safety' | 'confidence' | 'state';
+  | 'final_score' | 'moonshot' | 'acceleration' | 'pump_maturity' | 'safety' | 'confidence' | 'state';
 
 interface Props {
   rows: ScoreRow[];
@@ -19,6 +19,11 @@ const COLUMNS: { key: SortKey; label: string; left?: boolean; title?: string }[]
   { key: 'change1h', label: '1h' },
   { key: 'rvol', label: 'RVOL', title: 'Current volume vs 50-bar average' },
   { key: 'final_score', label: 'Opportunity', title: 'Final score out of 100 — a ranking, not a probability' },
+  {
+    key: 'moonshot',
+    label: '×10',
+    title: 'Moonshot score: resemblance to a pre-expansion state on the daily. A ranking, not a forecast.',
+  },
   { key: 'acceleration', label: 'Accel', title: 'Momentum acceleration 0-100' },
   { key: 'pump_maturity', label: 'Maturity', title: 'How far along the move already is — lower is earlier' },
   { key: 'safety', label: 'Safety' },
@@ -36,6 +41,8 @@ function value(row: ScoreRow, key: SortKey, index: number): number | string {
     case 'change1h': return m.change_1h_pct ?? -Infinity;
     case 'rvol': return m.rvol ?? -Infinity;
     case 'final_score': return row.final_score;
+    // Assets with no reading sort last rather than sorting as zero.
+    case 'moonshot': return row.moonshot ? row.moonshot.score : -Infinity;
     case 'acceleration': return row.acceleration.momentum_acceleration;
     case 'pump_maturity': return row.pump_maturity.score;
     case 'safety': return row.safety.score;
@@ -120,6 +127,16 @@ export function ScannerTable({ rows, onSelect }: Props) {
                       {r.score_acceleration > 0 ? '▲' : '▼'}{Math.abs(r.score_acceleration).toFixed(0)}
                     </span>
                   )}
+                </td>
+                <td title={r.moonshot ? `${r.moonshot.stage} — ${r.moonshot.reasons[0] ?? ''}` : 'no reading'}>
+                  {r.moonshot && r.moonshot.stage !== 'UNKNOWN' ? (
+                    <>
+                      <span style={{ color: scoreColor(r.moonshot.score) }}>{num(r.moonshot.score, 0)}</span>
+                      <span className={`pill stage-${r.moonshot.stage}`} style={{ marginLeft: 4 }}>
+                        {r.moonshot.stage.slice(0, 4)}
+                      </span>
+                    </>
+                  ) : DASH}
                 </td>
                 <td>{num(r.acceleration.momentum_acceleration, 0)}</td>
                 <td style={{ color: maturityColor(r.pump_maturity.score) }}>{num(r.pump_maturity.score, 0)}</td>

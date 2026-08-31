@@ -368,6 +368,56 @@ class SymbolInfo:
 
 
 @dataclass(slots=True)
+class AssetValuation:
+    """Supply-side facts about an asset, from a source that is not the exchange.
+
+    `market_cap_usd` is what a ten-fold move has to be paid for, and it cannot be
+    derived from candles at any price — a $0.000001 token can be worth more than
+    a $60,000 one. When the figure is genuinely unknown the field stays `None`.
+
+    `market_cap_upper_bound_usd` exists because "not in the top N by market cap"
+    is a real, usable fact rather than a missing one: it bounds the cap from
+    above by the smallest cap in the ranking that was searched. A bound is
+    recorded as a bound and never promoted to a value.
+    """
+
+    symbol: str
+    market_cap_usd: float | None = None
+    market_cap_upper_bound_usd: float | None = None
+    fully_diluted_valuation_usd: float | None = None
+    circulating_supply: float | None = None
+    total_supply: float | None = None
+    ath_usd: float | None = None
+    ath_change_pct: float | None = None
+    rank: int | None = None
+    ambiguous_symbol: bool = False
+    provenance: Provenance | None = None
+
+    @property
+    def circulating_ratio(self) -> float | None:
+        """Circulating / total supply. Low means heavy future dilution overhead."""
+        if not self.circulating_supply or not self.total_supply or self.total_supply <= 0:
+            return None
+        return self.circulating_supply / self.total_supply
+
+    def to_dict(self) -> dict:
+        return {
+            "symbol": self.symbol,
+            "market_cap_usd": self.market_cap_usd,
+            "market_cap_upper_bound_usd": self.market_cap_upper_bound_usd,
+            "fully_diluted_valuation_usd": self.fully_diluted_valuation_usd,
+            "circulating_supply": self.circulating_supply,
+            "total_supply": self.total_supply,
+            "circulating_ratio": self.circulating_ratio,
+            "ath_usd": self.ath_usd,
+            "ath_change_pct": self.ath_change_pct,
+            "rank": self.rank,
+            "ambiguous_symbol": self.ambiguous_symbol,
+            "provenance": self.provenance.to_dict() if self.provenance else None,
+        }
+
+
+@dataclass(slots=True)
 class Ticker24h:
     symbol: str
     last_price: float

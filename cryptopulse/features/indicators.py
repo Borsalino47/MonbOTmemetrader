@@ -32,6 +32,10 @@ __all__ = [
     "rolling_std",
     "linreg_slope",
     "consecutive_up",
+    "money_flow_multiplier",
+    "accumulation_distribution",
+    "chaikin_money_flow",
+    "obv",
 ]
 
 
@@ -349,3 +353,84 @@ def consecutive_up(close: np.ndarray, open_: np.ndarray | None = None) -> int:
         else:
             break
     return count
+
+
+# --------------------------------------------------------------------------- #
+# Accumulation / distribution
+#
+# Price and volume alone say how much traded and where it closed. These three say
+# *who was in control inside the bar*, which is the only thing in a candle that
+# distinguishes "quiet accumulation" from "nothing happening": flat price on
+# rising volume with closes pinned to the highs is a very different tape from
+# flat price on rising volume with closes pinned to the lows.
+#
+# All three are cumulative or trailing sums, so index i depends only on bars
+# <= i. Prefix stability under truncation is enforced in tests/test_no_lookahead.
+# --------------------------------------------------------------------------- #
+
+
+def money_flow_multiplier(high: np.ndarray, low: np.ndarray, close: np.ndarray) -> np.ndarray:
+    """Where the bar closed inside its own range, mapped to [-1, +1].
+
+    +1 = closed on the high, -1 = closed on the low. A bar with no range (high ==
+    low) has no information about control, so it is 0 rather than a division by
+    zero — that is a defined neutral, not a fabricated value.
+    """
+    h, l, c = _as_f64(high), _as_f64(low), _as_f64(close)
+    span = h - l
+    with np.errstate(divide="ignore", invalid="ignore"):
+        mult = np.where(span > 0, ((c - l) - (h - c)) / span, 0.0)
+    return np.asarray(mult, dtype=np.float64)
+
+
+def accumulation_distribution(
+    high: np.ndarray, low: np.ndarray, close: np.ndarray, volume: np.ndarray
+) -> np.ndarray:
+    """Chaikin A/D line: running sum of money-flow-multiplier * volume.
+
+    The level is meaningless on its own (it depends on where the series starts);
+    only its slope carries information. Callers should read it through
+    `linreg_slope`, never as an absolute.
+    """
+    v = _as_f64(volume)
+    return np.cumsum(money_flow_multiplier(high, low, close) * v)
+
+
+def chaikin_money_flow(
+    high: np.ndarray, low: np.ndarray, close: np.ndarray, volume: np.ndarray, period: int = 20
+) -> np.ndarray:
+    """CMF: money flow volume over total volume across a trailing window.
+
+    Bounded in [-1, +1] and unitless, so it is comparable across assets — unlike
+    the A/D line. Positive over a long stretch of flat price is the textbook
+    accumulation reading.
+    """
+    v = _as_f64(volume)
+    n = v.size
+    out = np.full(n, np.nan, dtype=np.float64)
+    if period <= 0 or n < period:
+        return out
+    mfv = money_flow_multiplier(high, low, close) * v
+    c_mfv = np.cumsum(np.insert(mfv, 0, 0.0))
+    c_vol = np.cumsum(np.insert(v, 0, 0.0))
+    win_mfv = c_mfv[period:] - c_mfv[:-period]
+    win_vol = c_vol[period:] - c_vol[:-period]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        out[period - 1 :] = np.where(win_vol > 0, win_mfv / win_vol, np.nan)
+    return out
+
+
+def obv(close: np.ndarray, volume: np.ndarray) -> np.ndarray:
+    """On-balance volume: volume signed by the direction of the close.
+
+    Coarser than the A/D line (it uses only close-to-close direction, not where
+    the bar closed in its range) but far less sensitive to a single wick, so the
+    two disagreeing is itself informative.
+    """
+    c, v = _as_f64(close), _as_f64(volume)
+    n = c.size
+    if n == 0:
+        return np.array([], dtype=np.float64)
+    signed = np.zeros(n, dtype=np.float64)
+    signed[1:] = np.sign(c[1:] - c[:-1]) * v[1:]
+    return np.cumsum(signed)

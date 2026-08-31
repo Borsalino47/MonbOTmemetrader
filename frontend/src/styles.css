@@ -90,6 +90,9 @@ body {
 }
 .banner.synthetic { background: rgba(255, 176, 32, 0.11); color: var(--warn); border-bottom-color: rgba(255,176,32,0.3); }
 .banner.stale { background: rgba(255, 92, 92, 0.11); color: var(--down); border-bottom-color: rgba(255,92,92,0.3); }
+.banner.note { background: rgba(74, 158, 255, 0.09); color: var(--retest); border-bottom-color: rgba(74,158,255,0.28); }
+.banner.note em { font-style: italic; }
+.banner code { font-family: var(--mono); font-size: 11px; background: rgba(0,0,0,0.28); padding: 1px 4px; border-radius: 3px; }
 .banner strong { font-weight: 650; }
 
 /* ------------------------------------------------------------- layout --- */
@@ -149,6 +152,43 @@ button.action:disabled { opacity: 0.45; cursor: not-allowed; }
 .opp-metrics .m .v { font-family: var(--mono); font-size: 12px; }
 .opp-why { font-size: 11px; color: var(--text-dim); line-height: 1.5; }
 .opp-why li { margin-left: 13px; }
+.opp-why.risks { margin-top: 6px; color: var(--text-faint); border-top: 1px solid var(--border); padding-top: 6px; }
+
+/* ----------------------------------------------------------- moonshot --- */
+
+.moon-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 11px; margin-bottom: 22px;
+}
+.moon-card {
+  background: var(--bg-panel); border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: 7px; padding: 12px; cursor: pointer;
+}
+.moon-card:hover { background: var(--bg-panel-2); border-color: var(--border-strong); }
+/* Stage colour carries the same meaning everywhere: green = early, amber =
+   under way, red = late. The score alone cannot say which of those it is. */
+.moon-card.IGNITION { border-left-color: var(--breakout); }
+.moon-card.ACCUMULATION { border-left-color: var(--retest); }
+.moon-card.DORMANT { border-left-color: var(--watch); }
+.moon-card.EXPANSION { border-left-color: var(--armed); }
+.moon-card.EXHAUSTION { border-left-color: var(--danger); }
+
+.moon-bars { display: flex; flex-direction: column; gap: 5px; margin: 10px 0 2px; }
+.moon-bar { display: grid; grid-template-columns: 62px 1fr 54px; align-items: center; gap: 7px; }
+.moon-bar .k { font-size: 9px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-faint); }
+.moon-bar .track { height: 5px; background: var(--bg-panel-2); border-radius: 3px; overflow: hidden; }
+.moon-bar .track .fill { display: block; height: 100%; border-radius: 3px; }
+.moon-bar .v { font-family: var(--mono); font-size: 11px; text-align: right; }
+.moon-bar .v.muted { color: var(--text-faint); font-size: 10px; }
+
+.pill.stage-IGNITION { background: rgba(38,217,127,0.18); color: var(--breakout); }
+.pill.stage-ACCUMULATION { background: rgba(74,158,255,0.16); color: var(--retest); }
+.pill.stage-DORMANT { background: rgba(139,149,165,0.14); color: var(--watch); }
+.pill.stage-NEUTRAL { background: transparent; color: var(--text-faint); }
+.pill.stage-EXPANSION { background: rgba(255,176,32,0.16); color: var(--armed); }
+.pill.stage-EXHAUSTION { background: rgba(255,92,92,0.16); color: var(--danger); }
+.pill.stage-UNKNOWN { background: transparent; color: var(--text-faint); }
 
 /* -------------------------------------------------------------- table --- */
 

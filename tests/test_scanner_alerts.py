@@ -93,8 +93,9 @@ async def test_scan_produces_ranked_results():
     assert report.synthetic_data is True
     assert any("SYNTHETIC" in n for n in report.notes)
     scores = [r.final_score for r in report.results]
-    # The ranking key is not the raw score, but the list must still be ordered by it.
-    keys = [CexScanner._rank_key(r) for r in report.results]
+    # The ranking key is not the raw score, but the list must still be ordered by
+    # it. It depends on the configured rank mode, so it is read off the instance.
+    keys = [scanner._rank_key(r) for r in report.results]
     assert keys == sorted(keys, reverse=True)
     assert all(0 <= s <= 100 for s in scores)
     await scanner.close()

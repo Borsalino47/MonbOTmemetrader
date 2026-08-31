@@ -8,9 +8,18 @@ than having no alerts. Three mechanisms keep the volume honest:
   confidence. Any one failing means no alert, not a downgraded one.
 * **Cooldown**: the same symbol at the same level cannot re-fire inside the
   cooldown window.
-* **Dedup key**: symbol + level + setup state. A genuine state change (ARMED →
-  BREAKOUT) is news and bypasses the cooldown; a re-scan that produces the same
-  state is not.
+* **Dedup key**: symbol + kind + level + setup state. A genuine state change
+  (ARMED → BREAKOUT) is news and bypasses the cooldown; a re-scan that produces
+  the same state is not.
+
+TWO KINDS OF ALERT, ON PURPOSE
+
+`SETUP` alerts are about the next few hours: a level about to give way, a
+breakout confirming. `MOONSHOT` alerts are about the next few weeks: a base that
+has been building for months starting to take volume. They are deliberately not
+merged, because they demand different reactions and run on different clocks — a
+daily base does not change between two one-minute scans, so moonshot alerts use
+their own threshold and a cooldown measured in hours.
 """
 
 from __future__ import annotations
@@ -21,12 +30,19 @@ from enum import Enum
 
 from cryptopulse.config.settings import AlertSettings, ScoringSettings
 from cryptopulse.core.logging import get_logger
+from cryptopulse.core.types import Timeframe
 from cryptopulse.scoring.engine import ScoreResult
+from cryptopulse.scoring.moonshot import MoonshotStage
 from cryptopulse.scoring.states import SetupState
 
 log = get_logger("alerts")
 
-__all__ = ["AlertLevel", "Alert", "AlertEngine"]
+__all__ = ["AlertKind", "AlertLevel", "Alert", "AlertEngine"]
+
+
+class AlertKind(str, Enum):
+    SETUP = "SETUP"  # tradable setup on the primary timeframe
+    MOONSHOT = "MOONSHOT"  # candidate for a large multiple, on the daily
 
 
 class AlertLevel(str, Enum):
@@ -59,10 +75,15 @@ class Alert:
     trigger: str | None = None
     invalidation: str | None = None
     dedup_key: str = ""
+    kind: AlertKind = AlertKind.SETUP
+    moonshot_score: float | None = None
+    moonshot_stage: str | None = None
+    moonshot_multiple: float | None = None
 
     def to_dict(self) -> dict:
         return {
             "symbol": self.symbol,
+            "kind": self.kind.value,
             "level": self.level.value,
             "headline": self.headline,
             "timestamp_ms": self.timestamp_ms,
@@ -80,6 +101,11 @@ class Alert:
             "trigger": self.trigger,
             "invalidation": self.invalidation,
             "dedup_key": self.dedup_key,
+            "moonshot_score": None if self.moonshot_score is None else round(self.moonshot_score, 1),
+            "moonshot_stage": self.moonshot_stage,
+            "moonshot_multiple_to_window_high": (
+                None if self.moonshot_multiple is None else round(self.moonshot_multiple, 2)
+            ),
         }
 
     def format_text(self) -> str:
@@ -87,6 +113,12 @@ class Alert:
             f"{self.symbol}",
             f"{self.headline} — {self.level.value}",
             "",
+        ]
+        if self.moonshot_score is not None:
+            lines.append(f"Moonshot Score: {self.moonshot_score:.0f}/100  (stage: {self.moonshot_stage})")
+            if self.moonshot_multiple is not None and self.moonshot_multiple > 1.05:
+                lines.append(f"Traded {self.moonshot_multiple:.1f}x higher inside its available history")
+        lines += [
             f"Opportunity Score: {self.final_score:.0f}/100",
             f"Data Confidence: {self.data_confidence:.0f}/100",
             f"Pump Maturity: {self.pump_maturity:.0f}/100",
@@ -107,6 +139,11 @@ class Alert:
             lines.append(f"Invalidation: {self.invalidation}")
         return "\n".join(lines)
 
+
+_MOONSHOT_HEADLINES = {
+    MoonshotStage.IGNITION: "MOONSHOT — IGNITION ON A LONG BASE",
+    MoonshotStage.ACCUMULATION: "MOONSHOT — QUIET ACCUMULATION",
+}
 
 _STATE_HEADLINES = {
     SetupState.ARMED: "ARMED — COILED BELOW RESISTANCE",
@@ -154,8 +191,14 @@ class AlertEngine:
         return True, ""
 
     @staticmethod
-    def _dedup_key(r: ScoreResult, level: AlertLevel) -> str:
-        payload = f"{r.symbol}|{level.value}|{r.state.state.value}"
+    def _dedup_key(r: ScoreResult, level: AlertLevel, kind: AlertKind = AlertKind.SETUP) -> str:
+        state = r.state.state.value
+        if kind is AlertKind.MOONSHOT:
+            # A moonshot alert is about the daily stage, not the intraday setup
+            # state — keying it on the latter would re-fire the same base every
+            # time a 5m candle changed the setup label.
+            state = r.moonshot.stage.value if r.moonshot else "UNKNOWN"
+        payload = f"{r.symbol}|{kind.value}|{level.value}|{state}"
         return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
     # -- evaluation ----------------------------------------------------------- #
@@ -216,12 +259,92 @@ class AlertEngine:
 
         fired.sort(key=lambda a: (a.level.rank, a.final_score), reverse=True)
         fired = fired[: self.cfg.max_alerts_per_scan]
+
+        # Moonshot alerts get their own budget rather than competing for the same
+        # slots: they are rare by construction, and a busy hour of setup alerts
+        # must not be able to bury the one signal the radar exists to find.
+        moonshots = self.evaluate_moonshots(results, now_ms)
+        fired = fired + moonshots
+
         self._history.extend(fired)
         del self._history[:-500]
 
         if fired:
             log.info("alerts_fired", count=len(fired), symbols=[a.symbol for a in fired])
         return fired
+
+    # -- moonshot ------------------------------------------------------------- #
+
+    def evaluate_moonshots(self, results: list[ScoreResult], now_ms: int) -> list[Alert]:
+        """Alerts for candidates on a multi-week horizon.
+
+        Same gates as a setup alert — liquidity, safety and data confidence are
+        not negotiable on either horizon — but the score, the cooldown and the
+        dedup key all come from the daily reading rather than the intraday one.
+        """
+        if not self.cfg.enabled:
+            return []
+
+        fired: list[Alert] = []
+        for r in results:
+            m = r.moonshot
+            if m is None or m.stage not in (MoonshotStage.IGNITION, MoonshotStage.ACCUMULATION):
+                continue
+            if m.score < self.cfg.min_score_moonshot:
+                continue
+            if r.liquidity.veto or r.safety.hard_veto:
+                log.debug("moonshot_suppressed", symbol=r.symbol, reason="gate veto")
+                continue
+            if r.confidence.score < 55.0:
+                log.debug("moonshot_suppressed", symbol=r.symbol, reason="data confidence")
+                continue
+
+            level = AlertLevel.HIGH if m.score >= 80 else AlertLevel.WATCH
+            key = self._dedup_key(r, level, AlertKind.MOONSHOT)
+            last = self._last_fired.get(key)
+            if last is not None and now_ms - last < self.cfg.moonshot_cooldown_seconds * 1000:
+                continue
+
+            # The trigger level comes from the timeframe the moonshot reading was
+            # actually taken on, not the intraday primary.
+            trigger = None
+            if r.features is not None and m.timeframe:
+                htf = r.features.get(Timeframe.parse(m.timeframe))
+                exp = htf.expansion if htf else None
+                if exp and exp.base_high:
+                    trigger = f"{m.timeframe} close above the base high {exp.base_high:.8g}"
+
+            fired.append(
+                Alert(
+                    symbol=r.symbol,
+                    level=level,
+                    kind=AlertKind.MOONSHOT,
+                    headline=_MOONSHOT_HEADLINES.get(m.stage, "MOONSHOT CANDIDATE"),
+                    timestamp_ms=now_ms,
+                    final_score=r.final_score,
+                    pump_maturity=r.maturity.score,
+                    data_confidence=r.confidence.score,
+                    safety=r.safety.score,
+                    liquidity=r.liquidity.status.value,
+                    state=r.state.state.value,
+                    price=r.price,
+                    score_acceleration=r.score_acceleration,
+                    why=m.reasons[:8],
+                    # Caveats and unknowns together: what argues against, and what
+                    # was never measured. Both belong in front of a human here.
+                    risks=(m.caveats + m.unknowns)[:8],
+                    trigger=trigger,
+                    invalidation=r.state.invalidation,
+                    dedup_key=key,
+                    moonshot_score=m.score,
+                    moonshot_stage=m.stage.value,
+                    moonshot_multiple=m.multiple_to_window_high,
+                )
+            )
+            self._last_fired[key] = now_ms
+
+        fired.sort(key=lambda a: a.moonshot_score or 0.0, reverse=True)
+        return fired[: self.cfg.max_alerts_per_scan]
 
     def recent(self, limit: int = 50) -> list[Alert]:
         return self._history[-limit:][::-1]

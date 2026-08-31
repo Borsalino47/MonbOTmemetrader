@@ -12,6 +12,7 @@ import contextlib
 from datetime import UTC
 
 from cryptopulse.alerts.engine import Alert, AlertEngine
+from cryptopulse.alerts.notifiers import NotifierHub
 from cryptopulse.config.settings import CryptoPulseSettings, get_settings
 from cryptopulse.core.clock import SYSTEM_CLOCK
 from cryptopulse.core.logging import get_logger
@@ -23,6 +24,7 @@ from cryptopulse.scanner.base import ScanReport
 from cryptopulse.scanner.cex import CexScanner
 from cryptopulse.scanner.memory import ScoreMemory
 from cryptopulse.scoring.engine import ScoreResult
+from cryptopulse.scoring.moonshot import MOONSHOT_ENGINE_VERSION
 
 log = get_logger("api.service")
 
@@ -35,6 +37,9 @@ class ScannerService:
         self.memory = ScoreMemory()
         self.scanner = CexScanner(self.settings, memory=self.memory, clock=SYSTEM_CLOCK)
         self.alerts = AlertEngine(self.settings.alerts, self.settings.scoring)
+        # Delivery is part of the service, not of the CLI, so the API's own scan
+        # loop notifies exactly as `cryptopulse radar` does. One code path.
+        self.notifiers = NotifierHub.from_settings(self.settings.alerts)
         self.last_report: ScanReport | None = None
         self.last_alerts: list[Alert] = []
         self.scan_count = 0
@@ -69,6 +74,7 @@ class ScannerService:
                 await self._task
             self._task = None
         await self.scanner.close()
+        await self.notifiers.close()
         log.info("service_stopped")
 
     async def _loop(self) -> None:
@@ -112,6 +118,12 @@ class ScannerService:
                 log.info("scan_persisted", signals=written, alerts=len(alerts))
             except Exception as exc:
                 log.error("persist_failed", error=str(exc)[:300])
+
+            # Delivery runs inside the lock but after persistence: an alert is on
+            # disk before anyone is told about it, so a delivery crash can never
+            # lose the record. `dispatch` is documented never to raise.
+            if alerts:
+                await self.notifiers.dispatch(alerts)
 
         # Outside the scan lock: resolution is independent of scanning and must
         # not delay the next pass if the provider is slow.
@@ -183,6 +195,30 @@ class ScannerService:
             "consecutive_failures": self.consecutive_failures,
             "scan_interval_seconds": self.settings.scanner.scan_interval_seconds,
             "market_regime": self.scanner.regime.to_dict(),
+            "universe": {
+                "mode": self.settings.scanner.universe,
+                "benchmark": self.scanner.benchmark_symbol,
+                "rank_mode": self.settings.scanner.rank_mode,
+                **(
+                    self.scanner.universe_resolution.to_dict()
+                    if self.scanner.universe_resolution is not None
+                    else {}
+                ),
+            },
+            "moonshot": {
+                "enabled": self.settings.moonshot.enabled,
+                "engine_version": MOONSHOT_ENGINE_VERSION,
+                "timeframe": self.settings.moonshot.timeframe.value,
+                "target_multiple": self.settings.moonshot.target_multiple,
+                "valuation_source": self.settings.providers.valuation,
+                "candidates_last_scan": sum(
+                    1 for r in (report.results if report else []) if r.moonshot and r.moonshot.is_candidate
+                ),
+            },
+            "alert_delivery": {
+                "channels": self.notifiers.describe(),
+                "last_results": [d.to_dict() for d in self.notifiers.last_results],
+            },
             "last_scan": (
                 {
                     "started_at_ms": report.started_at_ms,

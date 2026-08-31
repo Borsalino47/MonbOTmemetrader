@@ -2,13 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api';
 import { AlertsView } from './components/AlertsView';
 import { AssetDrawer } from './components/AssetDrawer';
+import { MoonshotView } from './components/MoonshotView';
 import { PerformanceView } from './components/PerformanceView';
 import { ScannerTable } from './components/ScannerTable';
 import { TopOpportunities } from './components/TopOpportunities';
 import { age, clock } from './format';
 import type { AlertItem, Health, ScoreRow } from './types';
 
-type Tab = 'scanner' | 'alerts' | 'performance';
+type Tab = 'scanner' | 'moonshot' | 'alerts' | 'performance';
 
 const REFRESH_MS = 15_000;
 
@@ -119,6 +120,10 @@ export default function App() {
 
         <nav className="nav">
           <button className={tab === 'scanner' ? 'active' : ''} onClick={() => setTab('scanner')}>Scanner</button>
+          <button className={tab === 'moonshot' ? 'active' : ''} onClick={() => setTab('moonshot')}>
+            ×{(health?.moonshot?.target_multiple ?? 10).toFixed(0)} Radar
+            {health?.moonshot?.candidates_last_scan ? ` (${health.moonshot.candidates_last_scan})` : ''}
+          </button>
           <button className={tab === 'alerts' ? 'active' : ''} onClick={() => setTab('alerts')}>
             Alerts{alerts.length > 0 ? ` (${alerts.length})` : ''}
           </button>
@@ -160,6 +165,14 @@ export default function App() {
             <span className={`v ${last && last.failed > 0 ? 'warn' : ''}`}>{last?.failed ?? '—'}</span>
           </div>
           <div className="stat">
+            <span className="k">Universe</span>
+            <span className="v" title={health?.universe?.notes?.join(' ') ?? ''}>
+              {health?.universe?.mode === 'robinhood'
+                ? `Robinhood ${health?.universe?.count ?? '—'}`
+                : 'Top volume'}
+            </span>
+          </div>
+          <div className="stat">
             <span className="k">Regime</span>
             <span className="v">{health?.market_regime?.trend ?? '—'}</span>
           </div>
@@ -177,6 +190,19 @@ export default function App() {
         <div className="banner synthetic">
           <strong>SYNTHETIC DATA</strong>
           <span>{health.synthetic_warning} Every price, volume and score below is generated, not observed.</span>
+        </div>
+      )}
+
+      {health?.universe?.mode === 'robinhood' && (
+        <div className="banner note">
+          <strong>ROBINHOOD UNIVERSE</strong>
+          <span>
+            Only assets believed tradable on Robinhood Crypto are scanned
+            ({health.universe.count ?? 0} resolved on {health.provider}
+            {health.universe.missing?.length ? `, ${health.universe.missing.length} not carried here` : ''}).
+            The listing is hand-maintained and not verified against Robinhood, and every price below comes
+            from the data venue — <strong>not</strong> from Robinhood, whose spread and fill will differ.
+          </span>
         </div>
       )}
 
@@ -263,6 +289,8 @@ export default function App() {
           </>
         )}
 
+        {tab === 'moonshot' && <MoonshotView onSelect={setSelected} />}
+
         {tab === 'alerts' && <AlertsView alerts={alerts} onSelect={setSelected} />}
 
         {tab === 'performance' && <PerformanceView />}
@@ -272,6 +300,9 @@ export default function App() {
           A score of 84 means this setup ranks above one scoring 60 under the current fixed weights
           ({health?.engine_version ?? 'SCORE_ENGINE_V1'}). It does not mean an 84% chance of anything.
           The weighting is a starting hypothesis and has not been statistically validated against outcomes.
+          The same holds, more strongly, for the ×{(health?.moonshot?.target_multiple ?? 10).toFixed(0)} radar:
+          it ranks resemblance to states that have preceded large expansions, it has never been graded
+          against one, and most of what it surfaces will not do it.
           Paper mode is {health?.paper_mode ? 'ON — no order is ever placed' : 'OFF'}.
         </div>
       </main>

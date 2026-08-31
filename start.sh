@@ -5,6 +5,8 @@
 #   ./start.sh kraken       scan via Kraken
 #   ./start.sh binance      scan via Binance
 #   ./start.sh demo         scan hors-ligne (données SYNTHÉTIQUES)
+#   ./start.sh radar        RADAR AUTONOME : scanne, alerte, notifie, en boucle
+#   ./start.sh universe     ce que le filtre Robinhood donne sur cette place
 #   ./start.sh serve        API + dashboard sur http://localhost:8000
 #
 # Installe ce qu'il manque, vérifie le feed, puis lance. Rien d'autre à faire.
@@ -34,7 +36,10 @@ case "$MODE" in
   binance)  PROVIDER=binance ;;
   serve)    PROVIDER="" ;;
   scan)     PROVIDER="" ;;
-  *)        echo "Mode inconnu: $MODE"; echo "Utilisation: ./start.sh [scan|kraken|binance|demo|serve]"; exit 2 ;;
+  radar)    PROVIDER="" ;;
+  universe) PROVIDER="" ;;
+  *)        echo "Mode inconnu: $MODE"
+            echo "Utilisation: ./start.sh [scan|radar|universe|kraken|binance|demo|serve]"; exit 2 ;;
 esac
 
 FLAG=()
@@ -52,6 +57,12 @@ if [ "$MODE" = "serve" ]; then
   exec "$PY" -m cryptopulse.cli serve
 fi
 
+# ---------------------------------------------------------------- univers ---
+# Ne vérifie pas le feed : la commande diagnostique elle-même ce qu'elle trouve.
+if [ "$MODE" = "universe" ]; then
+  exec "$PY" -m cryptopulse.cli universe
+fi
+
 # ------------------------------------------------------------------ vérif ---
 # Le feed est vérifié avant de scanner : mieux vaut un diagnostic clair qu'un
 # tableau de scores construit sur une source muette.
@@ -66,4 +77,10 @@ if [ "$MODE" != "demo" ]; then
 fi
 
 echo
+if [ "$MODE" = "radar" ]; then
+  # Le radar tourne sans surveillance : il affiche d'abord où partiront les
+  # alertes, pour qu'un canal mal configuré se voie tout de suite et pas à 3h14.
+  exec "$PY" -m cryptopulse.cli radar "${FLAG[@]}"
+fi
+
 exec "$PY" -m cryptopulse.cli scan --limit 30 "${FLAG[@]}"

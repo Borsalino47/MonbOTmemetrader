@@ -2,6 +2,8 @@
 
     python -m cryptopulse.cli doctor     # live round-trip against the provider
     python -m cryptopulse.cli scan       # one scan, printed as a table
+    python -m cryptopulse.cli radar      # autonomous loop: scan, alert, notify
+    python -m cryptopulse.cli universe   # what the Robinhood filter resolves to
     python -m cryptopulse.cli serve      # API + dashboard
     python -m cryptopulse.cli backtest   # historical replay
 """
@@ -10,8 +12,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
+import signal
 import sys
+from datetime import UTC, datetime
 
 from cryptopulse.config.settings import get_settings
 from cryptopulse.core.clock import SYSTEM_CLOCK
@@ -20,18 +25,31 @@ from cryptopulse.core.logging import configure_logging, get_logger
 log = get_logger("cli")
 
 PROVIDERS = ("binance", "kraken", "fixture")
+UNIVERSES = ("volume", "robinhood")
+RANK_MODES = ("setup", "moonshot", "blend")
+VALUATIONS = ("none", "coingecko")
 
 
 def _settings_with_provider(args):
-    """Settings with `--provider` applied, so switching venue is one word.
+    """Settings with the run's flags applied, so switching mode is one word.
 
-    The flag overrides CP_PROVIDER_MARKET_DATA for this invocation only; nothing
-    is written to disk.
+    Flags override the corresponding CP_* variables for this invocation only;
+    nothing is written to disk.
     """
     settings = get_settings()
-    choice = getattr(args, "provider", None)
-    if choice:
-        settings.providers.market_data = choice
+    for attr, target in (
+        ("provider", ("providers", "market_data")),
+        ("valuation", ("providers", "valuation")),
+        ("universe", ("scanner", "universe")),
+        ("rank", ("scanner", "rank_mode")),
+    ):
+        choice = getattr(args, attr, None)
+        if choice:
+            section, field = target
+            setattr(getattr(settings, section), field, choice)
+    interval = getattr(args, "interval", None)
+    if interval:
+        settings.scanner.scan_interval_seconds = interval
     return settings
 
 
@@ -39,6 +57,21 @@ def _add_provider_flag(parser) -> None:
     parser.add_argument(
         "--provider", choices=PROVIDERS, default=None,
         help="market data source for this run (default: CP_PROVIDER_MARKET_DATA)",
+    )
+
+
+def _add_radar_flags(parser) -> None:
+    parser.add_argument(
+        "--universe", choices=UNIVERSES, default=None,
+        help="robinhood = only assets believed tradable on Robinhood (default: CP_SCAN_UNIVERSE)",
+    )
+    parser.add_argument(
+        "--rank", choices=RANK_MODES, default=None,
+        help="how to order the table (default: CP_SCAN_RANK_MODE)",
+    )
+    parser.add_argument(
+        "--valuation", choices=VALUATIONS, default=None,
+        help="market cap source; without one the ×10 capacity reading stays unknown",
     )
 
 
@@ -180,6 +213,33 @@ async def cmd_doctor(args) -> int:
         record("depth → bid < ask, spread >= 0", ok, f"spread {book.spread_bps:.2f} bps, imbalance {book.imbalance():+.3f}")
     except Exception as exc:
         record("depth", False, f"{type(exc).__name__}: {exc}")
+
+    # 8. valuation source, when one is configured
+    if settings.providers.valuation != "none":
+        from cryptopulse.providers.registry import build_valuation_provider
+
+        valuation = build_valuation_provider(settings, SYSTEM_CLOCK)
+        try:
+            base = provider.reference_symbol.replace(settings.scanner.quote_asset, "") or "BTC"
+            from cryptopulse.universe.symbols import canonical_base
+
+            vals = await valuation.get_valuations([canonical_base(base)])
+            v = vals.get(canonical_base(base))
+            # Bitcoin's cap must be the largest in the ranking and its rank 1. If
+            # a ticker collision had handed us the wrong asset, this is where it
+            # shows up rather than three weeks later in a score.
+            ok = v is not None and (v.market_cap_usd or 0) > 1e9 and v.rank == 1
+            detail = (
+                f"{v.symbol} cap {v.market_cap_usd:,.0f} USD, rank {v.rank}"
+                if v and v.market_cap_usd
+                else "no market cap returned for the reference asset"
+            )
+            record("valuation → reference asset cap + rank", ok, detail)
+        except Exception as exc:
+            record("valuation", False, f"{type(exc).__name__}: {exc}")
+        finally:
+            if valuation is not None:
+                await valuation.close()
 
     await provider.close()
     return _summarise(checks)
@@ -358,8 +418,9 @@ async def cmd_scan(args) -> int:
 
     print(f"\n{'=' * 132}")
     print(f"CRYPTO PULSE AI — LIVE MARKET SCANNER   [{settings.scoring.engine_version}]")
-    print(f"provider={scanner.provider.name}  universe={report.universe_size}  scanned={report.scanned}  "
-          f"ok={report.succeeded}  failed={report.failed}  {report.duration_ms}ms  regime={scanner.regime.trend.value}")
+    print(f"provider={scanner.provider.name}  universe={settings.scanner.universe}/{report.universe_size}  "
+          f"scanned={report.scanned}  ok={report.succeeded}  failed={report.failed}  {report.duration_ms}ms  "
+          f"regime={scanner.regime.trend.value}  rank={settings.scanner.rank_mode}")
     for note in report.notes:
         print(f"  ** {note}")
     print("=" * 132)
@@ -386,6 +447,8 @@ async def cmd_scan(args) -> int:
         for sym, err in list(report.errors.items())[:10]:
             print(f"  {sym}: {err}")
 
+    _print_moonshot_block(report, settings)
+
     engine = AlertEngine(settings.alerts, settings.scoring)
     alerts = engine.evaluate(report.results, SYSTEM_CLOCK.now_ms())
     if alerts:
@@ -400,6 +463,232 @@ async def cmd_scan(args) -> int:
     print(f"\nPersisted {written} signal rows to {settings.database.url}")
 
     await scanner.close()
+    return 0
+
+
+def _print_moonshot_block(report, settings) -> None:
+    """The ×10 view: ranked by the daily reading, not by today's move.
+
+    Printed as its own block rather than as extra columns, because it answers a
+    different question on a different horizon and mixing the two in one table is
+    how a user ends up buying an exhausted pump believing it was a base.
+    """
+    if not settings.moonshot.enabled:
+        return
+    rows = [r for r in report.results if r.moonshot is not None and r.moonshot.stage.value != "UNKNOWN"]
+    rows.sort(key=lambda r: r.moonshot.score, reverse=True)
+    target = settings.moonshot.target_multiple
+
+    print(f"\n{'=' * 132}")
+    print(f"×{target:.0f} RADAR — resemblance to a pre-expansion state   "
+          f"[{settings.moonshot.timeframe.value} · MOONSHOT_ENGINE_V1 · ranking, not a forecast]")
+    print("=" * 132)
+    if not rows:
+        unknown = sum(1 for r in report.results if r.moonshot and r.moonshot.stage.value == "UNKNOWN")
+        print(f"  No asset produced a reading ({unknown} lacked the history needed). "
+              f"Increase CP_MOON_CANDLES or check the {settings.moonshot.timeframe.value} feed.")
+        return
+
+    print(f"{'#':>3} {'ASSET':<12} {'MOON':>6} {'IGNIT':>6} {'HEAD':>6} {'CAP':>6} {'x→HIGH':>8} "
+          f"{'MATUR':>6} {'STAGE':<13} WHY")
+    print("-" * 132)
+    for i, r in enumerate(rows[:10], 1):
+        m = r.moonshot
+        cap = "  n/a" if m.capacity is None else f"{m.capacity:6.1f}"
+        head = "  n/a" if m.headroom is None else f"{m.headroom:6.1f}"
+        ign = "  n/a" if m.ignition is None else f"{m.ignition:6.1f}"
+        mult = "     n/a" if m.multiple_to_window_high is None else f"{m.multiple_to_window_high:7.1f}x"
+        why = m.reasons[0] if m.reasons else (m.caveats[0] if m.caveats else "")
+        print(f"{i:>3} {r.symbol:<12} {m.score:>6.1f} {ign} {head} {cap} {mult} "
+              f"{r.maturity.score:>6.1f} {m.stage.value:<13} {why[:52]}")
+
+    best = rows[0].moonshot
+    if best.unknowns:
+        print(f"\n  Not measured for {rows[0].symbol}: {best.unknowns[0]}")
+    print("\n  A high score means 'looks like assets have looked before large expansions'. Most will not do it.")
+
+
+# --------------------------------------------------------------------------- #
+# radar — the autonomous loop
+# --------------------------------------------------------------------------- #
+
+
+async def cmd_radar(args) -> int:
+    """Scan, alert and notify on a loop until stopped. No dashboard required.
+
+    Three properties make this safe to leave running:
+
+    * **it survives anything a scan can throw** — one failed cycle backs off and
+      the next one runs;
+    * **it says where alerts go before it starts**, so a misconfigured channel is
+      discovered at 09:00 rather than at 03:14;
+    * **it stops cleanly** on SIGINT/SIGTERM, closing the provider and flushing
+      the database rather than being killed mid-write.
+    """
+    settings = _settings_with_provider(args)
+    from cryptopulse.api.service import ScannerService
+    from cryptopulse.providers.registry import is_synthetic
+
+    service = ScannerService(settings)
+    scanner = service.scanner
+    interval = settings.scanner.scan_interval_seconds
+
+    print(f"\n{'=' * 96}")
+    print(f"CRYPTO PULSE AI — RADAR   [{settings.scoring.engine_version}]")
+    print(f"{'=' * 96}")
+    print(f"  provider        {scanner.provider.name}"
+          f"{'   *** SYNTHETIC — NOT MARKET DATA ***' if is_synthetic(scanner.provider) else ''}")
+    print(f"  universe        {settings.scanner.universe}   quote={settings.scanner.quote_asset}   "
+          f"benchmark={scanner.benchmark_symbol}")
+    print(f"  ranking         {settings.scanner.rank_mode}")
+    print(f"  moonshot        enabled={settings.moonshot.enabled}  timeframe="
+          f"{settings.moonshot.timeframe.value}  target=×{settings.moonshot.target_multiple:.0f}  "
+          f"valuation={settings.providers.valuation}")
+    print(f"  interval        {interval}s")
+    for ch in service.notifiers.describe():
+        status = "ready" if ch["configured"] else f"INERT — set {ch['missing_setting']}"
+        print(f"  alert channel   {ch['channel']:<10} {status}")
+    if not service.notifiers.describe():
+        print("  alert channel   NONE — set CP_ALERT_CHANNELS or alerts go nowhere")
+    print(f"{'=' * 96}\n")
+
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        with contextlib.suppress(NotImplementedError):  # Windows has no add_signal_handler
+            loop.add_signal_handler(sig, stop.set)
+
+    cycles = 0
+    failures = 0
+    try:
+        while not stop.is_set():
+            cycles += 1
+            try:
+                report = await service.run_once()
+                failures = 0
+                _print_heartbeat(service, report, cycles)
+            except Exception as exc:
+                failures += 1
+                log.error("radar_cycle_failed", cycle=cycles, error=str(exc)[:300], consecutive=failures)
+                print(f"[{_now()}] cycle {cycles} FAILED: {type(exc).__name__}: {str(exc)[:160]}")
+
+            if args.once or stop.is_set():
+                break
+
+            # Back off when the feed is down: hammering a dead provider wastes the
+            # rate-limit budget that will be needed the moment it recovers.
+            delay = interval if failures == 0 else min(interval * (2**failures), 900)
+            if failures:
+                print(f"[{_now()}] backing off {delay}s after {failures} consecutive failure(s)")
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(stop.wait(), timeout=delay)
+    finally:
+        print(f"\n[{_now()}] stopping — {cycles} cycle(s) completed")
+        await service.stop()
+    return 0
+
+
+def _now() -> str:
+    return datetime.now(tz=UTC).strftime("%H:%M:%S")
+
+
+def _print_heartbeat(service, report, cycle: int) -> None:
+    """One line per cycle, plus the rows that actually matter."""
+    alerts = service.last_alerts
+    candidates = [r for r in report.results if r.moonshot and r.moonshot.is_candidate]
+    print(
+        f"[{_now()}] cycle {cycle:<5} scanned={report.scanned:<4} ok={report.succeeded:<4} "
+        f"failed={report.failed:<3} {report.duration_ms}ms  alerts={len(alerts)}  "
+        f"moonshot_candidates={len(candidates)}"
+    )
+    for r in report.results[:5]:
+        m = r.moonshot
+        moon = f"moon={m.score:5.1f} {m.stage.value:<12}" if m else "moon=  n/a"
+        print(f"        {r.symbol:<12} opp={r.final_score:5.1f}  {moon}  {r.state.state.value}")
+    for a in alerts:
+        print(f"    >>> ALERT [{a.kind.value}/{a.level.value}] {a.symbol}: {a.headline}")
+    if service.notifiers.last_results:
+        summary = ", ".join(
+            f"{d.channel}:{d.delivered}/{d.delivered + d.failed}" for d in service.notifiers.last_results
+        )
+        print(f"        delivery {summary}")
+
+
+# --------------------------------------------------------------------------- #
+# universe — what the Robinhood filter actually resolves to
+# --------------------------------------------------------------------------- #
+
+
+async def cmd_universe(args) -> int:
+    """Show the Robinhood universe, and optionally refresh it from Robinhood.
+
+    Worth running before trusting a radar session: it prints exactly which
+    listed assets this venue carries and which it does not, so a silent gap in
+    coverage becomes a visible one.
+    """
+    settings = _settings_with_provider(args)
+    from cryptopulse.providers.registry import build_market_provider
+    from cryptopulse.universe.robinhood import (
+        SNAPSHOT_BASES,
+        fetch_live_catalog,
+        load_bases,
+        resolve_universe,
+    )
+
+    if args.refresh:
+        print(f"\nAsking Robinhood for its live currency-pair catalogue...\n  {'-' * 60}")
+        bases, note = await fetch_live_catalog()
+        if not bases:
+            print(f"  FAILED: {note}")
+            print("\n  This has never succeeded from inside this project's sandbox. Robinhood publishes")
+            print("  no supported public market-data API, so treat a failure here as expected rather")
+            print("  than broken, and maintain the list by hand instead:")
+            print("    CP_SCAN_ROBINHOOD_FILE=<path to a JSON file of base assets>")
+            return 1
+        print(f"  OK: {note}")
+        added = sorted(set(bases) - set(SNAPSHOT_BASES))
+        removed = sorted(set(SNAPSHOT_BASES) - set(bases))
+        print(f"  vs the built-in snapshot: +{len(added)} {added}  -{len(removed)} {removed}")
+        payload = {"as_of": datetime.now(tz=UTC).date().isoformat(), "source": "robinhood-api", "bases": bases}
+        from pathlib import Path
+
+        out = Path(args.out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(payload, indent=2))
+        print(f"  written to {out}\n  set CP_SCAN_ROBINHOOD_FILE={out} to use it")
+        return 0
+
+    bases, source, as_of = load_bases(
+        file_path=settings.scanner.robinhood_file,
+        extra=settings.scanner.robinhood_extra,
+        exclude=settings.scanner.robinhood_exclude,
+    )
+    print(f"\nRobinhood universe — {len(bases)} base assets   (source: {source}, as of {as_of})")
+    print("  " + ", ".join(bases))
+
+    provider = build_market_provider(settings, SYSTEM_CLOCK)
+    print(f"\nResolving against {provider.name} / {settings.scanner.quote_asset}...")
+    try:
+        tickers = await provider.get_tickers_24h()
+    except Exception as exc:
+        print(f"  could not read the venue's symbols: {type(exc).__name__}: {exc}")
+        await provider.close()
+        return 1
+
+    res = resolve_universe(bases, list(tickers.keys()), settings.scanner.quote_asset, source=source, as_of=as_of)
+    print(f"  {len(res.symbols)} tradable here:")
+    for base, symbol in sorted(res.by_base.items()):
+        t = tickers.get(symbol)
+        vol = f"{t.quote_volume_24h:>16,.0f}" if t else " " * 16
+        rename = f"   (listed as {symbol})" if not symbol.startswith(base) else ""
+        print(f"    {base:<8} {symbol:<12} 24h vol {vol}{rename}")
+    if res.missing:
+        print(f"\n  {len(res.missing)} not carried by this venue against "
+              f"{settings.scanner.quote_asset}: {', '.join(res.missing)}")
+        print("  Those are simply not scanned. Try another quote asset or another venue if you need them.")
+    for note in res.notes:
+        print(f"\n  ** {note}")
+    await provider.close()
     return 0
 
 
@@ -569,6 +858,19 @@ def main(argv: list[str] | None = None) -> int:
     p_scan.add_argument("--limit", type=int, default=30)
     p_scan.add_argument("--json", action="store_true")
     _add_provider_flag(p_scan)
+    _add_radar_flags(p_scan)
+
+    p_radar = sub.add_parser("radar", help="autonomous loop: scan, alert, notify, repeat")
+    p_radar.add_argument("--interval", type=int, default=None, help="seconds between scans")
+    p_radar.add_argument("--once", action="store_true", help="run a single cycle and exit")
+    _add_provider_flag(p_radar)
+    _add_radar_flags(p_radar)
+
+    p_uni = sub.add_parser("universe", help="show what the Robinhood universe resolves to on this venue")
+    p_uni.add_argument("--refresh", action="store_true", help="try to read Robinhood's live catalogue")
+    p_uni.add_argument("--out", type=str, default="data/robinhood_universe.json")
+    _add_provider_flag(p_uni)
+    _add_radar_flags(p_uni)
 
     p_bt = sub.add_parser("backtest", help="replay the scorer over history")
     p_bt.add_argument("--symbols", type=str, default=None, help="comma-separated, default: config majors")
@@ -593,7 +895,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "serve":
         return cmd_serve(args)
-    handler = {"doctor": cmd_doctor, "scan": cmd_scan, "backtest": cmd_backtest, "resolve": cmd_resolve}[args.command]
+    handler = {
+        "doctor": cmd_doctor,
+        "scan": cmd_scan,
+        "radar": cmd_radar,
+        "universe": cmd_universe,
+        "backtest": cmd_backtest,
+        "resolve": cmd_resolve,
+    }[args.command]
     return asyncio.run(handler(args))
 
 
