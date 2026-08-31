@@ -91,7 +91,9 @@ async def cmd_doctor(args) -> int:
     from cryptopulse.core.types import Timeframe
     from cryptopulse.providers.registry import build_market_provider
 
-    provider = build_market_provider(settings, SYSTEM_CLOCK)
+    # No cache: this command exists to prove the live API behaves as documented,
+    # and a cached answer would prove only that the cache works.
+    provider = build_market_provider(settings, SYSTEM_CLOCK, use_cache=False)
     # Venues disagree on naming — BTCUSDT on Binance, XBTUSDT on Kraken — so the
     # provider names the symbol it is certain to have rather than the CLI guessing.
     ref = provider.reference_symbol
@@ -750,9 +752,87 @@ async def cmd_backtest(args) -> int:
 # --------------------------------------------------------------------------- #
 
 
+async def _resolve_moonshot(args, settings, provider) -> int:
+    """Grade the ×10 axis and print what the journal actually knows.
+
+    Deliberately blunt about emptiness: on a young journal the correct output is
+    "nothing has settled yet", not a table of zeroes that looks like a result.
+    """
+    from cryptopulse.backtest.labels import label_config_by_name
+    from cryptopulse.database import repo
+    from cryptopulse.outcomes.stats import build_moonshot_performance
+    from cryptopulse.outcomes.tracker import OutcomeTracker
+
+    label = label_config_by_name(settings.moonshot.label_config)
+    tracker = OutcomeTracker(settings, provider, label_config=label, clock=SYSTEM_CLOCK)
+
+    print(f"\n{'=' * 76}\n×10 OUTCOME TRACKER — {label.name}\n{'=' * 76}")
+    print(f"Definition: {label.describe()}\n")
+
+    counts = repo.moonshot_counts()
+    print(f"Journal: {counts['readings_journalled']} ×10 readings recorded "
+          f"({counts['candidates_journalled']} of them at an early stage)")
+
+    pending = repo.pending_moonshot_signals(tracker.ready_before_ms(), args.limit)
+    print(f"{len(pending)} reading(s) old enough to grade "
+          f"({label.horizon_bars} {tracker.timeframe.value} bars must have elapsed).")
+
+    if pending:
+        report = await tracker.resolve(pending)
+        written = repo.save_moonshot_resolutions(report.resolutions)
+        print(f"\nresolved={report.resolved}  still_pending={report.still_pending}  "
+              f"unresolvable={report.unresolvable}  written={written}  ({report.duration_ms}ms)")
+        if report.by_label:
+            print("by label: " + ", ".join(f"{k}={v}" for k, v in sorted(report.by_label.items())))
+        for sym, err in list(report.errors.items())[:8]:
+            print(f"  {sym}: {err}")
+        counts = repo.moonshot_counts()
+
+    print(f"\nSettled: {counts['settled']}  ·  pending: {counts['pending_evaluation']}  "
+          f"·  unresolvable: {counts['unresolvable']}")
+
+    rows = repo.resolved_moonshot_signals()
+    if not rows:
+        print("\nNothing has settled yet, so there is nothing to report. That is the honest state of")
+        print(f"this layer: a {label.horizon_bars}-day horizon means the first verdicts arrive "
+              f"{label.horizon_bars} days after the first scan.")
+        return 0
+
+    perf = build_moonshot_performance(rows).to_dict()
+    o = perf["overall"]
+    print(f"\n{'-' * 76}\nREALISED ×10 PERFORMANCE\n{'-' * 76}")
+    print(f"  n={o['n']}  wins={o['wins']}  losses={o['losses']}  timeouts={o['timeouts']}")
+    print(f"  win rate at the label target   {_fmt_pct(o['win_rate'])}")
+    print(f"  expectancy                     {_fmt(o['expectancy_pct'])}% per reading")
+    print(f"  best multiple reached          x{_fmt(perf['best_multiple'])}")
+    print(f"  median multiple reached        x{_fmt(perf['median_multiple'])}")
+
+    print("\n  How far did they actually go?")
+    for rung in perf["multiple_distribution"]:
+        share = "n/a" if rung["share"] is None else f"{rung['share'] * 100:5.1f}%"
+        print(f"    reached x{rung['at_least']:<5g} {rung['n']:>5}   {share}")
+
+    if perf["by_stage"]:
+        print("\n  By stage at signal time:")
+        for b in perf["by_stage"]:
+            flag = "  (sample too small)" if b["insufficient_sample"] else ""
+            print(f"    {b['key']:<14} n={b['n']:<5} win {_fmt_pct(b['win_rate']):>7}  "
+                  f"expectancy {_fmt(b['expectancy_pct']):>7}%{flag}")
+
+    if perf["by_capacity_known"]:
+        print("\n  Did knowing the market cap help?")
+        for b in perf["by_capacity_known"]:
+            print(f"    {b['key']:<18} n={b['n']:<5} win {_fmt_pct(b['win_rate']):>7}  "
+                  f"expectancy {_fmt(b['expectancy_pct']):>7}%")
+
+    for note in perf["notes"]:
+        print(f"\n  ** {note}")
+    return 0
+
+
 async def cmd_resolve(args) -> int:
     settings = _settings_with_provider(args)
-    from cryptopulse.backtest.labels import DEFAULT_LABEL_CONFIGS
+    from cryptopulse.backtest.labels import DEFAULT_LABEL_CONFIGS, label_config_by_name
     from cryptopulse.database import repo
     from cryptopulse.database.session import init_engine
     from cryptopulse.outcomes.stats import build_performance
@@ -761,7 +841,13 @@ async def cmd_resolve(args) -> int:
 
     init_engine(settings.database)
     provider = build_market_provider(settings, SYSTEM_CLOCK)
-    label = next((c for c in DEFAULT_LABEL_CONFIGS if c.name == args.label), DEFAULT_LABEL_CONFIGS[1])
+
+    if args.axis == "moonshot":
+        rc = await _resolve_moonshot(args, settings, provider)
+        await provider.close()
+        return rc
+
+    label = label_config_by_name(args.label, DEFAULT_LABEL_CONFIGS[1])
     tracker = OutcomeTracker(settings, provider, label_config=label, clock=SYSTEM_CLOCK)
 
     print(f"\n{'=' * 76}\nOUTCOME TRACKER — {label.name}\n{'=' * 76}")
@@ -882,6 +968,10 @@ def main(argv: list[str] | None = None) -> int:
     p_res = sub.add_parser("resolve", help="grade emitted signals against what actually happened")
     p_res.add_argument("--limit", type=int, default=500)
     p_res.add_argument("--label", type=str, default="standard_2R")
+    p_res.add_argument(
+        "--axis", choices=("setup", "moonshot"), default="setup",
+        help="which thesis to grade: the intraday setup, or the ×10 reading (weeks, daily bars)",
+    )
     _add_provider_flag(p_res)
 
     p_serve = sub.add_parser("serve", help="run the API and dashboard")

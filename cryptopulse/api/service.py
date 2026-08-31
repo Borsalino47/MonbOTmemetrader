@@ -13,6 +13,7 @@ from datetime import UTC
 
 from cryptopulse.alerts.engine import Alert, AlertEngine
 from cryptopulse.alerts.notifiers import NotifierHub
+from cryptopulse.backtest.labels import label_config_by_name
 from cryptopulse.config.settings import CryptoPulseSettings, get_settings
 from cryptopulse.core.clock import SYSTEM_CLOCK
 from cryptopulse.core.logging import get_logger
@@ -48,11 +49,20 @@ class ScannerService:
         self._lock = asyncio.Lock()
         self._db_ready = False
 
-        # The outcome tracker shares the scanner's provider: same feed, same
-        # rate-limit budget, same circuit breaker.
+        # The outcome trackers share the scanner's provider: same feed, same
+        # rate-limit budget, same circuit breaker. Two of them, because the two
+        # axes are graded against different labels on different timeframes.
         self.tracker = OutcomeTracker(self.settings, self.scanner.provider, clock=SYSTEM_CLOCK)
+        self.moon_tracker = OutcomeTracker(
+            self.settings,
+            self.scanner.provider,
+            label_config=label_config_by_name(self.settings.moonshot.label_config),
+            clock=SYSTEM_CLOCK,
+        )
         self.last_resolution: ResolutionReport | None = None
+        self.last_moon_resolution: ResolutionReport | None = None
         self._resolve_lock = asyncio.Lock()
+        self._moon_resolve_lock = asyncio.Lock()
 
     # -- lifecycle ----------------------------------------------------------- #
 
@@ -112,7 +122,13 @@ class ScannerService:
             regime = self.scanner.regime.trend.value
             provider = self.scanner.provider.name
             try:
-                written = await asyncio.to_thread(repo.persist_scan, report, provider=provider, regime=regime)
+                written = await asyncio.to_thread(
+                    repo.persist_scan,
+                    report,
+                    provider=provider,
+                    regime=regime,
+                    moonshot_journal_min_score=self.settings.moonshot.journal_min_score,
+                )
                 if alerts:
                     await asyncio.to_thread(repo.persist_alerts, alerts)
                 log.info("scan_persisted", signals=written, alerts=len(alerts))
@@ -132,6 +148,12 @@ class ScannerService:
         except Exception as exc:
             log.error("resolution_failed", error=str(exc)[:300])
 
+        if self.settings.moonshot.enabled:
+            try:
+                await self.resolve_moonshot_outcomes()
+            except Exception as exc:
+                log.error("moonshot_resolution_failed", error=str(exc)[:300])
+
         return report
 
     async def resolve_outcomes(self, limit: int = 300) -> ResolutionReport:
@@ -149,6 +171,30 @@ class ScannerService:
                 written = await asyncio.to_thread(repo.save_resolutions, report.resolutions)
                 log.info("outcomes_persisted", written=written)
             self.last_resolution = report
+            return report
+
+    async def resolve_moonshot_outcomes(self, limit: int = 300) -> ResolutionReport:
+        """Grade ×10 readings whose horizon has elapsed.
+
+        Separate from `resolve_outcomes` in every respect: its own label, its own
+        timeframe, its own columns and its own lock. A signal graded on the
+        intraday axis is still pending on this one, which is the point.
+        """
+        async with self._moon_resolve_lock:
+            self.ensure_db()
+            pending = await asyncio.to_thread(
+                repo.pending_moonshot_signals, self.moon_tracker.ready_before_ms(), limit
+            )
+            if not pending:
+                report = ResolutionReport(label_config=self.moon_tracker.label.name)
+                self.last_moon_resolution = report
+                return report
+
+            report = await self.moon_tracker.resolve(pending)
+            if report.resolutions:
+                written = await asyncio.to_thread(repo.save_moonshot_resolutions, report.resolutions)
+                log.info("moonshot_outcomes_persisted", written=written)
+            self.last_moon_resolution = report
             return report
 
     # -- reads --------------------------------------------------------------- #
@@ -214,6 +260,14 @@ class ScannerService:
                 "candidates_last_scan": sum(
                     1 for r in (report.results if report else []) if r.moonshot and r.moonshot.is_candidate
                 ),
+                "grading": {
+                    "label_config": self.moon_tracker.label.name,
+                    "definition": self.moon_tracker.label.describe(),
+                    "resolves_signals_older_than": _iso_or_none(self.moon_tracker.ready_before_ms()),
+                    "last_run": (
+                        self.last_moon_resolution.to_dict() if self.last_moon_resolution else None
+                    ),
+                },
             },
             "alert_delivery": {
                 "channels": self.notifiers.describe(),
@@ -237,6 +291,10 @@ class ScannerService:
                 else None
             ),
             "provider_health": [h.to_dict() for h in (report.provider_health if report else [])],
+            # How much of the request budget the candle cache is saving. A closed
+            # bar cannot change, so a low hit rate here means requests are being
+            # spent on data that was already known.
+            "candle_cache": self.scanner.cache_stats(),
             "outcome_tracker": {
                 "label_config": self.tracker.label.name,
                 "definition": self.tracker.label.describe(),

@@ -256,7 +256,8 @@ python -m cryptopulse.cli scan --limit 30
 python -m cryptopulse.cli serve
 
 # 4. Grade signals whose horizon has elapsed
-python -m cryptopulse.cli resolve
+python -m cryptopulse.cli resolve                      # the intraday axis (hours)
+python -m cryptopulse.cli resolve --axis moonshot      # the ×10 axis (weeks, daily bars)
 
 # 5. THE AUTONOMOUS RADAR — scan, alert, notify, repeat until stopped
 python -m cryptopulse.cli radar
@@ -336,6 +337,20 @@ Swapping providers means writing one class against `MarketDataProvider` in
 `providers/base.py` and flipping `CP_PROVIDER_MARKET_DATA`. Nothing above the
 provider layer knows the name of an exchange.
 
+### The candle cache
+
+A closed bar never changes, so a series is re-read only once the next bar of its
+timeframe has closed — not on a timer. Over ten one-minute passes on the
+Robinhood universe that removes **57% of kline requests**, and the daily
+timeframe is read once instead of ten times. Without it, enabling the ×10 layer
+would mean re-downloading 400 daily candles per asset every minute for data that
+changes once a day.
+
+Never cached: order books (a depth snapshot is a statement about *now*), 24h
+tickers (one request covers the whole venue), and `doctor` (proving the live API
+works cannot be done against a cache). The hit rate is in `/api/health` under
+`candle_cache`.
+
 ### Provider resilience
 
 Weighted rate limiter (budget on request *weight*, not count), exponential
@@ -348,7 +363,7 @@ retried — it is our bug, not a transient failure.
 ## Testing
 
 ```bash
-pytest -q                            # 344 tests
+pytest -q                            # 379 tests
 pytest tests/test_no_lookahead.py -v # the ones that matter most
 ```
 
@@ -372,6 +387,8 @@ pytest tests/test_no_lookahead.py -v # the ones that matter most
 | `test_notifiers.py` | 11 | Delivery per channel, crash isolation, and that no secret reaches a log or a result |
 | `test_valuation.py` | 10 | CoinGecko parsing, ticker collisions, cap upper bound, scan survives an outage |
 | `test_radar.py` | 18 | Env-list parsing, enrichment, moonshot alerts and cooldown, a full radar cycle, the new endpoints |
+| `test_moonshot_outcomes.py` | 16 | Multiple-based labels, cross-timeframe grading, the ×10 journal, two independent verdicts |
+| `test_cache.py` | 19 | A cached series is identical to an uncached one; bar-boundary validity; what must never be cached |
 
 ---
 
@@ -515,8 +532,35 @@ can raise an alert — the two stages where an entry is still early.
 * override the liquidity or safety gates. A vetoed asset can carry a moonshot
   score of 95 and still never alert.
 
-**It has never been validated.** No ×10 outcome has been graded against these
-weights, because no real signal history exists yet. Read it as a watchlist
+### How it gets graded
+
+Every reading is written to the journal — including on assets whose intraday
+setup state is IGNORE, which is the normal state of a dormant base and exactly
+what this layer looks for. Verdicts land in their own column set, graded on
+**daily** bars by a ladder of multiple-based labels:
+
+| Label | Target | Stop | Horizon |
+|---|---|---|---|
+| `moon_2x_30d` (default) | ×2 | −35% | 30 days |
+| `moon_3x_90d` | ×3 | −50% | 90 days |
+| `moon_10x_180d` | ×10 | −60% | 180 days |
+
+Grading directly at ×10 would settle nothing for years, so the ladder settles
+earlier — and every row records the **highest multiple actually reached**. That
+one field keeps "how many ever reached ×10" answerable from the journal:
+
+```
+  How far did they actually go?
+    reached x1.5       1     0.5%
+    reached x2         0     0.0%
+    reached x10        0     0.0%
+
+  ** No reading has reached x10. The best was x1.52 — which is the honest
+     headline for this layer until one does.
+```
+
+**It has never been validated.** The machinery to grade it now exists and is
+tested; what does not exist is real signals to grade. Read it as a watchlist
 ranking, and nothing more.
 
 ---
@@ -605,11 +649,12 @@ liquid pairs, ignoring Robinhood entirely.
   timestamp, so fetch time is recorded as the observation time and labelled as such.
 * **Postgres is untested.** SQLite is verified; the Postgres path is configuration
   only.
-* **The ×10 layer has never been graded.** Its weights are a hypothesis like the
-  V1 weights, but with a worse evidence problem: the outcome tracker's labels run
-  over hours, and a moonshot claim is about weeks. Until a multi-week label
-  exists and has settled real signals, `MOONSHOT_ENGINE_V1` is an untested
-  hypothesis with a stage machine.
+* **The ×10 layer has never been graded on real data.** The machinery now exists
+  — readings are journalled, a daily ladder grades them over 30/90/180 days, and
+  every row records the multiple reached — but it has only ever run on synthetic
+  candles, where nothing doubles in a month and the layer therefore scores level
+  with random daily entry. `MOONSHOT_ENGINE_V1` stays an untested hypothesis
+  with a stage machine until real signals settle.
 * **Market cap is missing unless you enable a valuation source.** With
   `CP_PROVIDER_VALUATION=none` (the default) the capacity reading — arguably the
   most important single input to "can this actually do ×10?" — is unknown for

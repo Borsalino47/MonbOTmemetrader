@@ -96,6 +96,16 @@ class CexScanner(Scanner):
     def last_report(self) -> ScanReport | None:
         return self._last_report
 
+    def cache_stats(self) -> dict | None:
+        """Candle-cache counters, when a cache is in front of the provider.
+
+        Surfaced rather than kept internal: a hit rate that collapses is the
+        first sign that the scan interval and the timeframe set have drifted out
+        of step, and it shows up here before it shows up in a rate-limit ban.
+        """
+        fn = getattr(self.provider, "cache_stats", None)
+        return fn() if callable(fn) else None
+
     @property
     def benchmark_symbol(self) -> str:
         """What relative strength and the regime are measured against.
@@ -478,6 +488,7 @@ class CexScanner(Scanner):
             regime=self.regime.trend.value,
             premium=sum(1 for r in results if r.is_premium),
             synthetic=synthetic,
+            cache=self.cache_stats(),
         )
         return report
 

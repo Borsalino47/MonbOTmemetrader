@@ -14,7 +14,25 @@ __all__ = ["build_market_provider", "build_valuation_provider", "is_synthetic"]
 
 
 def build_market_provider(
-    settings: CryptoPulseSettings, clock: Clock = SYSTEM_CLOCK
+    settings: CryptoPulseSettings, clock: Clock = SYSTEM_CLOCK, *, use_cache: bool = True
+) -> MarketDataProvider | OrderBookProvider:
+    """The configured venue, wrapped in the candle cache unless told otherwise.
+
+    `use_cache=False` exists for `doctor`, whose whole job is to prove the live
+    API behaves as expected — an answer served from a cache would prove nothing.
+    """
+    provider = _build_raw(settings, clock)
+    if not use_cache or not settings.providers.cache_enabled:
+        return provider
+    from cryptopulse.providers.cache import wrap_with_cache
+
+    return wrap_with_cache(
+        provider, clock=clock, max_entries=settings.providers.cache_max_entries, enabled=True
+    )
+
+
+def _build_raw(
+    settings: CryptoPulseSettings, clock: Clock
 ) -> MarketDataProvider | OrderBookProvider:
     choice = settings.providers.market_data
     if choice == "binance":

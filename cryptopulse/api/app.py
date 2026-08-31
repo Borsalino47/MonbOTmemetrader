@@ -356,6 +356,39 @@ def create_app(*, start_loop: bool = True) -> FastAPI:
             "performance": report.to_dict(),
         }
 
+    @app.get("/api/performance/moonshot", tags=["outcomes"])
+    async def moonshot_performance(
+        include_synthetic: bool = True,
+        use_net: bool = True,
+        limit: int = Query(5000, ge=1, le=50000),
+    ):
+        """Realised performance of the ×10 axis, graded on its own horizon.
+
+        Reports the distribution of multiples actually reached rather than only a
+        win rate: a layer whose ×2 rate looks fine while nothing ever passed ×3
+        has not found what it claims to look for.
+        """
+        from cryptopulse.outcomes.stats import build_moonshot_performance
+
+        service = get_service()
+        rows = repo.resolved_moonshot_signals(limit=limit, include_synthetic=include_synthetic)
+        report = build_moonshot_performance(rows, use_net=use_net, synthetic_included=include_synthetic)
+        return {
+            "counts": repo.moonshot_counts(),
+            "label": {
+                "config": service.moon_tracker.label.name,
+                "definition": service.moon_tracker.label.describe(),
+                "timeframe": service.moon_tracker.timeframe.value,
+            },
+            "performance": report.to_dict(),
+        }
+
+    @app.post("/api/outcomes/resolve/moonshot", tags=["outcomes"])
+    async def resolve_moonshot(limit: int = Query(300, ge=1, le=2000)):
+        """Grade every ×10 reading whose multi-week horizon has elapsed."""
+        report = await get_service().resolve_moonshot_outcomes(limit=limit)
+        return {"resolution": report.to_dict(), "counts": repo.moonshot_counts()}
+
     @app.post("/api/outcomes/resolve", tags=["outcomes"])
     async def resolve_outcomes(limit: int = Query(300, ge=1, le=2000)):
         """Grade every pending signal whose horizon has elapsed."""

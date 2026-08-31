@@ -72,9 +72,11 @@ that justifies it.
 | Autonomous radar loop (`cryptopulse radar`) | **TESTED** | Full cycle end to end on the fixture provider |
 | **CoinGecko valuation (market cap)** | **IMPLEMENTED — NOT LIVE VERIFIED** | 10 tests against mocks. OFF by default |
 | Performance analytics (`outcomes/stats.py`) | **TESTED** | Buckets + component edge, `n` on every rate |
-| Schema migration (`database/migrate.py`) | **TESTED** | Additive columns only; refuses destructive changes |
+| Schema migration (`database/migrate.py`) | **TESTED** | Additive columns **and indexes**; refuses destructive changes |
+| **×10 journal + grading** (`moon_outcome_*`, `MOONSHOT_LABEL_CONFIGS`) | **TESTED** | 16 tests. The reading is now written to disk and graded on its own horizon — see §11 |
+| **Candle cache** (`providers/cache.py`) | **TESTED** | 19 tests. ~57% fewer kline requests over 10 passes, ~90% on the daily |
 
-**Test suite: 344 tests, all passing.** Run `pytest -q`.
+**Test suite: 379 tests, all passing.** Run `pytest -q`.
 
 ---
 
@@ -151,6 +153,7 @@ cryptopulse/
     binance.py           Binance Spot public REST      <- NOT LIVE VERIFIED
     kraken.py            Kraken public REST, 2nd venue <- NOT LIVE VERIFIED
     coingecko.py         Market cap / FDV / supply     <- NOT LIVE VERIFIED, off by default
+    cache.py             Candle cache: a closed bar never changes  <- request budget
     fixture.py           SYNTHETIC generator for offline dev/tests
     registry.py          One switch: CP_PROVIDER_MARKET_DATA
   features/
@@ -186,10 +189,10 @@ cryptopulse/
     engine.py            Levels, gates, dedup, cooldown; SETUP and MOONSHOT kinds
     notifiers.py         Delivery: console / jsonl / webhook / telegram / discord
   outcomes/
-    tracker.py           Grades emitted signals against the bars that followed
-    stats.py             Win rate / expectancy by bucket + per-component edge
+    tracker.py           Grades signals on the label's own timeframe (5m or 1d)
+    stats.py             Win rate by bucket, component edge, ×10 multiple distribution
   backtest/
-    labels.py            Triple-barrier, ATR-scaled, pessimistic on ambiguity
+    labels.py            Triple-barrier: ATR-scaled (hours) and multiple-based (weeks)
     metrics.py           Expectancy, PF, DD, Sharpe/Sortino (>=20 trades only)
     splits.py            Chronological split + walk-forward with embargo
     engine.py            Replays the live scorer over history via series.upto()
@@ -209,7 +212,7 @@ scripts/
   simulate_journal.py    Scan across simulated time, grade, compare to baseline
 
 frontend/                Vite + React 18 + TypeScript (strict)
-tests/                   344 tests
+tests/                   379 tests
 pine/                    TradingView companion scripts
 ```
 
@@ -293,7 +296,23 @@ Break these and the product is lying to its user.
     or an exception class, never a URL or a token (the Telegram token is part of
     the URL path). An unconfigured channel names the *setting* that is missing.
 
-18. **The universe is stated, not implied.** Which assets were scanned, which
+18. **Two theses, two verdicts, each graded once.** A signal carries an intraday
+    claim and a multi-week one. They are graded against different labels on
+    different timeframes into different columns (`outcome_*` and
+    `moon_outcome_*`), and neither is ever rewritten. Sharing one verdict would
+    force a choice between answering the first question and the second.
+
+19. **A reading that is not journalled cannot be validated.** The persist filter
+    keeps any row with a real ×10 reading, not only rows with an intraday setup —
+    a dormant base scores IGNORE on the setup axis, and filtering on that alone
+    guaranteed an empty moonshot journal forever.
+
+20. **The cache may only assume that a closed bar never changes.** An entry is
+    valid until the instant the next bar of its timeframe closes, and nothing
+    else. Order books and 24h tickers are never cached; `doctor` always bypasses
+    it, because proving the live API works cannot be done against a cache.
+
+21. **The universe is stated, not implied.** Which assets were scanned, which
     listed ones the venue does not carry, and where the listing came from are in
     every scan report, the API and the dashboard banner.
 
@@ -461,6 +480,17 @@ pytest tests/test_no_lookahead.py -v    # the ones that matter most
 * `config/settings.py` — the `enable_decoding=False` on classes with list fields
   is load-bearing, not cosmetic. Removing it makes every comma-separated
   environment variable in `.env.example` crash the process at import.
+* `providers/cache.py:_valid_until` — the validity rule is the bar boundary, not
+  a duration. Replacing it with a fixed TTL would serve a stale closed bar for
+  the remainder of the TTL, which is exactly the class of silent error the whole
+  project is built to avoid.
+* `database/repo.py:_signal_record` — one builder for both the batch and the
+  row-by-row paths. They used to construct the row twice, which is how a column
+  ends up written on one path and silently NULL on the other.
+* `outcomes/tracker.py:_entry_index` — the exact-bar rule still holds *within* a
+  timeframe. The cross-timeframe branch exists only for a label graded on slower
+  bars than the signal was scored on, and it writes the resulting lag into the
+  resolution note rather than absorbing it.
 * `universe/robinhood.py:SNAPSHOT_BASES` — a hand-maintained list. Adding a
   symbol Robinhood does not list costs a permanent `missing` row; omitting one it
   does list means that asset is never scanned. Neither corrupts a score, and both
@@ -491,11 +521,13 @@ pytest tests/test_no_lookahead.py -v    # the ones that matter most
 7. **Calibration** — map score bands to observed frequencies. Only after this
    may the UI display anything resembling a probability.
 8. Phase 2: DEX scanner, on-chain safety, multi-provider cross-validation.
-9. **Grade the ×10 layer against a label that matches its horizon.** The outcome
-   tracker currently uses a 2R triple barrier over hours; a moonshot claim is
-   about weeks. Until a label with a multi-week horizon exists and has graded
-   real signals, `MOONSHOT_ENGINE_V1` is an untested hypothesis with a stage
-   machine — which is exactly how it describes itself.
+9. ~~Grade the ×10 layer against a label that matches its horizon.~~ **The
+   machinery is done** (§11): readings are journalled, `MOONSHOT_LABEL_CONFIGS`
+   grades them on daily bars over 30/90/180 days, and every row records the
+   multiple actually reached. What is still missing is the only thing that
+   matters — *real* signals to grade. Until then `MOONSHOT_ENGINE_V1` remains an
+   untested hypothesis with a stage machine, which is exactly how it describes
+   itself.
 10. Phase 3: ML, compared against the deterministic baseline. Not before.
 
 ---
@@ -541,10 +573,42 @@ at 70) → `IGNITION` → `ACCUMULATION` → `DORMANT` → `NEUTRAL`, with `UNKN
 there is no timeframe of 4h or slower. Only IGNITION and ACCUMULATION can raise
 an alert.
 
+### How it is graded
+
+Every reading is written to the journal (`moonshot_*` columns) — including on
+assets whose intraday setup state is IGNORE, which is the normal state of a
+dormant base and precisely what this layer looks for. Filtering the journal on
+the setup state alone, as V1 did, guaranteed an empty ×10 history and therefore a
+permanently unvalidatable layer.
+
+Verdicts land in a *second* column set (`moon_outcome_*`), graded by
+`MOONSHOT_LABEL_CONFIGS` on **daily** bars:
+
+| Label | Target | Stop | Horizon |
+|---|---|---|---|
+| `moon_2x_30d` (default) | ×2 | −35% | 30 daily bars |
+| `moon_3x_90d` | ×3 | −50% | 90 daily bars |
+| `moon_10x_180d` | ×10 | −60% | 180 daily bars |
+
+One compromise, stated rather than hidden: grading directly at ×10 would settle
+approximately nothing for years, which is not a feedback loop. So the ladder
+settles earlier — and **every row records `max_multiple`**, the highest multiple
+actually reached inside the horizon. "How many ever reached ×10" is therefore
+answerable by reading the journal, without re-grading and without waiting three
+years for a label to settle. `cryptopulse resolve --axis moonshot` prints that
+distribution, and reports zero when it is zero.
+
+Because the label resolves on daily bars while the signal was scored on a
+5-minute close, no daily bar closes at the signal's timestamp. The tracker places
+the signal in the daily bar it fired *inside*, entry is the open of the next one,
+and the resulting lag is written into the resolution note. The exact-bar rule is
+untouched for labels graded on the timeframe the signal was scored on.
+
 **What it has never been:** validated. No ×10 outcome has ever been graded
-against these weights, because no real signal history exists yet (§3). It ranks
-resemblance to a pre-expansion state. Most of what it flags will not do ×10 —
-that is a property of the market, and the module says so in its own payload.
+against these weights on real data, because no real signal history exists yet
+(§3). It ranks resemblance to a pre-expansion state. Most of what it flags will
+not do ×10 — that is a property of the market, and the module says so in its own
+payload.
 
 ---
 
@@ -588,3 +652,14 @@ until stopped. Three properties make it safe to leave running:
 Delivery lives in `ScannerService`, not in the CLI, so the API's own scan loop
 notifies through exactly the same path. Alerts are persisted *before* they are
 delivered: a delivery crash can never lose the record.
+
+**What makes the loop affordable.** Every pass rebuilds every asset's features,
+which without a cache means re-downloading 400 daily candles per asset per
+minute for a series whose newest bar changes once a day. `providers/cache.py`
+holds a series until the next bar of its timeframe closes — the only assumption
+being that a closed bar never changes. Measured over ten one-minute passes on the
+Robinhood universe: 57% fewer kline requests overall, and the daily read once
+instead of ten times. The hit rate is reported in `/api/health` under
+`candle_cache`, because a collapsing hit rate is the first sign the scan interval
+and the timeframe set have drifted out of step — and it shows up there before it
+shows up as a rate-limit ban.

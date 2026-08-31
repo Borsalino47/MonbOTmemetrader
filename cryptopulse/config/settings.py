@@ -65,6 +65,12 @@ class ProviderSettings(BaseSettings):
     circuit_failure_threshold: int = 5
     circuit_reset_seconds: float = 60.0
 
+    # Candle cache. A closed bar never changes, so a series is re-fetched only
+    # once its next bar has closed — which is what makes a daily timeframe
+    # affordable inside a 60-second loop. See providers/cache.py.
+    cache_enabled: bool = True
+    cache_max_entries: int = 2000
+
     fixture_dir: str = "data/fixtures"
 
 
@@ -211,6 +217,19 @@ class MoonshotSettings(BaseSettings):
     # scores 90 is the single most expensive thing a radar can show you.
     expansion_score_cap: float = 70.0
     exhaustion_score_cap: float = 45.0
+
+    # A reading below this is not asserting anything, so it is not journalled.
+    # Above it, the row is written even when the intraday setup state is IGNORE —
+    # which is the normal state of a dormant base, and precisely the asset this
+    # layer exists to find. Without this the ×10 journal stays empty forever.
+    journal_min_score: float = 50.0
+
+    # How the ×10 axis is graded. See backtest/labels.py:MOONSHOT_LABEL_CONFIGS.
+    # The default settles in a month at ×2 — "did the thesis start working" —
+    # because a label that settles at ×10 would produce no feedback for years.
+    # `max_multiple` is recorded on every row regardless, so the ×10 question
+    # stays answerable from the journal.
+    label_config: str = "moon_2x_30d"
 
     @field_validator("timeframe", mode="before")
     @classmethod

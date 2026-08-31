@@ -79,6 +79,41 @@ class SignalRecord(Base):
     why: Mapped[list] = mapped_column(JSON, default=list)
     risks: Mapped[list] = mapped_column(JSON, default=list)
 
+    # --- the ×10 axis, recorded at signal time ------------------------------ #
+    # A reading that is computed, shown and alerted but never written cannot ever
+    # be validated: there is no history to grade. These columns are what make
+    # MOONSHOT_ENGINE_V1 falsifiable rather than permanently hypothetical.
+    # NULL means the layer was disabled or produced no reading, never zero.
+    moonshot_score: Mapped[float | None] = mapped_column(Float, nullable=True, index=True)
+    moonshot_stage: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
+    moonshot_ignition: Mapped[float | None] = mapped_column(Float, nullable=True)
+    moonshot_headroom: Mapped[float | None] = mapped_column(Float, nullable=True)
+    moonshot_capacity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    moonshot_coverage: Mapped[float | None] = mapped_column(Float, nullable=True)
+    moonshot_timeframe: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    moonshot_multiple_to_high: Mapped[float | None] = mapped_column(Float, nullable=True)
+    moonshot_engine_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # The valuation the capacity reading was computed from, so it becomes
+    # possible to ask later whether market cap predicted anything at all.
+    market_cap_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # --- the ×10 verdict, filled in weeks later ----------------------------- #
+    # A separate column set from the setup outcome above, because a signal
+    # carries two independent theses on two horizons. Sharing one verdict would
+    # force a choice between grading the hours or grading the weeks.
+    moon_outcome_evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    moon_outcome_label: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
+    moon_outcome_label_config: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    moon_outcome_horizon_bars: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    moon_outcome_return_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    moon_outcome_net_return_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # The headline number for this axis: the highest multiple actually reached.
+    moon_outcome_max_multiple: Mapped[float | None] = mapped_column(Float, nullable=True)
+    moon_outcome_bars_held: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    moon_outcome_entry_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    moon_outcome_exit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    moon_outcome_note: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
     # --- filled in later by the outcome tracker; NULL at insert time --------- #
     # These are never written at insert time. Doing so would be look-ahead bias
     # committed straight to disk: the outcome of a signal is not knowable at the

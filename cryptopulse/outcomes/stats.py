@@ -27,7 +27,10 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-__all__ = ["MIN_SAMPLE", "Bucket", "PerformanceReport", "build_performance"]
+__all__ = [
+    "MIN_SAMPLE", "Bucket", "PerformanceReport", "build_performance",
+    "MoonshotPerformanceReport", "build_moonshot_performance", "MULTIPLE_RUNGS",
+]
 
 # Below this many settled signals a bucket's rate is not worth reading.
 MIN_SAMPLE = 20
@@ -246,6 +249,127 @@ def build_performance(
         by_regime=group("regime"),
         by_symbol=by_symbol[:25],
         component_edge=_component_edge(rows),
+        return_basis=return_field,
+        synthetic_included=synthetic_included,
+        synthetic_count=synthetic_count,
+        notes=notes,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# The ×10 axis
+#
+# A separate report because the question is different. On the intraday axis the
+# question is "how often does a signal make 2R". Here it is "how far did these
+# actually go" — a distribution, not a rate. A layer whose win rate at ×2 looks
+# respectable while nothing ever passed ×3 has not found what it claims to look
+# for, and only the distribution shows that.
+# --------------------------------------------------------------------------- #
+
+# The rungs the distribution is reported at. ×10 is last and is reported even
+# when it is zero — especially when it is zero.
+MULTIPLE_RUNGS = (1.5, 2.0, 3.0, 5.0, 10.0)
+
+
+@dataclass(slots=True)
+class MoonshotPerformanceReport:
+    overall: Bucket
+    by_score_band: list[Bucket]
+    by_stage: list[Bucket]
+    by_capacity_known: list[Bucket]
+    multiple_distribution: list[dict]
+    best_multiple: float | None
+    median_multiple: float | None
+    label_config: str
+    return_basis: str
+    synthetic_included: bool
+    synthetic_count: int
+    notes: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return {
+            "overall": self.overall.to_dict(),
+            "by_score_band": [b.to_dict() for b in self.by_score_band],
+            "by_stage": [b.to_dict() for b in self.by_stage],
+            "by_capacity_known": [b.to_dict() for b in self.by_capacity_known],
+            "multiple_distribution": self.multiple_distribution,
+            "best_multiple": _r(self.best_multiple, 3),
+            "median_multiple": _r(self.median_multiple, 3),
+            "label_config": self.label_config,
+            "return_basis": self.return_basis,
+            "min_sample": MIN_SAMPLE,
+            "synthetic_included": self.synthetic_included,
+            "synthetic_count": self.synthetic_count,
+            "notes": self.notes,
+        }
+
+
+def build_moonshot_performance(
+    rows: list[dict], *, use_net: bool = True, synthetic_included: bool = True
+) -> MoonshotPerformanceReport:
+    """Aggregate settled ×10 readings.
+
+    `rows` come from `repo.resolved_moonshot_signals` and are already filtered to
+    settled verdicts.
+    """
+    return_field = "net_return_pct" if use_net else "return_pct"
+    notes: list[str] = []
+    synthetic_count = sum(1 for r in rows if r.get("synthetic"))
+    label = next((r.get("label_config") for r in rows if r.get("label_config")), "") or ""
+
+    if synthetic_count:
+        notes.append(
+            f"{synthetic_count} of {len(rows)} settled readings came from the SYNTHETIC provider. "
+            "Those measure the pipeline, not the market."
+        )
+    if len(rows) < MIN_SAMPLE:
+        notes.append(
+            f"Only {len(rows)} settled readings. Below {MIN_SAMPLE} nothing here is a finding, and "
+            "a x10 layer needs far more than that before its weights mean anything."
+        )
+
+    multiples = [r["max_multiple"] for r in rows if r.get("max_multiple") is not None]
+    distribution = [
+        {
+            "at_least": rung,
+            "n": sum(1 for m in multiples if m >= rung),
+            "share": (sum(1 for m in multiples if m >= rung) / len(multiples)) if multiples else None,
+        }
+        for rung in MULTIPLE_RUNGS
+    ]
+    if multiples and not any(m >= 10.0 for m in multiples):
+        notes.append(
+            f"No reading has reached x10. The best was x{max(multiples):.2f} — which is the honest "
+            "headline for this layer until one does."
+        )
+
+    def group(field_name: str, keyfn=None) -> list[Bucket]:
+        groups: dict[str, list[dict]] = {}
+        for r in rows:
+            raw = r.get(field_name)
+            if raw is None:
+                continue
+            key = keyfn(raw) if keyfn else str(raw)
+            groups.setdefault(key, []).append(r)
+        return [_bucket(k, v, return_field) for k, v in sorted(groups.items())]
+
+    # Does knowing the market cap actually separate winners from losers? Until a
+    # real history exists this is the cheapest way to find out whether the
+    # capacity reading earns the second network dependency it costs.
+    capacity_groups: dict[str, list[dict]] = {"capacity known": [], "capacity unknown": []}
+    for r in rows:
+        capacity_groups["capacity known" if r.get("moonshot_capacity") is not None else "capacity unknown"].append(r)
+    by_capacity = [_bucket(k, v, return_field) for k, v in capacity_groups.items() if v]
+
+    return MoonshotPerformanceReport(
+        overall=_bucket("overall", rows, return_field),
+        by_score_band=group("moonshot_score", _score_band),
+        by_stage=group("moonshot_stage"),
+        by_capacity_known=by_capacity,
+        multiple_distribution=distribution,
+        best_multiple=max(multiples) if multiples else None,
+        median_multiple=float(np.median(multiples)) if multiples else None,
+        label_config=label,
         return_basis=return_field,
         synthetic_included=synthetic_included,
         synthetic_count=synthetic_count,
