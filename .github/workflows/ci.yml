@@ -40,8 +40,13 @@ jobs:
           POSTGRES_DB: cryptopulse_test
         ports:
           - 5432:5432
+        # `-d` is not decoration: without it pg_isready connects to a database
+        # named after the user, which does not exist here, and the server logs a
+        # FATAL every five seconds for the whole job. It still exits 0 — the
+        # server answered — so the check passed for the wrong reason and would
+        # not have caught the database being late or absent.
         options: >-
-          --health-cmd "pg_isready -U cryptopulse"
+          --health-cmd "pg_isready -U cryptopulse -d cryptopulse_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
