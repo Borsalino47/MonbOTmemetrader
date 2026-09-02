@@ -68,6 +68,43 @@ export function AssetDrawer({ symbol, onClose }: Props) {
               )}
             </div>
 
+            {data.moonshot && data.moonshot.stage !== 'UNKNOWN' && (
+              <div className="panel">
+                <h3>×{data.moonshot.target_multiple.toFixed(0)} reading ({data.moonshot.timeframe})</h3>
+                <div className="kv">
+                  <span className="k">Stage</span>
+                  <span className="v"><span className={`pill stage-${data.moonshot.stage}`}>{data.moonshot.stage}</span></span>
+                </div>
+                <div className="kv"><span className="k">Moonshot score</span>
+                  <span className="v">{data.moonshot.score.toFixed(1)} / 100</span></div>
+                <div className="kv"><span className="k">Ignition</span>
+                  <span className="v">{data.moonshot.ignition === null ? '—' : data.moonshot.ignition.toFixed(0)}</span></div>
+                <div className="kv"><span className="k">Headroom</span>
+                  <span className="v">{data.moonshot.headroom === null ? '—' : data.moonshot.headroom.toFixed(0)}</span></div>
+                <div className="kv"><span className="k">Capacity</span>
+                  <span className="v">{data.moonshot.capacity === null ? 'unknown' : data.moonshot.capacity.toFixed(0)}</span></div>
+                <div className="kv"><span className="k">To window high</span>
+                  <span className="v">
+                    {data.moonshot.multiple_to_window_high === null
+                      ? '—'
+                      : `${data.moonshot.multiple_to_window_high.toFixed(2)}x`}
+                  </span>
+                </div>
+                {data.moonshot.reasons.length > 0 && (
+                  <ul style={{ marginTop: 8 }}>{data.moonshot.reasons.map((w, i) => <li key={i}>{w}</li>)}</ul>
+                )}
+                {data.moonshot.caveats.map((w, i) => <li key={`c${i}`} className="risk">{w}</li>)}
+                {/* Missing inputs are shown, not hidden: a blend computed over
+                    partial information is a different claim from a full one. */}
+                {data.moonshot.unknowns.map((w, i) => (
+                  <li key={`u${i}`} className="risk">Not measured: {w}</li>
+                ))}
+                <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 8 }}>
+                  {data.moonshot.disclaimer}
+                </div>
+              </div>
+            )}
+
             <ScoreHistory points={data.score_history} />
 
             <div className="panel">

@@ -1,4 +1,7 @@
-import type { AlertItem, AssetDetail, Health, PerformanceResponse, ScanResponse } from './types';
+import type {
+  AlertItem, AssetDetail, Health, MoonshotPerformanceResponse, MoonshotResponse,
+  PerformanceResponse, ScanResponse, UniverseResponse,
+} from './types';
 
 const BASE = '/api';
 
@@ -29,11 +32,20 @@ export const api = {
   top: (limit = 6) => get<{ results: ScanResponse['results'] }>('/scan/top', { limit }),
   asset: (symbol: string) => get<AssetDetail>(`/asset/${symbol}`),
   alerts: (limit = 50) => get<{ alerts: AlertItem[] }>('/alerts', { limit }),
+  moonshot: (params?: Record<string, string | number | boolean>) =>
+    get<MoonshotResponse>('/moonshot', { limit: 100, ...(params ?? {}) }),
+  universe: () => get<UniverseResponse>('/universe'),
   signals: (limit = 100) =>
     get<{ stats: Record<string, unknown>; signals: Record<string, unknown>[] }>('/signals', { limit }),
   performance: () => get<PerformanceResponse>('/performance'),
+  moonshotPerformance: () => get<MoonshotPerformanceResponse>('/performance/moonshot'),
   resolveOutcomes: async () => {
     const resp = await fetch(`${BASE}/outcomes/resolve`, { method: 'POST' });
+    if (!resp.ok) throw new Error(`resolve failed: ${resp.status}`);
+    return resp.json();
+  },
+  resolveMoonshotOutcomes: async () => {
+    const resp = await fetch(`${BASE}/outcomes/resolve/moonshot`, { method: 'POST' });
     if (!resp.ok) throw new Error(`resolve failed: ${resp.status}`);
     return resp.json();
   },

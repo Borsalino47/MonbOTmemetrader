@@ -2,13 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api';
 import { AlertsView } from './components/AlertsView';
 import { AssetDrawer } from './components/AssetDrawer';
+import { MoonshotView } from './components/MoonshotView';
+import { MoonshotPerformance } from './components/MoonshotPerformance';
 import { PerformanceView } from './components/PerformanceView';
 import { ScannerTable } from './components/ScannerTable';
 import { TopOpportunities } from './components/TopOpportunities';
 import { age, clock } from './format';
 import type { AlertItem, Health, ScoreRow } from './types';
 
-type Tab = 'scanner' | 'alerts' | 'performance';
+type Tab = 'scanner' | 'moonshot' | 'alerts' | 'performance';
 
 const REFRESH_MS = 15_000;
 
@@ -21,6 +23,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const [noScanYet, setNoScanYet] = useState(false);
+  const [perfAxis, setPerfAxis] = useState<'setup' | 'moonshot'>('setup');
 
   // Filters
   const [minScore, setMinScore] = useState(0);
@@ -108,6 +111,10 @@ export default function App() {
   // Staleness is decided server-side, where the timeframe length is known.
   const isStale = last?.data_stale ?? false;
   const providerDown = health?.provider_health?.some((p) => !p.available) ?? false;
+  // "The process is up" and "the radar is scanning" are different claims, and the
+  // second is the one that matters.
+  const radarStatus = health?.health?.status ?? (providerDown ? 'DOWN' : 'OK');
+  const radarClass = radarStatus === 'OK' ? 'ok' : radarStatus === 'DOWN' ? 'bad' : 'warn';
 
   return (
     <div className="app">
@@ -119,6 +126,10 @@ export default function App() {
 
         <nav className="nav">
           <button className={tab === 'scanner' ? 'active' : ''} onClick={() => setTab('scanner')}>Scanner</button>
+          <button className={tab === 'moonshot' ? 'active' : ''} onClick={() => setTab('moonshot')}>
+            ×{(health?.moonshot?.target_multiple ?? 10).toFixed(0)} Radar
+            {health?.moonshot?.candidates_last_scan ? ` (${health.moonshot.candidates_last_scan})` : ''}
+          </button>
           <button className={tab === 'alerts' ? 'active' : ''} onClick={() => setTab('alerts')}>
             Alerts{alerts.length > 0 ? ` (${alerts.length})` : ''}
           </button>
@@ -128,11 +139,11 @@ export default function App() {
         </nav>
 
         <div className="status-strip">
-          <div className="stat">
-            <span className="k">API</span>
-            <span className={`v ${providerDown ? 'bad' : 'ok'}`}>
-              <span className={`dot ${providerDown ? 'bad' : 'ok'}`} />
-              {providerDown ? 'DOWN' : 'OK'}
+          <div className="stat" title={health?.health?.reasons?.join(' · ') ?? ''}>
+            <span className="k">Radar</span>
+            <span className={`v ${radarClass}`}>
+              <span className={`dot ${radarClass}`} />
+              {health?.health?.status ?? (providerDown ? 'DOWN' : 'OK')}
             </span>
           </div>
           <div className="stat">
@@ -160,6 +171,14 @@ export default function App() {
             <span className={`v ${last && last.failed > 0 ? 'warn' : ''}`}>{last?.failed ?? '—'}</span>
           </div>
           <div className="stat">
+            <span className="k">Universe</span>
+            <span className="v" title={health?.universe?.notes?.join(' ') ?? ''}>
+              {health?.universe?.mode === 'robinhood'
+                ? `Robinhood ${health?.universe?.count ?? '—'}`
+                : 'Top volume'}
+            </span>
+          </div>
+          <div className="stat">
             <span className="k">Regime</span>
             <span className="v">{health?.market_regime?.trend ?? '—'}</span>
           </div>
@@ -177,6 +196,29 @@ export default function App() {
         <div className="banner synthetic">
           <strong>SYNTHETIC DATA</strong>
           <span>{health.synthetic_warning} Every price, volume and score below is generated, not observed.</span>
+        </div>
+      )}
+
+      {health?.universe?.mode === 'robinhood' && (
+        <div className="banner note">
+          <strong>ROBINHOOD UNIVERSE</strong>
+          <span>
+            Only assets believed tradable on Robinhood Crypto are scanned
+            ({health.universe.count ?? 0} resolved on {health.provider}
+            {health.universe.missing?.length ? `, ${health.universe.missing.length} not carried here` : ''}).
+            The listing is hand-maintained and not verified against Robinhood, and every price below comes
+            from the data venue — <strong>not</strong> from Robinhood, whose spread and fill will differ.
+          </span>
+        </div>
+      )}
+
+      {radarStatus === 'DOWN' && (
+        <div className="banner stale">
+          <strong>RADAR NOT SCANNING</strong>
+          <span>
+            {health?.health?.reasons?.join(' · ')}. Everything below is the last state it managed to
+            compute, not the current market.
+          </span>
         </div>
       )}
 
@@ -263,15 +305,37 @@ export default function App() {
           </>
         )}
 
+        {tab === 'moonshot' && <MoonshotView onSelect={setSelected} />}
+
         {tab === 'alerts' && <AlertsView alerts={alerts} onSelect={setSelected} />}
 
-        {tab === 'performance' && <PerformanceView />}
+        {tab === 'performance' && (
+          <>
+            <div className="toolbar">
+              <div className="filter">
+                <label>Horizon</label>
+                <select value={perfAxis} onChange={(e) => setPerfAxis(e.target.value as 'setup' | 'moonshot')}>
+                  <option value="setup">Setup axis — hours</option>
+                  <option value="moonshot">×10 axis — weeks</option>
+                </select>
+              </div>
+              <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
+                Two theses, two verdicts. They are graded against different labels on different
+                timeframes and never share a result.
+              </span>
+            </div>
+            {perfAxis === 'setup' ? <PerformanceView /> : <MoonshotPerformance />}
+          </>
+        )}
 
         <div className="disclaimer">
           <strong>Opportunity Score is a 0–100 ranking, not a probability.</strong>{' '}
           A score of 84 means this setup ranks above one scoring 60 under the current fixed weights
           ({health?.engine_version ?? 'SCORE_ENGINE_V1'}). It does not mean an 84% chance of anything.
           The weighting is a starting hypothesis and has not been statistically validated against outcomes.
+          The same holds, more strongly, for the ×{(health?.moonshot?.target_multiple ?? 10).toFixed(0)} radar:
+          it ranks resemblance to states that have preceded large expansions, it has never been graded
+          against one, and most of what it surfaces will not do it.
           Paper mode is {health?.paper_mode ? 'ON — no order is ever placed' : 'OFF'}.
         </div>
       </main>

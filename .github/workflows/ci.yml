@@ -1,0 +1,128 @@
+# CI for CRYPTO PULSE AI.
+#
+# Three jobs, each guarding a failure this project has actually had:
+#
+#   tests      — the suite, plus ruff, plus the PostgreSQL round trip. That last
+#                one is not optional: every millisecond timestamp column was
+#                once declared INTEGER, which SQLite tolerates and PostgreSQL
+#                rejects outright, so the schema was broken for months while a
+#                SQLite-only suite stayed green.
+#   dashboard  — typecheck and build. A dashboard that does not compile is a
+#                dashboard nobody notices is missing until they deploy.
+#   first-run  — a fresh checkout driven through ./start.sh, which is exactly
+#                the clean-clone path that used to die on ModuleNotFoundError
+#                because the installer tested for the wrong thing.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A new push supersedes the run it interrupted; nobody reads the old one.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: tests + lint (SQLite and PostgreSQL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: cryptopulse
+          POSTGRES_PASSWORD: cryptopulse
+          POSTGRES_DB: cryptopulse_test
+        ports:
+          - 5432:5432
+        # `-d` is not decoration: without it pg_isready connects to a database
+        # named after the user, which does not exist here, and the server logs a
+        # FATAL every five seconds for the whole job. It still exits 0 — the
+        # server answered — so the check passed for the wrong reason and would
+        # not have caught the database being late or absent.
+        options: >-
+          --health-cmd "pg_isready -U cryptopulse -d cryptopulse_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: pip install -e ".[dev,postgres]"
+
+      - name: Lint
+        run: ruff check cryptopulse tests scripts
+
+      - name: Tests
+        # With the URL set, tests/test_postgres.py stops skipping and runs the
+        # journal end to end against a real server.
+        env:
+          CP_TEST_POSTGRES_URL: postgresql+psycopg://cryptopulse:cryptopulse@127.0.0.1:5432/cryptopulse_test
+        run: pytest -q
+
+  dashboard:
+    name: dashboard typecheck + build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        working-directory: frontend
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: frontend
+        run: npx tsc --noEmit
+
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+
+  first-run:
+    name: a clean clone starts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: ./start.sh demo
+        # The whole first-run path: create the venv, install, seed .env, scan.
+        # Synthetic data, so it needs no network — which is the point: this job
+        # verifies the plumbing a new user meets, not a market.
+        run: timeout 600 ./start.sh demo
+
+      - name: The radar completes a full cycle
+        run: |
+          timeout 300 .venv/bin/python -m cryptopulse.cli radar \
+            --provider fixture --universe robinhood --rank blend --once
+
+      - name: The ×10 axis grades itself against a random baseline
+        run: |
+          timeout 900 .venv/bin/python scripts/simulate_journal.py \
+            --scans 8 --step-bars 3 --moon-scans 12 --moon-step-days 3 \
+            --db sqlite:///data/ci-simulation.db

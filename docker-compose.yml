@@ -14,7 +14,13 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    volumes:
+      # The alert journal (data/alerts.jsonl) is a record independent of the
+      # database. Losing it when the container is replaced would lose the one
+      # copy that survives a database problem.
+      - radardata:/app/data
     restart: unless-stopped
+    stop_grace_period: 30s
 
   db:
     image: postgres:16-alpine
@@ -33,3 +39,4 @@ services:
 
 volumes:
   pgdata:
+  radardata:

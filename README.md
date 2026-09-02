@@ -10,8 +10,17 @@ already missed. This scanner is built around the opposite bias: it measures
 penalises moves that are already extended.
 
 ```
-DATA → SCAN → FILTER → SCORE → VALIDATE → RANK → ALERT → BACKTEST
+DATA → SCAN → FILTER → ENRICH → SCORE → VALIDATE → RANK → ALERT → BACKTEST
 ```
+
+It scans **only what you can actually buy on Robinhood Crypto**, and it reads two
+horizons at once, kept deliberately apart:
+
+* the **opportunity score** — the next few hours: a level about to give way;
+* the **×10 radar** (`MOONSHOT_ENGINE_V1`) — the next few weeks: an asset that
+  currently *looks like* assets have looked before large expansions.
+
+It runs unattended (`cryptopulse radar`) and pushes alerts to your phone.
 
 ---
 
@@ -51,7 +60,22 @@ the comparison you must run on real history before trusting the weights.
 scoring `60` under the current fixed weights. It does not mean 84% of anything.
 The weighting is a starting hypothesis that has not been statistically fitted.
 
-**5. This is not financial advice and places no orders.** `PAPER_MODE` is on by
+**5. The ×10 radar is the least validated part of this system.** A ten-fold move
+is a rare event: a year passes with none, then two happen in a fortnight.
+Nothing here changes that base rate. The moonshot score ranks *resemblance to a
+pre-expansion state* under weights that were reasoned about, never fitted, and
+never graded against a single real ×10 outcome. **Most of what it flags will not
+do ×10.** That is a property of the market, not a defect — and a scanner
+implying otherwise would be lying to you.
+
+**6. Prices do not come from Robinhood.** Robinhood publishes no usable public
+market-data API, so the *universe* is filtered to what Robinhood lists while the
+*candles* come from Binance or Kraken. Robinhood's spread and fill will differ,
+sometimes materially on a thin asset during a fast move. The listing itself is
+hand-maintained and has never been verified against Robinhood — run
+`cryptopulse universe` to see exactly what is and is not being scanned.
+
+**7. This is not financial advice and places no orders.** `PAPER_MODE` is on by
 default and there is no order-placing code in the repository.
 
 ---
@@ -79,6 +103,35 @@ and why, split into reasons (arguments for) and caveats (arguments against).
 
 **Remembers.** Score history per symbol means a coin going `50 → 80` in twenty
 minutes ranks above one that has sat at `80` for three hours.
+
+**Scans only what you can buy.** The universe defaults to assets believed
+tradable on Robinhood Crypto, resolved against the venue's own naming (Kraken
+calls bitcoin XBT and dogecoin XDG; MATIC became POL). Anything the venue does
+not carry is reported by name, never silently dropped.
+
+**Hunts large multiples on a separate axis.** The ×10 radar reads the *daily*
+chart and answers three questions it keeps apart: has this traded ten times
+higher than it does now (arithmetic, not a forecast)? Is a ×10 payable at this
+market cap (unknown — and clearly labelled unknown — unless a valuation source
+is configured)? Is the behaviour changing right now: volume arriving on a base
+that has been quiet for months, a multi-month level giving way, pullbacks
+tightening, strength against the market? Then it names a stage —
+ACCUMULATION / IGNITION / EXPANSION / EXHAUSTION — because a 78 that is late and
+a 78 that is early are opposite situations.
+
+**Knows the difference between quiet and dead.** OBV, the Chaikin A/D line and
+CMF are read together with volume slope: volume building while price refuses to
+move, with bars closing in the upper half of their ranges, is the tape that
+precedes a markup. Volume building on closes at the lows is not.
+
+**Compares against the market, not just against itself.** Relative strength
+versus the benchmark and a cross-sectional RVOL percentile are computed each
+scan, so "2.5x volume" is judged against what every other asset is doing today.
+
+**Runs without you.** `cryptopulse radar` loops unattended, surviving provider
+outages with exponential backoff, and delivers alerts to console, a JSONL
+journal, a webhook, Telegram or Discord. It prints where alerts will go *before*
+it starts, so a misconfigured channel is discovered at 09:00 and not at 03:14.
 
 **Grades itself.** Every emitted signal is written to a journal with NULL outcome
 columns. Once its horizon elapses, the outcome tracker fetches the bars that
@@ -203,7 +256,17 @@ python -m cryptopulse.cli scan --limit 30
 python -m cryptopulse.cli serve
 
 # 4. Grade signals whose horizon has elapsed
-python -m cryptopulse.cli resolve
+python -m cryptopulse.cli resolve                      # the intraday axis (hours)
+python -m cryptopulse.cli resolve --axis moonshot      # the ×10 axis (weeks, daily bars)
+
+# 5. THE AUTONOMOUS RADAR — scan, alert, notify, repeat until stopped
+python -m cryptopulse.cli radar
+python -m cryptopulse.cli radar --interval 300 --rank moonshot
+python -m cryptopulse.cli radar --once            # a single cycle, then exit
+
+# 6. What the Robinhood filter actually resolves to on your venue
+python -m cryptopulse.cli universe
+python -m cryptopulse.cli universe --refresh      # try Robinhood's own catalogue
 
 # Switch venue for one run, no config change
 python -m cryptopulse.cli scan --provider kraken
@@ -231,10 +294,17 @@ docker compose up --build       # API on :8000, Postgres on :5432
 
 **Live market scanner** — every column sortable:
 
-| Rank | Asset | Price | 5m | 1h | RVOL | Opportunity | Accel | Maturity | Safety | Conf | Status |
+| Rank | Asset | Price | 5m | 1h | RVOL | Opportunity | ×10 | Accel | Maturity | Safety | Conf | Status |
 
 **Top opportunities now** — ranked by setup quality, not by price change. When
 nothing clears the gates it says so, rather than promoting the best of a bad list.
+
+**×10 Radar tab** — one card per asset: the stage as prominently as the score,
+three separate bars for ignition / headroom / capacity (with `unknown` rendered
+as unknown, never as an empty bar), the multiple to the window high, market cap
+where known, the reasons, the caveats, and an explicit list of what could not be
+measured. A permanent banner states that it is a ranking and not a forecast, and
+a second one appears whenever market cap is missing for every row.
 
 **Asset detail** (click any row) — full score explainability with per-component
 bars and the `RAW − PENALTY = FINAL` arithmetic, score history sparkline,
@@ -242,8 +312,10 @@ multi-timeframe bias grid, market data, and two explicit sections:
 **Why this asset?** and **What can invalidate it?**
 
 **Freshness bar** — always visible: API status, data source, last update, scan
-age, market data age, scanned/failed counts, market regime, paper mode. A stale
-feed or a synthetic source raises a permanent banner.
+age, market data age, scanned/failed counts, universe mode and size, market
+regime, paper mode. A stale feed or a synthetic source raises a permanent
+banner, and so does the Robinhood universe — stating that prices come from the
+data venue and not from Robinhood.
 
 ---
 
@@ -254,7 +326,9 @@ feed or a synthetic source raises a permanent banner.
 | Binance Spot public REST | Market data + order book | IMPLEMENTED, **not live verified** |
 | Kraken public REST | Market data + order book | IMPLEMENTED, **not live verified** |
 | Fixture generator | Synthetic candles | For tests and offline dev only |
-| CoinGecko / DexScreener / Birdeye | — | NOT IMPLEMENTED |
+| CoinGecko `/coins/markets` | Market cap, FDV, supply | IMPLEMENTED, **not live verified**, OFF by default |
+| Robinhood `/currency_pairs/` | Tradable listing (universe only, no prices) | Best-effort refresh; has never succeeded from this sandbox |
+| DexScreener / Birdeye | — | NOT IMPLEMENTED |
 
 Endpoints used (all public, unauthenticated): `/api/v3/ping`,
 `/api/v3/exchangeInfo`, `/api/v3/ticker/24hr`, `/api/v3/klines`, `/api/v3/depth`.
@@ -262,6 +336,36 @@ Endpoints used (all public, unauthenticated): `/api/v3/ping`,
 Swapping providers means writing one class against `MarketDataProvider` in
 `providers/base.py` and flipping `CP_PROVIDER_MARKET_DATA`. Nothing above the
 provider layer knows the name of an exchange.
+
+### The candle cache
+
+A closed bar never changes, so a series is re-read only once the next bar of its
+timeframe has closed — not on a timer. Over ten one-minute passes on the
+Robinhood universe that removes **57% of kline requests**, and the daily
+timeframe is read once instead of ten times. Without it, enabling the ×10 layer
+would mean re-downloading 400 daily candles per asset every minute for data that
+changes once a day.
+
+Never cached: order books (a depth snapshot is a statement about *now*), 24h
+tickers (one request covers the whole venue), and `doctor` (proving the live API
+works cannot be done against a cache). The hit rate is in `/api/health` under
+`candle_cache`.
+
+### Running it unattended
+
+`deploy/README.md` covers systemd and Docker. The short version of what makes it
+safe to leave alone:
+
+* **`/healthz` answers 503 once the radar stops scanning** — not merely when the
+  process dies. A process that is up and no longer scanning is the failure that
+  matters, because you keep trusting a screen that stopped updating.
+* **The watchdog tells you itself**, through the same alert channels as a
+  signal, once per outage and again on recovery.
+* **Score history survives a restart.** It is reloaded from the database at
+  startup, because score acceleration is a difference between two passes and a
+  cold process would report every asset as flat.
+* **Signals are never deleted on a retention timer.** A ×10 label can take 180
+  days to settle; only score points are purged.
 
 ### Provider resilience
 
@@ -275,7 +379,8 @@ retried — it is our bug, not a transient failure.
 ## Testing
 
 ```bash
-pytest -q                            # 245 tests
+pytest -q                            # 406 tests
+CP_TEST_POSTGRES_URL=... pytest -q   # + the PostgreSQL round trip
 pytest tests/test_no_lookahead.py -v # the ones that matter most
 ```
 
@@ -293,6 +398,16 @@ pytest tests/test_no_lookahead.py -v # the ones that matter most
 | `test_api.py` | 21 | Endpoint contracts, filters, freshness, no-probability rule |
 | `test_outcomes.py` | 23 | Fixture stability, resolution correctness, honest non-answers, analytics |
 | `test_kraken.py` | 23 | Error envelope, field mapping, pair rename, 2 full-pipeline runs |
+| `test_expansion.py` | 13 | Base length, drawdown multiple, VCP, spring, quiet accumulation, truncation stability |
+| `test_moonshot.py` | 20 | What the ×10 layer refuses to claim: no daily base from a 5m chart, no guessed market cap, no early-entry label on an exhausted move |
+| `test_universe.py` | 16 | Snapshot integrity, alias resolution (XBT/XDG/POL), missing assets reported, both universe modes end to end |
+| `test_notifiers.py` | 11 | Delivery per channel, crash isolation, and that no secret reaches a log or a result |
+| `test_valuation.py` | 10 | CoinGecko parsing, ticker collisions, cap upper bound, scan survives an outage |
+| `test_radar.py` | 18 | Env-list parsing, enrichment, moonshot alerts and cooldown, a full radar cycle, the new endpoints |
+| `test_moonshot_outcomes.py` | 16 | Multiple-based labels, cross-timeframe grading, the ×10 journal, two independent verdicts |
+| `test_cache.py` | 19 | A cached series is identical to an uncached one; bar-boundary validity; what must never be cached |
+| `test_operations.py` | 16 | Liveness verdicts, the watchdog firing once per outage, score memory across a restart, retention |
+| `test_postgres.py` | 8 | Millisecond columns are wide enough for a real timestamp; full round trip on a live server |
 
 ---
 
@@ -389,6 +504,161 @@ otherwise leak the test window into training.
 
 ---
 
+## The ×10 radar — `MOONSHOT_ENGINE_V1`
+
+A separate score on a separate horizon, shown next to the opportunity score and
+never blended into it.
+
+### Three readings, kept apart
+
+| Reading | The question | Where it comes from |
+|---|---|---|
+| **Headroom** | Has this traded ×10 above the current price, inside the history we can see? | Arithmetic on the daily candles. Not a forecast: a token 92% below a price it printed last cycle needs the market to change its mind, not to invent a valuation. |
+| **Capacity** | Is a ×10 *payable*? | Market cap. ×10 on $20M is $200M — that happens somewhere most weeks. ×10 on $40B is $400B — almost nothing has ever reached it. This cannot be derived from a candle, so **without a valuation source it reads `unknown`, never zero.** |
+| **Ignition** | Is the behaviour changing *right now*? | Eleven weighted sub-signals (below). |
+
+### The eleven ignition sub-signals
+
+| Sub-signal | What it looks for |
+|---|---|
+| Volume regime | Daily volume vs its own 30-bar median — a shift, not a busy bar |
+| Level break | A close above the 60-day high, or the top of the current base |
+| Accumulation | CMF + A/D slope + volume building into flat price with upper-half closes |
+| Base maturity | How many daily bars the price has spent inside one range |
+| Trend reclaim | Price back above EMA50 with EMA20 crossed up |
+| Relative strength | Out- or under-performance vs the benchmark over the same window |
+| Compression | Bollinger width in the tightest part of its own recent range |
+| VCP | Successive pullbacks getting shallower — supply drying up |
+| Volume rank | RVOL as a percentile of every asset in the same scan |
+| MTF alignment | Whether the faster timeframes agree |
+| Spring | A failed breakdown: lost the base floor, closed back above it |
+
+### Stages — the order is the safety property
+
+`EXHAUSTION` → `EXPANSION` → `IGNITION` → `ACCUMULATION` → `DORMANT` → `NEUTRAL`
+(`UNKNOWN` when no timeframe of 4h or slower is available).
+
+Lateness is evaluated **first** and overrides everything else: an asset can be
+igniting on every measure and still be something you are late to. EXHAUSTION
+caps the score at 45, EXPANSION at 70. Only **IGNITION** and **ACCUMULATION**
+can raise an alert — the two stages where an entry is still early.
+
+### What it refuses to do
+
+* score a daily base off a five-minute chart (returns `UNKNOWN` and says why);
+* treat a missing market cap as a small one;
+* call a coin already up 400% an early entry;
+* override the liquidity or safety gates. A vetoed asset can carry a moonshot
+  score of 95 and still never alert.
+
+### How it gets graded
+
+Every reading is written to the journal — including on assets whose intraday
+setup state is IGNORE, which is the normal state of a dormant base and exactly
+what this layer looks for. Verdicts land in their own column set, graded on
+**daily** bars by a ladder of multiple-based labels:
+
+| Label | Target | Stop | Horizon |
+|---|---|---|---|
+| `moon_2x_30d` (default) | ×2 | −35% | 30 days |
+| `moon_3x_90d` | ×3 | −50% | 90 days |
+| `moon_10x_180d` | ×10 | −60% | 180 days |
+
+Grading directly at ×10 would settle nothing for years, so the ladder settles
+earlier — and every row records the **highest multiple actually reached**. That
+one field keeps "how many ever reached ×10" answerable from the journal:
+
+```
+  How far did they actually go?
+    reached x1.5       1     0.5%
+    reached x2         0     0.0%
+    reached x10        0     0.0%
+
+  ** No reading has reached x10. The best was x1.52 — which is the honest
+     headline for this layer until one does.
+```
+
+**It has never been validated.** The machinery to grade it now exists and is
+tested; what does not exist is real signals to grade. Read it as a watchlist
+ranking, and nothing more.
+
+Once the feed is verified, the layer is validated in this order — backtest on
+real daily history, compare against random daily entry, then accumulate a live
+journal:
+
+```bash
+CP_SCAN_PRIMARY_TIMEFRAME=1d CP_SCAN_TIMEFRAMES=4h,1d \
+  python -m cryptopulse.cli backtest --label moon_2x_30d --bars 800
+```
+
+The decision timeframe has to be slow too: 1000 five-minute candles reach back
+three days, which cannot host a 30-day horizon. The backtest says so explicitly
+rather than returning an empty result that reads as "found nothing".
+
+---
+
+## Alerts that actually reach you
+
+Two kinds, on two clocks:
+
+* **SETUP** — the intraday setup engine: thresholds, gates, 30-minute cooldown.
+* **MOONSHOT** — the daily ×10 reading: its own threshold and a six-hour
+  cooldown, because a multi-month base is not news again fifteen minutes later.
+
+Both pass the same gates — liquidity, safety and data confidence are not
+negotiable on either horizon.
+
+Delivery fans out to any of five channels, each isolated so one failure cannot
+break a scan or the others:
+
+```bash
+CP_ALERT_CHANNELS=console,jsonl,telegram
+CP_ALERT_TELEGRAM_BOT_TOKEN=...      # @BotFather
+CP_ALERT_TELEGRAM_CHAT_ID=...        # @userinfobot
+```
+
+`jsonl` appends one JSON object per alert to `data/alerts.jsonl` — tailable
+while the radar runs, and a record independent of the database. Secrets never
+reach a log, an error string or an API response; an unconfigured channel is
+reported by naming the *setting* that is missing, and `cryptopulse radar` prints
+that at startup.
+
+---
+
+## The Robinhood universe
+
+```bash
+python -m cryptopulse.cli universe
+```
+
+```
+Robinhood universe — 34 base assets   (source: snapshot, as of 2026-08-31)
+Resolving against kraken / USD...
+  34 tradable here:
+    BTC      XBTUSD        24h vol    1,204,882,001   (listed as XBTUSD)
+    DOGE     XDGUSD        24h vol       88,120,433   (listed as XDGUSD)
+    ...
+  3 not carried by this venue against USD: PENGU, TRUMP, ONDO
+```
+
+Aliases are resolved against the symbols the venue actually returned, so a
+rename in either direction (XBT/BTC, XDG/DOGE, POL/MATIC, RNDR/RENDER) is
+absorbed rather than silently dropping the asset.
+
+The listing is a hand-maintained snapshot. Correct it with
+`CP_SCAN_ROBINHOOD_EXTRA` / `CP_SCAN_ROBINHOOD_EXCLUDE`, or maintain your own
+file:
+
+```bash
+python -m cryptopulse.cli universe --refresh   # writes data/robinhood_universe.json
+export CP_SCAN_ROBINHOOD_FILE=data/robinhood_universe.json
+```
+
+Set `CP_SCAN_UNIVERSE=volume` to get the V1 behaviour back — the venue's most
+liquid pairs, ignoring Robinhood entirely.
+
+---
+
 ## Known limits
 
 * **The Binance connector is unverified against the live API.** Nothing else
@@ -409,8 +679,25 @@ otherwise leak the test window into training.
   `risk/safety.py:dex_safety` raises rather than returning a plausible default.
 * **Order flow is REST snapshots**, not a streamed book. Depth carries no venue
   timestamp, so fetch time is recorded as the observation time and labelled as such.
-* **Postgres is untested.** SQLite is verified; the Postgres path is configuration
-  only.
+* **The ×10 layer has never been graded on real data.** The machinery now exists
+  — readings are journalled, a daily ladder grades them over 30/90/180 days, and
+  every row records the multiple reached — but it has only ever run on synthetic
+  candles, where nothing doubles in a month and the layer therefore scores level
+  with random daily entry. `MOONSHOT_ENGINE_V1` stays an untested hypothesis
+  with a stage machine until real signals settle.
+* **Market cap is missing unless you enable a valuation source.** With
+  `CP_PROVIDER_VALUATION=none` (the default) the capacity reading — arguably the
+  most important single input to "can this actually do ×10?" — is unknown for
+  every asset, and the score is computed from the other two readings.
+* **The Robinhood listing is hand-maintained and unverified.** Robinhood has no
+  usable public market-data API. `cryptopulse universe` shows exactly what is
+  being scanned; correct it with `CP_SCAN_ROBINHOOD_FILE`.
+* **Telegram, Discord and webhook delivery are tested against mocks only.** No
+  message has ever left this sandbox.
+* **Enabling the ×10 layer costs one extra kline request per asset per scan** —
+  the daily. On a 120-symbol volume universe that is 120 more requests a minute;
+  on the ~35-asset Robinhood universe it is negligible. Set
+  `CP_MOON_ENABLED=false` if the budget is tight.
 * **Two venues, no cross-validation yet.** Binance and Kraken are both
   implemented and switchable with `--provider`, but nothing yet compares their
   quotes against each other to catch a bad feed. That is Phase 2.

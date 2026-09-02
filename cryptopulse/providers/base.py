@@ -15,6 +15,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from cryptopulse.core.types import (
+    AssetValuation,
     DexPair,
     OHLCVSeries,
     OrderBook,
@@ -27,6 +28,7 @@ __all__ = [
     "ProviderHealth",
     "MarketDataProvider",
     "OrderBookProvider",
+    "ValuationProvider",
     "DEXProvider",
     "OnChainProvider",
     "SocialDataProvider",
@@ -91,6 +93,33 @@ class OrderBookProvider(ABC):
 
     @abstractmethod
     async def get_order_book(self, symbol: str, depth: int = 100) -> OrderBook: ...
+
+
+class ValuationProvider(ABC):
+    """Supply-side facts an exchange cannot supply: market cap, FDV, supply.
+
+    Kept separate from `MarketDataProvider` because it is a different kind of
+    source with a different failure mode. A venue being down stops a scan; a
+    valuation source being down only means the capacity reading is unknown, and
+    the scanner is required to carry on and say so.
+    """
+
+    name: str
+
+    @abstractmethod
+    async def health(self) -> ProviderHealth: ...
+
+    @abstractmethod
+    async def get_valuations(self, base_assets: Sequence[str]) -> dict[str, AssetValuation]:
+        """Valuations keyed by BASE asset (BTC, not BTCUSDT).
+
+        An asset the source does not rank must still appear in the result when a
+        bound on its cap is known — "smaller than everything ranked" is a fact,
+        not a gap. Assets about which nothing at all is known are omitted.
+        """
+
+    async def close(self) -> None:  # pragma: no cover - default no-op
+        return None
 
 
 class DEXProvider(ABC):

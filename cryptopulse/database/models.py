@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     DateTime,
     Float,
@@ -46,7 +47,11 @@ class SignalRecord(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     symbol: Mapped[str] = mapped_column(String(40), index=True)
     scanner: Mapped[str] = mapped_column(String(16), default="cex")
-    timestamp_ms: Mapped[int] = mapped_column(Integer().with_variant(Integer, "sqlite"), index=True)
+    # BigInteger, not Integer. A millisecond epoch is ~1.8e12, and PostgreSQL's
+    # INTEGER stops at 2.1e9 — every insert would have failed with a numeric
+    # overflow. SQLite stores integers dynamically so it never noticed, which is
+    # exactly why this survived: the variant keeps SQLite's own type unchanged.
+    timestamp_ms: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     price: Mapped[float] = mapped_column(Float)
@@ -79,6 +84,41 @@ class SignalRecord(Base):
     why: Mapped[list] = mapped_column(JSON, default=list)
     risks: Mapped[list] = mapped_column(JSON, default=list)
 
+    # --- the ×10 axis, recorded at signal time ------------------------------ #
+    # A reading that is computed, shown and alerted but never written cannot ever
+    # be validated: there is no history to grade. These columns are what make
+    # MOONSHOT_ENGINE_V1 falsifiable rather than permanently hypothetical.
+    # NULL means the layer was disabled or produced no reading, never zero.
+    moonshot_score: Mapped[float | None] = mapped_column(Float, nullable=True, index=True)
+    moonshot_stage: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
+    moonshot_ignition: Mapped[float | None] = mapped_column(Float, nullable=True)
+    moonshot_headroom: Mapped[float | None] = mapped_column(Float, nullable=True)
+    moonshot_capacity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    moonshot_coverage: Mapped[float | None] = mapped_column(Float, nullable=True)
+    moonshot_timeframe: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    moonshot_multiple_to_high: Mapped[float | None] = mapped_column(Float, nullable=True)
+    moonshot_engine_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # The valuation the capacity reading was computed from, so it becomes
+    # possible to ask later whether market cap predicted anything at all.
+    market_cap_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # --- the ×10 verdict, filled in weeks later ----------------------------- #
+    # A separate column set from the setup outcome above, because a signal
+    # carries two independent theses on two horizons. Sharing one verdict would
+    # force a choice between grading the hours or grading the weeks.
+    moon_outcome_evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    moon_outcome_label: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
+    moon_outcome_label_config: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    moon_outcome_horizon_bars: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    moon_outcome_return_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    moon_outcome_net_return_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # The headline number for this axis: the highest multiple actually reached.
+    moon_outcome_max_multiple: Mapped[float | None] = mapped_column(Float, nullable=True)
+    moon_outcome_bars_held: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    moon_outcome_entry_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    moon_outcome_exit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    moon_outcome_note: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
     # --- filled in later by the outcome tracker; NULL at insert time --------- #
     # These are never written at insert time. Doing so would be look-ahead bias
     # committed straight to disk: the outcome of a signal is not knowable at the
@@ -109,7 +149,7 @@ class ScorePointRecord(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     symbol: Mapped[str] = mapped_column(String(40), index=True)
-    timestamp_ms: Mapped[int] = mapped_column(Integer().with_variant(Integer, "sqlite"), index=True)
+    timestamp_ms: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), index=True)
     final_score: Mapped[float] = mapped_column(Float)
     raw_score: Mapped[float] = mapped_column(Float)
     price: Mapped[float] = mapped_column(Float)
@@ -125,7 +165,7 @@ class AlertRecord(Base):
     symbol: Mapped[str] = mapped_column(String(40), index=True)
     level: Mapped[str] = mapped_column(String(16), index=True)
     headline: Mapped[str] = mapped_column(String(120))
-    timestamp_ms: Mapped[int] = mapped_column(Integer().with_variant(Integer, "sqlite"), index=True)
+    timestamp_ms: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), index=True)
     dedup_key: Mapped[str] = mapped_column(String(32), index=True)
     price: Mapped[float] = mapped_column(Float)
     final_score: Mapped[float] = mapped_column(Float)
@@ -140,7 +180,7 @@ class ScanRunRecord(Base):
     __tablename__ = "scan_runs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    started_at_ms: Mapped[int] = mapped_column(Integer().with_variant(Integer, "sqlite"), index=True)
+    started_at_ms: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), index=True)
     duration_ms: Mapped[int] = mapped_column(Integer)
     universe_size: Mapped[int] = mapped_column(Integer)
     scanned: Mapped[int] = mapped_column(Integer)

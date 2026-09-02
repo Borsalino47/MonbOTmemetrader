@@ -34,6 +34,7 @@ from cryptopulse.scoring.components import (
     score_volume,
 )
 from cryptopulse.scoring.confidence import DataConfidence, compute_confidence
+from cryptopulse.scoring.moonshot import MoonshotAssessment, assess_moonshot
 from cryptopulse.scoring.pump_maturity import PumpMaturity, compute_pump_maturity
 from cryptopulse.scoring.states import SetupState, StateDecision, determine_state
 
@@ -65,6 +66,9 @@ class ScoreResult:
 
     engine_version: str = ENGINE_VERSION
     weights_fingerprint: str = ""
+    # The ×10 reading. A separate axis, like pump maturity — it never changes
+    # `final_score`, and it can never lift a gate. None when the layer is off.
+    moonshot: MoonshotAssessment | None = None
     features: AssetFeatures | None = None
     score_acceleration: float | None = None  # filled in by ScoreMemory
     previous_score: float | None = None
@@ -151,6 +155,7 @@ class ScoreResult:
             "pump_maturity": self.maturity.to_dict(),
             "acceleration": self.acceleration.to_dict(),
             "data_confidence": self.confidence.to_dict(),
+            "moonshot": self.moonshot.to_dict() if self.moonshot else None,
             "liquidity": self.liquidity.to_dict(),
             "safety": self.safety.to_dict(),
             "setup": self.state.to_dict(),
@@ -196,7 +201,14 @@ class ScoreEngine:
             )
 
     def _fingerprint(self) -> str:
-        """Short hash of the weights + thresholds, so a config change is visible."""
+        """Short hash of everything that decides a score, so a config change is visible.
+
+        The timeframe set is in here as well as the weights: multi-timeframe
+        alignment is one of the eight components, so adding or removing a
+        timeframe changes what a score of 70 means just as surely as moving a
+        weight does. Without it, two incomparable populations of signals would
+        share a fingerprint and be pooled by the outcome statistics.
+        """
         payload = json.dumps(
             {
                 "weights": self._weights(),
@@ -207,6 +219,8 @@ class ScoreEngine:
                     "breakout_confirm_atr": self.scoring.breakout_confirm_atr,
                     "pump_late": self.scoring.pump_maturity_late,
                 },
+                "timeframes": sorted(tf.value for tf in self.settings.scanner.timeframes),
+                "primary_timeframe": self.settings.scanner.primary_timeframe.value,
             },
             sort_keys=True,
         )
@@ -248,6 +262,16 @@ class ScoreEngine:
             maturity_score=maturity.score,
         )
 
+        # The ×10 layer runs last and reads only what is already computed. It is
+        # informational: it never touches `final`, and `state` above has already
+        # applied the gates, so a vetoed asset cannot be promoted by a high
+        # moonshot score.
+        moonshot = (
+            assess_moonshot(af, maturity, self.settings.moonshot)
+            if self.settings.moonshot.enabled
+            else None
+        )
+
         return ScoreResult(
             symbol=af.symbol,
             price=af.price,
@@ -265,5 +289,6 @@ class ScoreEngine:
             state=state,
             engine_version=cfg.engine_version,
             weights_fingerprint=self.weights_fingerprint,
+            moonshot=moonshot,
             features=af,
         )

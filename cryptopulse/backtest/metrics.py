@@ -61,6 +61,11 @@ class BacktestMetrics:
         return {
             "trades": self.trades,
             "wins": self.wins,
+            # Named explicitly because the outcome tracker uses the *other*
+            # definition — its win rate counts rows labelled WIN by the barrier,
+            # while a backtest trade that timed out slightly green is a "win"
+            # here. Two defensible definitions; one of them has to say which.
+            "win_rate_basis": "share of trades with a positive net return (timeouts included)",
             "losses": self.losses,
             "timeouts": self.timeouts,
             "win_rate": _r(self.win_rate),

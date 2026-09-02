@@ -36,7 +36,18 @@ def init_engine(cfg: DatabaseSettings) -> Engine:
             path.parent.mkdir(parents=True, exist_ok=True)
 
     connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
-    _engine = create_engine(url, echo=cfg.echo, future=True, connect_args=connect_args)
+    # `pool_pre_ping` matters for the radar, which holds a pool open for weeks: a
+    # database restart or an idle-timeout on the network silently leaves dead
+    # connections in it, and without a pre-ping the next scan loses its writes to
+    # an OperationalError instead of transparently reconnecting.
+    _engine = create_engine(
+        url,
+        echo=cfg.echo,
+        future=True,
+        connect_args=connect_args,
+        pool_pre_ping=not url.startswith("sqlite"),
+        pool_recycle=1800 if not url.startswith("sqlite") else -1,
+    )
     Base.metadata.create_all(_engine)
     # create_all never alters an existing table, so a database predating a new
     # column would keep working right up until the first query touched it.

@@ -38,8 +38,11 @@ class ScorePoint:
 class ScoreMemory:
     """Per-symbol ring buffer of recent scores. Thread-safe.
 
-    In-memory by design: the durable record lives in the signals table. This is
-    the hot path the ranker reads on every scan.
+    In-memory by design: the durable record lives in the database. This is the
+    hot path the ranker reads on every scan — but it is rehydrated from that
+    record at startup, because otherwise a restart silently blinds the scanner to
+    score acceleration for the first passes, and a rising score is precisely the
+    "changing behaviour" the product is built to detect.
     """
 
     def __init__(self, maxlen: int = 288, acceleration_window_seconds: int = 1200) -> None:
@@ -47,6 +50,31 @@ class ScoreMemory:
         self.window_ms = acceleration_window_seconds * 1000
         self._data: dict[str, deque[ScorePoint]] = defaultdict(lambda: deque(maxlen=maxlen))
         self._lock = threading.Lock()
+
+    def rehydrate(self, points: list[dict]) -> int:
+        """Load persisted score points back into the ring buffers.
+
+        Oldest first, so the deque ordering matches what live recording produces.
+        Returns the number of points loaded.
+        """
+        loaded = 0
+        for p in points:
+            try:
+                self.record(
+                    p["symbol"],
+                    ScorePoint(
+                        timestamp_ms=int(p["timestamp_ms"]),
+                        final_score=float(p["final_score"]),
+                        raw_score=float(p["raw_score"]),
+                        price=float(p["price"]),
+                        state=str(p["state"]),
+                    ),
+                )
+                loaded += 1
+            except (KeyError, TypeError, ValueError):
+                # A malformed historical row must not stop a restart.
+                continue
+        return loaded
 
     def record(self, symbol: str, point: ScorePoint) -> None:
         with self._lock:

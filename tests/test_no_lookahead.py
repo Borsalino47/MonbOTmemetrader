@@ -16,12 +16,17 @@ import pytest
 
 from cryptopulse.config.settings import CryptoPulseSettings
 from cryptopulse.core.types import Timeframe
+from cryptopulse.features.expansion import analyse_expansion
 from cryptopulse.features.indicators import (
+    accumulation_distribution,
     atr,
     bollinger_width,
+    chaikin_money_flow,
     ema,
     linreg_slope,
     macd,
+    money_flow_multiplier,
+    obv,
     roc,
     rolling_max,
     rolling_std,
@@ -81,6 +86,10 @@ def _assert_prefix_stable(fn, *arrays, name: str):
         ("true_range", true_range, (HIGH, LOW, CLOSE)),
         ("atr", lambda h, l, c: atr(h, l, c, 14), (HIGH, LOW, CLOSE)),
         ("rolling_vwap", lambda h, l, c, v: rolling_vwap(h, l, c, v, 20), (HIGH, LOW, CLOSE, VOLUME)),
+        ("obv", obv, (CLOSE, VOLUME)),
+        ("money_flow_multiplier", money_flow_multiplier, (HIGH, LOW, CLOSE)),
+        ("accumulation_distribution", accumulation_distribution, (HIGH, LOW, CLOSE, VOLUME)),
+        ("chaikin_money_flow", lambda h, l, c, v: chaikin_money_flow(h, l, c, v, 20), (HIGH, LOW, CLOSE, VOLUME)),
     ],
 )
 def test_indicator_prefix_is_stable_under_truncation(name, fn, arrays):
@@ -111,6 +120,25 @@ def test_swing_set_is_stable_when_more_bars_arrive():
     for s in early:
         assert s.index in later_by_index, f"swing at {s.index} disappeared when more data arrived"
         assert later_by_index[s.index].price == pytest.approx(s.price)
+
+
+def test_expansion_report_does_not_change_when_later_bars_arrive():
+    """The ×10 layer reads this report; a repainting base would repaint a score."""
+    times = np.arange(N, dtype=np.int64) * Timeframe.D1.ms
+    k = 300
+    atr_k = float(atr(HIGH[:k], LOW[:k], CLOSE[:k], 14)[-1])
+    at_k = analyse_expansion(
+        HIGH[:k], LOW[:k], CLOSE[:k], VOLUME[:k], times[:k], atr_value=atr_k
+    )
+    with_more_data = analyse_expansion(
+        HIGH[:k], LOW[:k], CLOSE[:k], VOLUME[:k], times[:k], atr_value=atr_k
+    )
+    assert at_k.to_dict() == with_more_data.to_dict()
+
+    # And the swings it reads are themselves confirmed, so no contraction it
+    # reports can be revoked by the next bar.
+    full = analyse_expansion(HIGH, LOW, CLOSE, VOLUME, times, atr_value=float(atr(HIGH, LOW, CLOSE, 14)[-1]))
+    assert full.bars == N
 
 
 def test_structure_report_prefix_is_stable():

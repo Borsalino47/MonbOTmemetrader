@@ -51,6 +51,12 @@ async def main(argv=None) -> int:
     parser.add_argument("--step-bars", type=int, default=3, help="primary-timeframe bars between scans")
     parser.add_argument("--label", type=str, default="standard_2R")
     parser.add_argument("--db", type=str, default="sqlite:///data/simulation.db")
+    # The ×10 axis needs its own simulated timeline: a 30-day horizon cannot be
+    # graded inside the 15 hours the intraday pass covers.
+    parser.add_argument("--moon-scans", type=int, default=40, dest="moon_scans",
+                        help="simulated scan passes for the ×10 axis (0 to skip)")
+    parser.add_argument("--moon-step-days", type=int, default=3, dest="moon_step_days",
+                        help="days between ×10 passes")
     args = parser.parse_args(argv)
 
     configure_logging("WARNING", False)
@@ -170,12 +176,140 @@ async def main(argv=None) -> int:
 
     for note in perf["notes"]:
         print(f"\n  ** {note}")
+
+    if args.moon_scans > 0 and settings.moonshot.enabled:
+        await _moonshot_section(settings, args)
+
     print("\n" + "=" * 78)
     print("REMINDER: synthetic candles. This verifies the pipeline, not the strategy.")
     print("=" * 78)
 
     await scanner.close()
     return 0
+
+
+async def _moonshot_section(settings, args) -> None:
+    """Build a ×10 journal across months of simulated time, grade it, benchmark it.
+
+    Separate timeline on purpose. The intraday pass above advances a few 5-minute
+    bars at a time and covers well under a day; a thesis with a 30-day horizon
+    graded on that timeline would be 100% pending, which proves nothing.
+
+    The baseline is the part that matters. A ×2-in-30-days barrier is reached by
+    chance often enough that a moonshot win rate means nothing on its own — the
+    only informative number is the difference between the scanner's readings and
+    entries picked at random from the same daily bars.
+    """
+    from cryptopulse.backtest.labels import label_config_by_name
+    from cryptopulse.outcomes.stats import build_moonshot_performance
+
+    label = label_config_by_name(settings.moonshot.label_config)
+    day_ms = 86_400_000
+    clock = FrozenClock(START_MS - args.moon_scans * args.moon_step_days * day_ms)
+    provider = FixtureProvider(clock=clock)
+    scanner = CexScanner(settings, provider=provider, memory=ScoreMemory(), clock=clock)
+
+    print(f"\n{'=' * 78}")
+    print(f"×10 AXIS — {label.name}")
+    print("=" * 78)
+    print(f"building {args.moon_scans} passes {args.moon_step_days} day(s) apart "
+          f"({args.moon_scans * args.moon_step_days} days of simulated history)")
+
+    journalled = 0
+    for _ in range(args.moon_scans):
+        report = await scanner.scan()
+        journalled += repo.persist_scan(
+            report,
+            provider=provider.name,
+            regime=scanner.regime.trend.value,
+            moonshot_journal_min_score=settings.moonshot.journal_min_score,
+        )
+        clock.advance(args.moon_step_days * day_ms / 1000)
+    await scanner.close()
+
+    counts = repo.moonshot_counts()
+    print(f"  {counts['readings_journalled']} ×10 readings journalled "
+          f"({counts['candidates_journalled']} at an early stage), {journalled} rows written")
+
+    # Time passes, then grade.
+    clock.advance((label.horizon_bars + 3) * day_ms / 1000)
+    grader = FixtureProvider(clock=clock)
+    tracker = OutcomeTracker(settings, grader, label_config=label, clock=clock)
+    pending = repo.pending_moonshot_signals(tracker.ready_before_ms(), 5000)
+    report = await tracker.resolve(pending)
+    repo.save_moonshot_resolutions(report.resolutions)
+    print(f"  graded: resolved={report.resolved} pending={report.still_pending} "
+          f"unresolvable={report.unresolvable}")
+
+    rows = repo.resolved_moonshot_signals()
+    if not rows:
+        print("  nothing settled — nothing to report.")
+        return
+
+    perf = build_moonshot_performance(rows).to_dict()
+    o = perf["overall"]
+    print(f"\n  n={o['n']}  win rate at ×{label.target_multiple:g} {_pct(o['win_rate'])}  "
+          f"expectancy {_num(o['expectancy_pct'])}%")
+    print(f"  best multiple reached x{_num(perf['best_multiple'])}  "
+          f"median x{_num(perf['median_multiple'])}")
+    print(f"\n  {'reached':<12} {'n':>5} {'share':>8}")
+    for rung in perf["multiple_distribution"]:
+        share = "n/a" if rung["share"] is None else f"{rung['share'] * 100:.1f}%"
+        print(f"  x{rung['at_least']:<11g} {rung['n']:>5} {share:>8}")
+
+    if perf["by_stage"]:
+        print(f"\n  {'stage':<14} {'n':>5} {'win rate':>10} {'expectancy':>12}")
+        for b in perf["by_stage"]:
+            flag = " *" if b["insufficient_sample"] else ""
+            print(f"  {b['key']:<14} {b['n']:>5} {_pct(b['win_rate']):>10} "
+                  f"{_num(b['expectancy_pct']):>11}%{flag}")
+
+    baseline = await _random_moonshot_baseline(grader, settings, label)
+    if baseline:
+        print("\n  BASELINE — same daily bars, entries every 10th bar, no scoring")
+        print(f"  n={baseline['n']}  win rate {_pct(baseline['win_rate'])}  "
+              f"median multiple x{_num(baseline['median_multiple'])}")
+        delta = (o["win_rate"] or 0) - baseline["win_rate"]
+        verdict = "ABOVE" if delta > 0.02 else "BELOW" if delta < -0.02 else "level with"
+        print(f"  ×10 ranking is {verdict} random daily entry ({delta * 100:+.1f} pts)")
+        if delta <= 0.02:
+            print("\n  On synthetic candles this says nothing about markets. On real history it")
+            print("  would be the whole answer: a ×10 layer that does not beat a random daily")
+            print("  entry is a stage machine with extra steps.")
+
+    for note in perf["notes"]:
+        print(f"\n  ** {note}")
+
+
+async def _random_moonshot_baseline(provider, settings, label) -> dict | None:
+    """Entries chosen from the same daily bars with no scoring whatsoever."""
+    import numpy as np
+
+    from cryptopulse.backtest.labels import Outcome, label_signal
+    from cryptopulse.providers.fixture import _UNIVERSE
+
+    tally: dict[str, int] = {}
+    multiples: list[float] = []
+    for symbol, *_ in _UNIVERSE[:12]:
+        try:
+            series = (await provider.get_ohlcv(symbol, label.timeframe, 900)).closed()
+        except Exception:
+            continue
+        for i in range(50, len(series) - label.horizon_bars - 2, 10):
+            r = label_signal(series.high, series.low, series.close, series.open, i, 0.0, label)
+            if r.outcome is Outcome.UNRESOLVED:
+                continue
+            tally[r.outcome.value] = tally.get(r.outcome.value, 0) + 1
+            multiples.append(r.max_multiple)
+    n = sum(tally.values())
+    if n < 50:
+        return None
+    return {
+        "n": n,
+        "win_rate": tally.get("WIN", 0) / n,
+        "median_multiple": float(np.median(multiples)) if multiples else None,
+        "by_label": tally,
+    }
 
 
 async def _random_baseline(provider, settings, label, clock) -> dict | None:

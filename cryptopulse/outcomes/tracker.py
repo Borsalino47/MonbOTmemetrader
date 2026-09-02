@@ -13,10 +13,16 @@ after it. The two never touch.
 
 Guarantees:
 
-* **Exact bar match required.** The signal's `timestamp_ms` is the close time of
-  the candle it was scored on. Resolution looks for that exact close time in the
-  fetched series. If it is not there, the signal is not resolved against a
-  guessed neighbour — an off-by-one bar silently shifts every barrier.
+* **Exact bar match required, within a timeframe.** The signal's `timestamp_ms`
+  is the close time of the candle it was scored on. When the label resolves on
+  that same timeframe, resolution looks for that exact close time and refuses to
+  fall back on a neighbour — an off-by-one bar silently shifts every barrier.
+* **Across timeframes, the shift is stated rather than hidden.** A ×10 thesis is
+  graded on daily bars even though the signal fired on a 5-minute close, so no
+  daily bar closes at the signal's timestamp. Resolution then takes the daily bar
+  the signal fired *inside*, and entry is the open of the one after it — the
+  earliest price anyone could actually have paid. The resulting lag is recorded
+  in the resolution note, never silently absorbed.
 * **The ATR is the one recorded at signal time**, never recomputed from data the
   signal did not have.
 * **Too early is not a result.** If the horizon has not elapsed, the signal stays
@@ -78,6 +84,10 @@ class Resolution:
     entry_price: float | None
     exit_price: float | None
     note: str | None = None
+    # Highest multiple of entry touched inside the horizon. Recorded on every
+    # row, so the journal can be asked "how many ever reached x10" without
+    # re-grading anything.
+    max_multiple: float | None = None
 
 
 @dataclass(slots=True)
@@ -122,7 +132,9 @@ class OutcomeTracker:
         self.label = label_config or DEFAULT_LABEL_CONFIGS[1]  # standard_2R
         self.costs = costs or CostModel()
         self.clock = clock
-        self.timeframe = settings.scanner.primary_timeframe
+        # The timeframe the *outcome* is measured on. A weeks-long thesis cannot
+        # be graded on 5-minute bars: 1000 of them reach back three days.
+        self.timeframe = self.label.timeframe or settings.scanner.primary_timeframe
 
     # ---------------------------------------------------------------- timing #
 
@@ -195,42 +207,72 @@ class OutcomeTracker:
         )
         return report
 
+    def _unresolvable(self, sig: PendingSignal, note: str) -> Resolution:
+        return Resolution(
+            signal_id=sig.id, symbol=sig.symbol, label=Outcome.UNRESOLVABLE.value,
+            label_config=self.label.name, horizon_bars=self.label.horizon_bars,
+            return_pct=None, net_return_pct=None, mfe_atr=None, mae_atr=None,
+            bars_held=None, entry_price=None, exit_price=None, note=note,
+        )
+
+    def _entry_index(self, sig: PendingSignal, series) -> tuple[int | None, str | None, str | None]:
+        """Locate the signal's bar in `series`. Returns (index, note, failure).
+
+        Two regimes, and the difference is deliberate:
+
+        * **Same timeframe** — the signal's close time must be present exactly.
+          A neighbouring bar would shift every barrier, so its absence is a feed
+          gap and the signal is unresolvable, not approximated.
+        * **Slower timeframe** — no daily bar closes at a 5-minute timestamp, so
+          the signal is placed in the daily bar it fired inside. That costs up to
+          one bar of lag, which is real and is written into the note rather than
+          being quietly absorbed.
+        """
+        if series.close_time_ms.size == 0:
+            return None, None, "no closed candles returned"
+
+        oldest = int(series.close_time_ms[0])
+        if sig.timestamp_ms < oldest:
+            return None, None, (
+                f"signal bar predates the deepest fetchable history ({MAX_FETCH_BARS} "
+                f"{self.timeframe.value} bars)"
+            )
+
+        matches = np.flatnonzero(series.close_time_ms == sig.timestamp_ms)
+        if matches.size:
+            return int(matches[0]), None, None
+
+        if sig.timeframe is self.timeframe:
+            return None, None, "the signal's candle is missing from the provider's series (feed gap)"
+
+        # Cross-timeframe: the first bar that closed at or after the signal is
+        # the bar the signal happened inside.
+        idx = int(np.searchsorted(series.close_time_ms, sig.timestamp_ms, side="left"))
+        if idx >= series.close_time_ms.size:
+            return None, None, "the signal is newer than the newest closed bar of the outcome timeframe"
+        lag_ms = int(series.close_time_ms[idx]) - sig.timestamp_ms
+        note = (
+            f"graded on {self.timeframe.value} bars; the {sig.timeframe.value} signal fired "
+            f"{lag_ms / 60000:.0f} min before that bar closed, and entry is the open of the next one"
+        )
+        return idx, note, None
+
     def _resolve_one(self, sig: PendingSignal, series) -> Resolution | None:
         """Grade one signal. Returns None when it is simply too early to say."""
-        if not sig.atr or sig.atr <= 0:
-            return Resolution(
-                signal_id=sig.id, symbol=sig.symbol, label=Outcome.UNRESOLVABLE.value,
-                label_config=self.label.name, horizon_bars=self.label.horizon_bars,
-                return_pct=None, net_return_pct=None, mfe_atr=None, mae_atr=None,
-                bars_held=None, entry_price=None, exit_price=None,
-                note="no ATR was recorded with the signal, so ATR-scaled barriers cannot be placed",
+        # ATR barriers need the ATR recorded at signal time. Multiple barriers do
+        # not — they are a function of price — so a missing ATR is only fatal for
+        # the ATR family.
+        if self.label.needs_atr and (not sig.atr or sig.atr <= 0):
+            return self._unresolvable(
+                sig, "no ATR was recorded with the signal, so ATR-scaled barriers cannot be placed"
             )
 
-        # Exact match on the close time the signal was scored at. Resolving
-        # against the nearest bar instead would shift every barrier by a bar.
-        matches = np.flatnonzero(series.close_time_ms == sig.timestamp_ms)
-        if matches.size == 0:
-            oldest = int(series.close_time_ms[0])
-            if sig.timestamp_ms < oldest:
-                return Resolution(
-                    signal_id=sig.id, symbol=sig.symbol, label=Outcome.UNRESOLVABLE.value,
-                    label_config=self.label.name, horizon_bars=self.label.horizon_bars,
-                    return_pct=None, net_return_pct=None, mfe_atr=None, mae_atr=None,
-                    bars_held=None, entry_price=None, exit_price=None,
-                    note=f"signal bar predates the deepest fetchable history ({MAX_FETCH_BARS} bars)",
-                )
-            # Inside the window but absent: a gap in the feed at exactly that bar.
-            return Resolution(
-                signal_id=sig.id, symbol=sig.symbol, label=Outcome.UNRESOLVABLE.value,
-                label_config=self.label.name, horizon_bars=self.label.horizon_bars,
-                return_pct=None, net_return_pct=None, mfe_atr=None, mae_atr=None,
-                bars_held=None, entry_price=None, exit_price=None,
-                note="the signal's candle is missing from the provider's series (feed gap)",
-            )
+        idx, note, failure = self._entry_index(sig, series)
+        if failure is not None:
+            return self._unresolvable(sig, failure)
 
-        idx = int(matches[0])
         result = label_signal(
-            series.high, series.low, series.close, series.open, idx, sig.atr, self.label
+            series.high, series.low, series.close, series.open, idx, sig.atr or 0.0, self.label
         )
 
         if result.outcome is Outcome.UNRESOLVED:
@@ -246,9 +288,11 @@ class OutcomeTracker:
             horizon_bars=self.label.horizon_bars,
             return_pct=result.return_pct,
             net_return_pct=net,
-            mfe_atr=result.mfe_atr,
-            mae_atr=result.mae_atr,
+            mfe_atr=None if not np.isfinite(result.mfe_atr) else result.mfe_atr,
+            mae_atr=None if not np.isfinite(result.mae_atr) else result.mae_atr,
             bars_held=result.bars_held,
             entry_price=result.entry_price,
             exit_price=result.exit_price,
+            note=note,
+            max_multiple=result.max_multiple,
         )

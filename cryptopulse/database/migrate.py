@@ -4,9 +4,12 @@
 ones, so a database created before a column was added silently lacks it and every
 query against that column fails at runtime.
 
-This module closes that gap for the only kind of change this project makes so
-far: adding a nullable column. It compares the live table to the ORM model and
-issues `ALTER TABLE ... ADD COLUMN` for anything missing.
+This module closes that gap for the only kinds of change this project makes so
+far: adding a nullable column, and adding an index. It compares the live table to
+the ORM model and issues `ALTER TABLE ... ADD COLUMN` / `CREATE INDEX` for
+anything missing. Both matter: `ADD COLUMN` does not carry the column's index
+with it, so a journal migrated in place would keep working while quietly doing a
+full scan on every query that filters the new column.
 
 Deliberately limited. It will not drop, rename or retype a column, and it says so
 rather than guessing — destructive migrations need a human and a backup, not an
@@ -33,9 +36,9 @@ def _sql_type(engine: Engine, column) -> str:
 
 
 def ensure_schema(engine: Engine) -> list[str]:
-    """Add any column present in the models but missing from the database.
+    """Add any column or index present in the models but missing from the database.
 
-    Returns the list of `table.column` names that were added.
+    Returns the list of `table.column` / `index:name` entries that were added.
     """
     inspector = inspect(engine)
     existing_tables = set(inspector.get_table_names())
@@ -66,6 +69,27 @@ def ensure_schema(engine: Engine) -> list[str]:
                 conn.execute(text(ddl))
             added.append(f"{table_name}.{column.name}")
             log.info("column_added", table=table_name, column=column.name)
+
+    # Indexes second: an index on a column that was just added can only be
+    # created after the ALTER TABLE above has run.
+    inspector = inspect(engine)  # refreshed, so it sees the new columns
+    for table_name, table in Base.metadata.tables.items():
+        if table_name not in existing_tables:
+            continue
+        live_indexes = {i["name"] for i in inspector.get_indexes(table_name)}
+        live_columns = {c["name"] for c in inspector.get_columns(table_name)}
+        for index in table.indexes:
+            if index.name in live_indexes:
+                continue
+            if not {c.name for c in index.columns} <= live_columns:
+                continue  # its column could not be added; nothing to index
+            try:
+                index.create(bind=engine)
+            except Exception as exc:  # a pre-existing index under another name
+                log.warning("index_create_failed", index=index.name, error=str(exc)[:160])
+                continue
+            added.append(f"index:{index.name}")
+            log.info("index_added", table=table_name, index=index.name)
 
     if added:
         log.info("schema_migrated", added=added)

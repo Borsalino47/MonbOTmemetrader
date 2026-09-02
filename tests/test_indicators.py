@@ -6,13 +6,17 @@ import numpy as np
 import pytest
 
 from cryptopulse.features.indicators import (
+    accumulation_distribution,
     atr,
     bollinger,
     bollinger_width,
+    chaikin_money_flow,
     consecutive_up,
     ema,
     linreg_slope,
     macd,
+    money_flow_multiplier,
+    obv,
     roc,
     rolling_max,
     rolling_min,
@@ -174,3 +178,62 @@ def test_volume_acceleration_positive_when_volume_ramps():
 def test_volume_acceleration_near_zero_when_flat():
     va = volume_acceleration(np.full(40, 250.0), 3, 12)
     assert abs(va[-1]) < 1e-6
+
+
+# --------------------------------------------------------------------------- #
+# Accumulation / distribution
+# --------------------------------------------------------------------------- #
+
+
+def test_money_flow_multiplier_maps_close_position_to_minus_one_and_one():
+    high = np.array([10.0, 10.0, 10.0])
+    low = np.array([8.0, 8.0, 8.0])
+    close = np.array([10.0, 8.0, 9.0])  # on the high, on the low, mid-range
+    mfm = money_flow_multiplier(high, low, close)
+    assert mfm[0] == pytest.approx(1.0)
+    assert mfm[1] == pytest.approx(-1.0)
+    assert mfm[2] == pytest.approx(0.0)
+
+
+def test_a_bar_with_no_range_is_neutral_rather_than_a_division_by_zero():
+    mfm = money_flow_multiplier(np.array([5.0]), np.array([5.0]), np.array([5.0]))
+    assert mfm[0] == 0.0
+    assert np.isfinite(mfm).all()
+
+
+def test_chaikin_money_flow_is_positive_when_bars_close_at_their_highs():
+    n = 40
+    high = np.full(n, 10.0)
+    low = np.full(n, 9.0)
+    buying = chaikin_money_flow(high, low, np.full(n, 10.0), np.full(n, 100.0), 20)
+    selling = chaikin_money_flow(high, low, np.full(n, 9.0), np.full(n, 100.0), 20)
+    assert buying[-1] == pytest.approx(1.0)
+    assert selling[-1] == pytest.approx(-1.0)
+
+
+def test_chaikin_money_flow_stays_bounded():
+    rng = np.random.default_rng(5)
+    close = 100 * np.exp(np.cumsum(rng.normal(0, 0.01, 200)))
+    high = close * 1.01
+    low = close * 0.99
+    cmf = chaikin_money_flow(high, low, close, rng.lognormal(5, 0.5, 200), 20)
+    finite = cmf[~np.isnan(cmf)]
+    assert finite.size > 0
+    assert np.all(np.abs(finite) <= 1.0)
+
+
+def test_obv_signs_volume_by_the_direction_of_the_close():
+    close = np.array([10.0, 11.0, 10.5, 10.5, 12.0])
+    volume = np.array([100.0, 200.0, 300.0, 400.0, 500.0])
+    out = obv(close, volume)
+    # First bar has no prior close, so it contributes nothing.
+    assert out.tolist() == [0.0, 200.0, -100.0, -100.0, 400.0]
+
+
+def test_accumulation_distribution_rises_on_strength_and_falls_on_weakness():
+    n = 30
+    high, low, volume = np.full(n, 10.0), np.full(n, 9.0), np.full(n, 100.0)
+    up = accumulation_distribution(high, low, np.full(n, 10.0), volume)
+    down = accumulation_distribution(high, low, np.full(n, 9.0), volume)
+    assert up[-1] > up[0]
+    assert down[-1] < down[0]
